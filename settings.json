@@ -1,0 +1,20 @@
+{
+  "packages": [
+    "./pi-subagents"
+  ],
+  "lastChangelogVersion": "0.63.1",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-4-6",
+  "defaultThinkingLevel": "low",
+  "theme": "dracula",
+  "transport": "sse",
+  "enabledModels": [
+    "anthropic/claude-opus-4-6",
+    "openai-codex/gpt-5.4",
+    "anthropic/claude-sonnet-4-6"
+  ],
+  "steeringMode": "one-at-a-time",
+  "quietStartup": true,
+  "editorPaddingX": 1,
+  "showHardwareCursor": true
+}

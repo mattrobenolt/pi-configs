@@ -1,0 +1,3 @@
+[submodule "pi-subagents"]
+	path = pi-subagents
+	url = https://github.com/mattrobenolt/pi-subagents
