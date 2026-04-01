@@ -89,6 +89,11 @@ Rewrite the file content with these rules:
 - Repeated themes → single clear statement
 - Redundant examples → keep the most illustrative one
 
+**Preserve texture (especially in SELF.md and USER.md):**
+- Concrete examples, direct quotes, and specific details that illustrate *how* something is true — not just *that* it's true. "Types 'thinkg', 'mayhbe', 'iwth'" is more useful than "types with typos." "'ok cool', 'ya', 'nah'" calibrates tone better than "casual and direct."
+- When a general statement and a specific example both exist, keep both. The general statement helps scanning; the example helps a new session actually match the vibe.
+- Err toward keeping color. A memory file that reads like a person wrote it about someone they know is more valuable than a tight profile card.
+
 **Remove:**
 - Entries explicitly superseded by a later entry
 - Resolved issues or TODOs that are clearly done
@@ -96,27 +101,52 @@ Rewrite the file content with these rules:
 - Generic filler that adds no information ("remember to be careful about X")
 - Refactor history / changelog sections — that's what git log is for
 
-**Target:** 30–50% reduction in line count while preserving all information density. Shorter is better. If in doubt, keep it.
+**Target:** If a file has clear bloat (duplicated entries, stale info, filler), compress it. But do NOT target a fixed reduction percentage on every pass — an already-curated file may need zero reduction. Forcing compression on tight files is how specific details and texture get lost. If a file reads clean and dense, leave it alone or only touch clearly stale parts.
 
 **Format:** preserve any existing structure (headers, sections, #tags). Don't restructure unless it genuinely helps clarity.
 
 ### Step 5: Gap-fill from sessions
 
-Before writing, search the session index for discussions related to this memory file:
+This is the most important step. Sessions routinely contain decisions, preferences, and conclusions that never get written to memory. Your job is to find them.
 
+Run **at least 3 targeted searches** per memory file using `qmd query` (hybrid search, not just keywords):
+
+**For project memory files**, derive queries from the project name and key topics:
 ```bash
-qmd search "<key terms from this project/topic>" -c pi-sessions -n 5
+# Search for the project specifically
+qmd query "<project-name> decision" -c pi-sessions -n 5
+qmd query "<project-name> architecture approach" -c pi-sessions -n 5
+# Search for key subsystems mentioned in the memory file
+qmd query "<specific-subsystem-or-feature>" -c pi-sessions -n 5
 ```
 
-Read the results. Look for:
-- Decisions or conclusions that were reached but not recorded
-- Patterns or gotchas that came up in conversation but are absent from memory
-- Corrections or updates to things currently in the memory file
-- Preferences or working style notes (for SELF.md/USER.md)
+**For SELF.md**, search for behavioral corrections and patterns:
+```bash
+qmd query "correction mistake wrong" -c pi-sessions -n 5
+qmd query "don't do that stop" -c pi-sessions -n 5
+qmd query "frustrated annoyed" -c pi-sessions -n 5
+```
 
-If anything significant is missing, add it to the curated content. Keep additions concise — same standard as the rest of the file.
+**For USER.md**, search for personality, preferences, and reactions:
+```bash
+qmd query "I prefer I like I want" -c pi-sessions -n 5
+qmd query "skip it don't need that" -c pi-sessions -n 5
+qmd query "that's cool nice rad" -c pi-sessions -n 5
+```
 
-Skip this step if the sessions index is empty or returns no relevant results.
+**For global MEMORY.md**, search for environment and config discussions:
+```bash
+qmd query "nix flake config setup" -c pi-sessions -n 5
+qmd query "pi extension tool" -c pi-sessions -n 5
+```
+
+For each search result, **read the surrounding context** (use `qmd get <file>:<line> -l 40`) to understand the full exchange. Look for:
+- Decisions or conclusions that were reached but not recorded in this memory file
+- Things that were explicitly evaluated and rejected ("decided against X because Y" is valuable)
+- Corrections, gotchas, or lessons learned
+- Preferences or working style observations (for SELF.md/USER.md)
+
+Do NOT skip this step. "No relevant results" from a single vague search is not sufficient — try different angles. If after 3+ genuine searches you find nothing new, that's fine, but actually do the work.
 
 ### Step 6: Write
 
