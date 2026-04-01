@@ -1,0 +1,9 @@
+auth.json
+sessions/
+sessions-index/
+memory/
+projects/
+pi-crash.log
+git/
+node_modules/
+.direnv/
