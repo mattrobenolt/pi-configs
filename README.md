@@ -22,7 +22,7 @@ Extensions are loaded automatically from the `extensions/` directory on session 
 | `answer.ts` | `/answer` command and `Ctrl+.` shortcut — presents an interactive TUI for answering questions extracted from the last assistant message |
 | `better-diff/` | Replaces default edit/write diff output with Shiki syntax-highlighted diffs, adapting to split or unified layout based on terminal width |
 | `btw.ts` | `/btw` — floating side-chat overlay for tangential questions without polluting the main session |
-| `cost.ts` | `/cost [days]` — API usage summary broken down by date, model, and project |
+| `cost.ts` | `/cost [days]` — token usage summary broken down by date, project, and model |
 | `direnv.ts` | Loads direnv environments into bash tool invocations, tracks CWD across commands, shows a rich footer with git status, nix badge, and token usage |
 | `execute-command.ts` | `execute_command` tool — lets the agent queue a slash command or message to fire after its current turn ends |
 | `memory.ts` | Five-target memory system (global, project, self, user, daily) with context injection before every turn and qmd-powered semantic search |

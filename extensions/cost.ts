@@ -1,69 +1,159 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 
-interface CostEntry {
-  cost: number;
+interface UsageEntry {
+  tokens: number;
   model: string;
   date: string;
 }
 
-function extractCosts(filePath: string): CostEntry[] {
-  const entries: CostEntry[] = [];
+function extractUsage(filePath: string): UsageEntry[] {
+  const entries: UsageEntry[] = [];
+
   try {
     const content = fs.readFileSync(filePath, "utf-8");
+
     for (const line of content.split("\n")) {
       if (!line.trim()) continue;
+
       try {
         const entry = JSON.parse(line);
+        const totalTokens = entry.message?.usage?.totalTokens;
+
         if (
-          entry.type === "message" &&
-          entry.message?.role === "assistant" &&
-          entry.message?.usage?.cost?.total
+          entry.type !== "message" ||
+          entry.message?.role !== "assistant" ||
+          typeof totalTokens !== "number" ||
+          totalTokens <= 0
         ) {
-          const date = path.basename(filePath).slice(0, 10);
-          entries.push({
-            cost: entry.message.usage.cost.total,
-            model: entry.message.model ?? "unknown",
-            date,
-          });
+          continue;
         }
+
+        const date =
+          typeof entry.timestamp === "string"
+            ? entry.timestamp.slice(0, 10)
+            : path.basename(filePath).slice(0, 10);
+
+        entries.push({
+          tokens: totalTokens,
+          model: entry.message.model ?? "unknown",
+          date,
+        });
       } catch {}
     }
   } catch {}
+
   return entries;
 }
 
 function findJsonlFiles(dir: string): string[] {
   const files: string[] = [];
+
   try {
     if (!fs.existsSync(dir)) return files;
-    const walk = (d: string) => {
-      for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
-        const full = path.join(d, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith(".jsonl")) files.push(full);
+
+    const walk = (currentDir: string) => {
+      for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) walk(fullPath);
+        else if (entry.name.endsWith(".jsonl")) files.push(fullPath);
       }
     };
+
     walk(dir);
   } catch {}
+
   return files;
 }
 
 function getCutoffDate(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().slice(0, 10);
 }
 
-function formatCost(n: number): string {
-  return `$${n.toFixed(2)}`;
+function formatCompactNumber(value: number): string {
+  const units = [
+    { threshold: 1_000_000_000, suffix: "B" },
+    { threshold: 1_000_000, suffix: "M" },
+    { threshold: 1_000, suffix: "k" },
+  ];
+
+  for (const unit of units) {
+    if (value < unit.threshold) continue;
+
+    const scaled = value / unit.threshold;
+    const decimals = scaled >= 100 ? 0 : 1;
+    return `${scaled.toFixed(decimals).replace(/\.0$/, "")}${unit.suffix}`;
+  }
+
+  return Math.round(value).toString();
+}
+
+function formatPercent(value: number, total: number): string {
+  if (total <= 0 || value <= 0) return "0%";
+
+  const percent = (value / total) * 100;
+  if (percent < 1) return "<1%";
+  return `${Math.round(percent)}%`;
+}
+
+function renderBar(value: number, total: number, width = 20): string {
+  if (total <= 0 || value <= 0) return "";
+  const count = Math.max(1, Math.round((value / total) * width));
+  return "█".repeat(count);
+}
+
+function formatProjectName(filePath: string): string {
+  const dirName = path.basename(path.dirname(filePath));
+  const project = dirName
+    .replace(/^--/, "")
+    .replace(/--$/, "")
+    .replace(/^Users-[^-]+-/, "")
+    .replace(/^home-[^-]+-/, "")
+    .replace(/^code-/, "");
+
+  return project || "other";
+}
+
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return count === 1 ? singular : plural;
+}
+
+function truncateLabel(label: string, maxWidth = 40): string {
+  if (label.length <= maxWidth) return label;
+  return `${label.slice(0, maxWidth - 1)}…`;
+}
+
+function renderSection(title: string, rows: Array<[string, number]>, total: number): string[] {
+  if (rows.length === 0 || total <= 0) return [];
+
+  const formattedRows = rows.map(([label, value]) => ({
+    label: truncateLabel(label),
+    tokens: formatCompactNumber(value),
+    percent: formatPercent(value, total),
+    bar: renderBar(value, total),
+  }));
+
+  const labelWidth = Math.max(...formattedRows.map((row) => row.label.length));
+  const tokenWidth = Math.max(...formattedRows.map((row) => row.tokens.length));
+  const percentWidth = Math.max(...formattedRows.map((row) => row.percent.length));
+
+  return [
+    title,
+    ...formattedRows.map(
+      (row) =>
+        `   ${row.label.padEnd(labelWidth)}  ${row.tokens.padStart(tokenWidth)}  ${row.percent.padStart(percentWidth)}  ${row.bar}`,
+    ),
+    "",
+  ];
 }
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("cost", {
-    description: "Show API cost summary (default: 7 days). Usage: /cost [days]",
+    description: "Show token usage summary (default: 7 days). Usage: /cost [days]",
     handler: async (args, ctx) => {
       const days = args?.trim() ? parseInt(args.trim(), 10) : 7;
       if (isNaN(days) || days < 1) {
@@ -73,105 +163,60 @@ export default function (pi: ExtensionAPI) {
 
       const cutoff = getCutoffDate(days);
       const sessionsDir = path.join(os.homedir(), ".pi", "agent", "sessions");
-      const tmpDir = process.env.TMPDIR ?? "/tmp";
+      const files = findJsonlFiles(sessionsDir);
 
-      const mainFiles = findJsonlFiles(sessionsDir);
-      const subagentDirs: string[] = [];
-      try {
-        for (const entry of fs.readdirSync(tmpDir, { withFileTypes: true })) {
-          if (
-            entry.isDirectory() &&
-            entry.name.startsWith("pi-subagent-session-")
-          ) {
-            subagentDirs.push(path.join(tmpDir, entry.name));
-          }
-        }
-      } catch {}
-      const subagentFiles = subagentDirs.flatMap(findJsonlFiles);
-
-      let mainCost = 0;
-      let subagentCost = 0;
-      let mainSessions = 0;
-      let subagentSessions = 0;
+      let totalTokens = 0;
+      let totalSessions = 0;
       const byDate: Record<string, number> = {};
       const byModel: Record<string, number> = {};
       const byProject: Record<string, number> = {};
 
-      const processFile = (
-        filePath: string,
-        isSubagent: boolean
-      ) => {
-        const basename = path.basename(filePath);
-        const datePart = basename.slice(0, 10);
-        if (datePart < cutoff) return;
+      for (const filePath of files) {
+        const entries = extractUsage(filePath).filter((entry) => entry.date >= cutoff);
+        if (entries.length === 0) continue;
 
-        const entries = extractCosts(filePath);
-        if (entries.length === 0) return;
+        totalSessions++;
 
-        let sessionCost = 0;
-        for (const e of entries) {
-          sessionCost += e.cost;
-          byDate[e.date] = (byDate[e.date] ?? 0) + e.cost;
-          byModel[e.model] = (byModel[e.model] ?? 0) + e.cost;
+        let sessionTokens = 0;
+        for (const entry of entries) {
+          sessionTokens += entry.tokens;
+          byDate[entry.date] = (byDate[entry.date] ?? 0) + entry.tokens;
+          byModel[entry.model] = (byModel[entry.model] ?? 0) + entry.tokens;
         }
 
-        if (isSubagent) {
-          subagentCost += sessionCost;
-          subagentSessions++;
-        } else {
-          mainCost += sessionCost;
-          mainSessions++;
-          const dirName = path.basename(path.dirname(filePath));
-          let project = dirName
-            .replace(/^--/, "")
-            .replace(/--$/, "")
-            .replace(/^Users-[^-]+-/, "")
-            .replace(/^code-/, "");
-          if (!project) project = "other";
-          byProject[project] = (byProject[project] ?? 0) + sessionCost;
-        }
-      };
-
-      for (const f of mainFiles) processFile(f, false);
-      for (const f of subagentFiles) processFile(f, true);
-
-      const total = mainCost + subagentCost;
-      const totalSessions = mainSessions + subagentSessions;
-
-      const lines: string[] = [];
-      lines.push(`💰 Total: ${formatCost(total)}  (${totalSessions} sessions, last ${days} days)`);
-      lines.push(`   Main: ${formatCost(mainCost)} (${mainSessions})  ·  Subagents: ${formatCost(subagentCost)} (${subagentSessions})`);
-      lines.push("");
-
-      const dates = Object.keys(byDate).sort();
-      if (dates.length > 0) {
-        lines.push("📅 By date:");
-        for (const d of dates) {
-          const bar = "█".repeat(Math.max(1, Math.round((byDate[d] / total) * 30)));
-          lines.push(`   ${d}  ${formatCost(byDate[d]).padStart(8)}  ${bar}`);
-        }
-        lines.push("");
+        totalTokens += sessionTokens;
+        const project = formatProjectName(filePath);
+        byProject[project] = (byProject[project] ?? 0) + sessionTokens;
       }
 
-      const projects = Object.entries(byProject)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
-      if (projects.length > 0) {
-        lines.push("📁 By project:");
-        for (const [name, cost] of projects) {
-          lines.push(`   ${name.padEnd(30)} ${formatCost(cost).padStart(8)}`);
-        }
-        lines.push("");
+      if (totalTokens === 0) {
+        ctx.ui.notify(`No token usage found for the last ${days} days.`, "info");
+        return;
       }
 
-      const models = Object.entries(byModel).sort((a, b) => b[1] - a[1]);
-      if (models.length > 0) {
-        lines.push("🤖 By model:");
-        for (const [name, cost] of models) {
-          lines.push(`   ${name.padEnd(30)} ${formatCost(cost).padStart(8)}`);
-        }
-      }
+      const lines = [
+        `🔢 Total: ${formatCompactNumber(totalTokens)} tokens  (${totalSessions} ${pluralize(totalSessions, "session")}, last ${days} days)`,
+        "",
+        ...renderSection(
+          "📅 By date:",
+          Object.entries(byDate).sort(([left], [right]) => left.localeCompare(right)),
+          totalTokens,
+        ),
+        ...renderSection(
+          "📁 By project:",
+          Object.entries(byProject)
+            .sort((left, right) => right[1] - left[1])
+            .slice(0, 10),
+          totalTokens,
+        ),
+        ...renderSection(
+          "🤖 By model:",
+          Object.entries(byModel).sort((left, right) => right[1] - left[1]),
+          totalTokens,
+        ),
+      ];
 
+      while (lines.at(-1) === "") lines.pop();
       ctx.ui.notify(lines.join("\n"), "info");
     },
   });
