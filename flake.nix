@@ -21,7 +21,6 @@
               nodejs
               nodePackages.typescript
               nodePackages.typescript-language-server
-              tokei
             ];
           };
         };
