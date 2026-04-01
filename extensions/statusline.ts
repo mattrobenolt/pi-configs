@@ -62,14 +62,17 @@ export default function (pi: ExtensionAPI) {
 				render(width: number): string[] {
 					refreshGitInfo();
 					let input = 0,
-						output = 0,
-						cost = 0;
-					for (const e of ctx.sessionManager.getBranch()) {
-						if (e.type === "message" && e.message.role === "assistant") {
-							const m = e.message as AssistantMessage;
+						output = 0;
+					let thinking = "";
+					const entries = ctx.sessionManager.getBranch();
+					for (let i = entries.length - 1; i >= 0; i--) {
+						const entry = entries[i];
+						if (entry.type === "message" && entry.message.role === "assistant") {
+							const m = entry.message as AssistantMessage;
 							input += m.usage.input;
 							output += m.usage.output;
-							cost += m.usage.cost.total;
+						} else if (entry.type === "thinking_level_change" && !thinking) {
+							thinking = entry.thinkingLevel;
 						}
 					}
 
@@ -89,7 +92,7 @@ export default function (pi: ExtensionAPI) {
 
 					const right = theme.fg(
 						"dim",
-						`${modelId}  ↑${fmt(input)} ↓${fmt(output)} $${cost.toFixed(3)}`,
+						`${modelId}  ${thinking}  ↑${fmt(input)} ↓${fmt(output)}`,
 					);
 
 					const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
