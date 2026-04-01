@@ -644,7 +644,7 @@ function renderDiffResult(
     return view;
   }
 
-  const det = result.details as { _old?: string; _new?: string; _path?: string };
+  const det = (result.details ?? {}) as { _old?: string; _new?: string; _path?: string };
   if (det._new === undefined) {
     view.error = null;
     view.stats = null;

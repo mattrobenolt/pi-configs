@@ -1,34 +1,39 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@mariozechner/pi-ai";
 
+// Built-in pi tools that are inactive by default. Tools registered by extensions
+// (e.g. webfetch, websearch, memory) are always active and don't need to be listed here.
+const EXTRA_TOOLS = ["grep", "find", "ls"];
+
 export default function (pi: ExtensionAPI) {
-  // Auto-expand tool outputs on session start
+  let lastPayload: unknown = null;
+
   pi.on("session_start", (_event, ctx) => {
+    // Activate extra tools
+    const active = pi.getActiveTools() as unknown as string[];
+    pi.setActiveTools([...new Set([...active, ...EXTRA_TOOLS])]);
+
+    // Auto-expand tool outputs
     ctx.ui.setToolsExpanded(true);
   });
-  // Capture the last provider payload so we can inspect it
-  let lastPayload: unknown = null;
 
   pi.on("before_provider_request", (event) => {
     lastPayload = event.payload;
   });
 
-  // Inspect the text system prompt
   pi.registerTool({
     name: "get_system_prompt",
     label: "Get System Prompt",
     description: "Returns the current system prompt so the LLM can inspect it",
     parameters: Type.Object({}),
     async execute(_id, _params, _signal, _onUpdate, ctx) {
-      const prompt = ctx.getSystemPrompt();
       return {
-        content: [{ type: "text", text: prompt }],
+        content: [{ type: "text", text: ctx.getSystemPrompt() }],
         details: {},
       };
     },
   });
 
-  // Inspect tool definitions from the API payload
   pi.registerTool({
     name: "get_tools",
     label: "Get Tools",
@@ -45,7 +50,6 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Inspect the last full API request payload
   pi.registerTool({
     name: "get_last_payload",
     label: "Get Last Payload",

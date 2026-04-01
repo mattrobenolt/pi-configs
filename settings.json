@@ -1,12 +1,10 @@
 {
   "packages": [
-    "./pi-subagents",
-    "git:github.com/nicobailon/pi-mcp-adapter",
-    "git:github.com/davebcn87/pi-autoresearch"
+    "./pi-subagents"
   ],
   "lastChangelogVersion": "0.64.0",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.4",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
   "defaultThinkingLevel": "medium",
   "theme": "dracula",
   "transport": "sse",
