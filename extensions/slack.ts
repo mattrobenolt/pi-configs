@@ -1,5 +1,14 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateHead } from "@mariozechner/pi-coding-agent";
+import {
+  createAgentSession,
+  createExtensionRuntime,
+  SessionManager,
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+  truncateHead,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type ResourceLoader,
+} from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
 import { execFileSync } from "node:child_process";
 import { createDecipheriv, pbkdf2Sync } from "node:crypto";
@@ -163,9 +172,19 @@ type PendingMessage = {
   text: string;
 };
 
+type TranscriptEntry = {
+  role: "them" | "me";
+  username: string;
+  text: string;
+  ts: string;
+};
+
+type ConversationStatus = "idle" | "drafting" | "sending";
+
 type ConversationState = {
   workspaceUrl: string;
   channelId: string;
+  label: string;
   lastSeenTs: string;
   steeringQueue: string[];
   pendingMessages: PendingMessage[];
@@ -175,9 +194,15 @@ type ConversationState = {
   rtmMsgId: number;
   systemContext: string;
   myUserId: string;
+  model: NonNullable<ExtensionContext["model"]>;
+  modelRegistry: ExtensionContext["modelRegistry"];
+  transcript: TranscriptEntry[];
+  lastActivity: Date;
+  status: ConversationStatus;
 };
 
-let activeConversation: ConversationState | null = null;
+const conversations = new Map<string, ConversationState>();
+let capturedUi: ExtensionContext["ui"] | null = null;
 const cachedWorkspaceAuth = new Map<string, Promise<SlackAuth>>();
 
 const OutputFormatParam = Type.Optional(
@@ -2981,6 +3006,133 @@ async function connectRtm(workspaceUrl: string): Promise<WebSocket | null> {
   }
 }
 
+function makeConversationResourceLoader(systemContext: string): ResourceLoader {
+  return {
+    getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getPrompts: () => ({ prompts: [], diagnostics: [] }),
+    getThemes: () => ({ themes: [], diagnostics: [] }),
+    getAgentsFiles: () => ({ agentsFiles: [] }),
+    getSystemPrompt: () => systemContext,
+    getAppendSystemPrompt: () => [],
+    extendResources: () => {},
+    reload: async () => {},
+  };
+}
+
+function updateConversationWidget(): void {
+  if (!capturedUi) return;
+  if (conversations.size === 0) {
+    capturedUi.setWidget("slack-conversations", []);
+    return;
+  }
+  const lines = [...conversations.values()].map((conv) => {
+    const icon = conv.status === "drafting" ? "✍" : conv.status === "sending" ? "↑" : "💬";
+    const last = conv.transcript.at(-1);
+    const preview = last
+      ? `${last.username}: "${last.text.slice(0, 50)}${last.text.length > 50 ? "…" : ""}"`
+      : "waiting…";
+    return `${icon} ${conv.label}  ${preview}`;
+  });
+  capturedUi.setWidget("slack-conversations", lines);
+}
+
+async function generateAndSendReply(
+  conv: ConversationState,
+  messages: PendingMessage[],
+  steering: string[],
+): Promise<void> {
+  conv.status = "drafting";
+  updateConversationWidget();
+
+  let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | null = null;
+
+  try {
+    const messageLines = messages.map((m) => `${m.username}: "${m.text}"`).join("\n");
+    const steeringSection =
+      steering.length > 0
+        ? `\n\nSteering notes from Matt (incorporate naturally):\n${steering.map((s) => `- ${s}`).join("\n")}`
+        : "";
+    const prompt = `${messageLines}${steeringSection}`;
+
+    const result = await createAgentSession({
+      sessionManager: SessionManager.inMemory(),
+      model: conv.model,
+      modelRegistry: conv.modelRegistry as
+        | import("@mariozechner/pi-coding-agent").ModelRegistry
+        | undefined,
+      thinkingLevel: "off",
+      tools: [],
+      resourceLoader: makeConversationResourceLoader(conv.systemContext),
+    });
+    session = result.session;
+
+    await session.prompt(prompt, { source: "extension" });
+
+    let replyText = "";
+    for (let i = session.state.messages.length - 1; i >= 0; i--) {
+      const msg = session.state.messages[i];
+      if (msg.role === "assistant") {
+        for (const part of msg.content) {
+          if (part.type === "text" && part.text.trim()) {
+            replyText = part.text.trim();
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    if (!replyText) return;
+
+    conv.status = "sending";
+    updateConversationWidget();
+
+    if (conv.rtmSocket?.readyState === WebSocket.OPEN) {
+      conv.rtmSocket.send(
+        JSON.stringify({ id: ++conv.rtmMsgId, type: "typing", channel: conv.channelId }),
+      );
+    }
+
+    await delay(calculateTypingDelay(replyText));
+
+    await slackApiCall(
+      "chat.postMessage",
+      { channel: conv.channelId, text: replyText },
+      { workspaceUrl: conv.workspaceUrl },
+    );
+
+    conv.transcript.push({
+      role: "me",
+      username: "matt",
+      text: replyText,
+      ts: String(Date.now() / 1000),
+    });
+    conv.lastActivity = new Date();
+
+    for (const m of messages) {
+      const existing = conv.transcript.find((t) => t.ts === m.ts);
+      if (!existing) {
+        conv.transcript.push({ role: "them", username: m.username, text: m.text, ts: m.ts });
+      }
+    }
+    conv.transcript.sort((a, b) => Number.parseFloat(a.ts) - Number.parseFloat(b.ts));
+  } catch {
+    // don't crash the loop
+  } finally {
+    if (session) {
+      try {
+        await session.abort();
+      } catch {
+        /* ignore */
+      }
+      session.dispose();
+    }
+    conv.status = "idle";
+    updateConversationWidget();
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "SlackRead",
@@ -3262,46 +3414,49 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "SlackStartConversation",
     label: "Slack Start Conversation",
-    description: [
-      "Start a background polling loop for a Slack channel or DM.",
-      "Automatically triggers LLM turns when new messages arrive.",
-      "Use SlackStopConversation to end the loop.",
-    ].join("\n"),
+    description:
+      "Start a background Slack conversation loop for a channel or DM. Polls for new messages and auto-generates replies using a side session. Runs fully in the background without interrupting the main session. Use /conversations to manage active loops.",
     promptSnippet:
-      "Start a background Slack conversation loop. Polls for new messages and triggers reply turns automatically.",
+      "Start a background Slack conversation loop. Polls for new messages, generates replies with createAgentSession, posts with typing jitter. Use /conversations to inspect or steer.",
     parameters: Type.Object({
       channel: Type.String({
-        description:
-          "Channel name, channel ID, or DM channel ID (e.g. D01TJRVTQ5C). Accepts '#general', 'C123...', or 'D123...'.",
+        description: "Channel name, channel ID, or DM channel ID (e.g. D01TJRVTQ5C).",
       }),
+      label: Type.Optional(
+        Type.String({
+          description:
+            "Display name for this conversation (e.g. 'Nick', '#general'). Auto-detected if omitted.",
+        }),
+      ),
       systemContext: Type.Optional(
         Type.String({
           description:
-            "Instructions for the LLM on how to reply. Defaults to the write-like-matt style profile.",
+            "Reply instructions for the LLM. Defaults to the write-like-matt style profile.",
         }),
       ),
     }),
     async execute(
       _toolCallId,
-      params: { channel: string; systemContext?: string },
+      params: { channel: string; label?: string; systemContext?: string },
       signal,
       onUpdate,
       ctx,
     ) {
-      if (activeConversation) {
-        throw new Error("A conversation is already active. Call SlackStopConversation first.");
-      }
+      if (!ctx.model) throw new Error("No active model selected.");
 
       onUpdate?.({
-        content: [{ type: "text", text: "Starting Slack conversation loop…" }],
-        details: { stage: "start" },
+        content: [{ type: "text", text: "Starting conversation loop…" }],
+        details: {},
       });
 
       const workspaceUrl = await getConfiguredWorkspaceUrl(ctx.cwd);
-
       const channelId = isChannelId(params.channel.trim())
         ? params.channel.trim()
         : await resolveChannelId(params.channel, workspaceUrl, signal);
+
+      if (conversations.has(channelId)) {
+        throw new Error(`A conversation loop for ${channelId} is already active.`);
+      }
 
       const authTestResponse = await slackApiCall("auth.test", {}, { workspaceUrl, signal });
       const myUserId = getString(authTestResponse.user_id) ?? "";
@@ -3316,7 +3471,7 @@ export default function (pi: ExtensionAPI) {
           "",
           styleProfile.trim(),
           "",
-          "Use SlackConversationReply to send replies. Do not use SlackPost.",
+          "Reply with ONLY the message text — no explanation, no preamble, no quotes around it. Just the reply itself.",
         ].join("\n");
       }
 
@@ -3331,11 +3486,38 @@ export default function (pi: ExtensionAPI) {
           ? (getString(historyMessages[0]!.ts) ?? String(Date.now() / 1000))
           : String(Date.now() / 1000);
 
+      // Derive a label if not provided
+      let label = params.label ?? channelId;
+      if (!params.label) {
+        if (channelId.startsWith("D")) {
+          try {
+            const info = await slackApiCall(
+              "conversations.info",
+              { channel: channelId },
+              { workspaceUrl, signal },
+            );
+            const ch = isRecord(info.channel) ? info.channel : undefined;
+            const members = ch
+              ? asArray(ch.members).filter((m): m is string => typeof m === "string")
+              : [];
+            const otherId = members.find((m) => m !== myUserId);
+            if (otherId) {
+              label = await resolveUserName(otherId, undefined, workspaceUrl, signal);
+            }
+          } catch {
+            // keep channelId as label
+          }
+        } else {
+          label = await resolveChannelName(channelId, workspaceUrl, signal);
+        }
+      }
+
       const rtmSocket = await connectRtm(workspaceUrl);
 
       const conv: ConversationState = {
         workspaceUrl,
         channelId,
+        label,
         lastSeenTs,
         steeringQueue: [],
         pendingMessages: [],
@@ -3344,11 +3526,16 @@ export default function (pi: ExtensionAPI) {
         rtmMsgId: 0,
         systemContext,
         myUserId,
+        model: ctx.model,
+        modelRegistry: ctx.modelRegistry,
+        transcript: [],
+        lastActivity: new Date(),
+        status: "idle",
         pollIntervalId: undefined as unknown as ReturnType<typeof setInterval>,
       };
 
       conv.pollIntervalId = setInterval(async () => {
-        const c = activeConversation;
+        const c = conversations.get(channelId);
         if (!c) return;
 
         try {
@@ -3358,25 +3545,25 @@ export default function (pi: ExtensionAPI) {
             { workspaceUrl: c.workspaceUrl },
           );
 
-          const messages = asArray(response.messages)
+          const newMessages = asArray(response.messages)
             .filter(isRecord)
             .filter((msg) => {
               const ts = getString(msg.ts);
               const userId = getString(msg.user);
               return ts && ts > c.lastSeenTs && userId !== c.myUserId;
             })
-            .sort((a, b) => {
-              const tsA = Number.parseFloat(getString(a.ts) ?? "0");
-              const tsB = Number.parseFloat(getString(b.ts) ?? "0");
-              return tsA - tsB;
-            });
+            .sort(
+              (a, b) =>
+                Number.parseFloat(getString(a.ts) ?? "0") -
+                Number.parseFloat(getString(b.ts) ?? "0"),
+            );
 
-          if (messages.length === 0) return;
+          if (newMessages.length === 0) return;
 
-          const latestTs = getString(messages[messages.length - 1]!.ts)!;
+          const latestTs = getString(newMessages[newMessages.length - 1]!.ts)!;
           c.lastSeenTs = latestTs;
 
-          for (const msg of messages) {
+          for (const msg of newMessages) {
             const userId = getString(msg.user) ?? "";
             const username = userId
               ? await resolveUserName(userId, getString(msg.username), c.workspaceUrl)
@@ -3389,7 +3576,7 @@ export default function (pi: ExtensionAPI) {
             });
           }
 
-          if (c.triggerPending) return;
+          if (c.triggerPending || c.status !== "idle") return;
           c.triggerPending = true;
 
           const pending = [...c.pendingMessages];
@@ -3397,44 +3584,29 @@ export default function (pi: ExtensionAPI) {
           const steering = [...c.steeringQueue];
           c.steeringQueue = [];
 
-          const messageLines = pending.map((m) => `${m.username}: "${m.text}"`).join("\n");
-
-          const steeringSection =
-            steering.length > 0
-              ? `\n\nSteering notes from Matt (incorporate naturally):\n${steering.map((s) => `- ${s}`).join("\n")}`
-              : "";
-
-          const prompt = [
-            `New message(s) in the active Slack conversation (channel ${c.channelId}):`,
-            ``,
-            messageLines,
-            steeringSection,
-            ``,
-            c.systemContext,
-          ]
-            .join("\n")
-            .trim();
-
-          pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+          try {
+            await generateAndSendReply(c, pending, steering);
+          } finally {
+            c.triggerPending = false;
+          }
         } catch {
-          // don't let poll errors crash the loop
-        } finally {
-          if (activeConversation) {
-            activeConversation.triggerPending = false;
+          if (conversations.has(channelId)) {
+            conversations.get(channelId)!.triggerPending = false;
           }
         }
       }, 4000);
 
-      activeConversation = conv;
+      conversations.set(channelId, conv);
+      updateConversationWidget();
 
       return {
         content: [
           {
             type: "text" as const,
-            text: `Conversation loop started for channel ${channelId}. I'll respond to new messages automatically.`,
+            text: `Conversation loop started for "${label}" (${channelId}). Replies will be generated in the background. Use /conversations to manage.`,
           },
         ],
-        details: { channelId, workspaceUrl, myUserId },
+        details: { channelId, label, workspaceUrl, myUserId },
       };
     },
   });
@@ -3442,22 +3614,73 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "SlackStopConversation",
     label: "Slack Stop Conversation",
-    description: "Stop the active Slack conversation polling loop.",
-    promptSnippet: "Stop the active Slack conversation loop started by SlackStartConversation.",
-    parameters: Type.Object({}),
-    async execute() {
-      if (!activeConversation) {
+    description: "Stop an active Slack conversation loop.",
+    promptSnippet: "Stop an active Slack conversation loop by channel ID or label.",
+    parameters: Type.Object({
+      channel: Type.Optional(
+        Type.String({
+          description:
+            "Channel ID or label of the conversation to stop. If omitted and only one is active, stops that one.",
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params: { channel?: string }) {
+      if (conversations.size === 0) {
         return {
-          content: [{ type: "text" as const, text: "No active conversation." }],
+          content: [{ type: "text" as const, text: "No active conversations." }],
           details: {},
         };
       }
-      clearInterval(activeConversation.pollIntervalId);
-      activeConversation.rtmSocket?.close();
-      activeConversation = null;
+
+      let channelId: string | undefined;
+      if (params.channel) {
+        for (const [id, conv] of conversations) {
+          if (
+            id === params.channel ||
+            conv.label === params.channel ||
+            conv.channelId === params.channel
+          ) {
+            channelId = id;
+            break;
+          }
+        }
+        if (!channelId) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `No active conversation matching "${params.channel}".`,
+              },
+            ],
+            details: {},
+          };
+        }
+      } else if (conversations.size === 1) {
+        channelId = [...conversations.keys()][0]!;
+      } else {
+        const labels = [...conversations.values()].map((c) => c.label).join(", ");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Multiple active conversations: ${labels}. Specify which to stop.`,
+            },
+          ],
+          details: {},
+        };
+      }
+
+      const conv = conversations.get(channelId)!;
+      clearInterval(conv.pollIntervalId);
+      conv.rtmSocket?.close();
+      conversations.delete(channelId);
+      updateConversationWidget();
+
       return {
-        content: [{ type: "text" as const, text: "Conversation loop stopped." }],
-        details: {},
+        content: [
+          { type: "text" as const, text: `Conversation loop for "${conv.label}" stopped.` },
+        ],
+        details: { channelId, label: conv.label } as Record<string, unknown>,
       };
     },
   });
@@ -3466,67 +3689,127 @@ export default function (pi: ExtensionAPI) {
     name: "SlackConversationSteer",
     label: "Slack Conversation Steer",
     description:
-      "Queue a steering note to inject into the next reply turn. Call this when the user provides context or instructions for the ongoing conversation.",
+      "Queue a steering note for an active conversation loop. Call this when Matt provides context or instructions for the ongoing conversation.",
     promptSnippet:
-      "Queue a steering note for the active Slack conversation loop. The note will be included in the next triggered reply turn.",
+      "Queue a steering note for an active Slack conversation. Injected into the next auto-generated reply.",
     parameters: Type.Object({
-      note: Type.String({ description: "Context or instruction to inject into the next reply." }),
+      note: Type.String({ description: "Context or instruction for the next reply." }),
+      channel: Type.Optional(
+        Type.String({
+          description: "Channel ID or label. Defaults to the only active conversation.",
+        }),
+      ),
     }),
-    async execute(_toolCallId, params: { note: string }) {
-      if (!activeConversation) {
+    async execute(_toolCallId, params: { note: string; channel?: string }) {
+      if (conversations.size === 0) {
         return {
-          content: [{ type: "text" as const, text: "No active conversation to steer." }],
+          content: [{ type: "text" as const, text: "No active conversations." }],
           details: {},
         };
       }
-      activeConversation.steeringQueue.push(params.note);
+
+      let conv: ConversationState | undefined;
+      if (params.channel) {
+        for (const [id, c] of conversations) {
+          if (
+            id === params.channel ||
+            c.label === params.channel ||
+            c.channelId === params.channel
+          ) {
+            conv = c;
+            break;
+          }
+        }
+      } else if (conversations.size === 1) {
+        conv = [...conversations.values()][0];
+      }
+
+      if (!conv) {
+        const labels = [...conversations.values()].map((c) => c.label).join(", ");
+        return {
+          content: [{ type: "text" as const, text: `Specify which conversation: ${labels}` }],
+          details: {},
+        };
+      }
+
+      conv.steeringQueue.push(params.note);
       return {
-        content: [{ type: "text" as const, text: `Steering note queued: "${params.note}"` }],
-        details: { note: params.note } as Record<string, unknown>,
+        content: [
+          {
+            type: "text" as const,
+            text: `Steering note queued for "${conv.label}": "${params.note}"`,
+          },
+        ],
+        details: { note: params.note, label: conv.label } as Record<string, unknown>,
       };
     },
   });
 
-  pi.registerTool({
-    name: "SlackConversationReply",
-    label: "Slack Conversation Reply",
-    description:
-      "Post a reply in the active Slack conversation with a typing indicator and natural jitter delay. Use this instead of SlackPost during conversation loops.",
-    promptSnippet:
-      "Post a reply in the active Slack conversation loop. Adds typing indicator and natural delay before sending.",
-    parameters: Type.Object({
-      text: Type.String({ description: "The reply text to send." }),
-    }),
-    async execute(_toolCallId, params: { text: string }, signal, onUpdate) {
-      if (!activeConversation) {
-        throw new Error("No active conversation.");
+  pi.registerCommand("conversations", {
+    description: "Manage active Slack conversation loops.",
+    handler: async (_args, ctx) => {
+      if (conversations.size === 0) {
+        ctx.ui.notify("No active conversations. Use SlackStartConversation to start one.", "info");
+        return;
       }
-      const conv = activeConversation;
 
-      onUpdate?.({
-        content: [{ type: "text", text: "Typing…" }],
-        details: { stage: "typing" },
+      const convList = [...conversations.entries()];
+
+      const menuOptions = convList.map(([, conv]) => {
+        const icon = conv.status === "drafting" ? "✍" : conv.status === "sending" ? "↑" : "💬";
+        const last = conv.transcript.at(-1);
+        const preview = last
+          ? `${last.username}: "${last.text.slice(0, 45)}${last.text.length > 45 ? "…" : ""}"`
+          : "waiting for messages…";
+        return `${icon} ${conv.label}  —  ${preview}`;
       });
 
-      if (conv.rtmSocket?.readyState === WebSocket.OPEN) {
-        conv.rtmSocket.send(
-          JSON.stringify({ id: ++conv.rtmMsgId, type: "typing", channel: conv.channelId }),
+      const choice = await ctx.ui.select("Active conversations", menuOptions);
+      if (!choice) return;
+
+      const idx = menuOptions.indexOf(choice);
+      if (idx < 0) return;
+      const [channelId, conv] = convList[idx]!;
+
+      const subOptions = ["Add steering note", "View transcript", "Stop this conversation"];
+
+      const action = await ctx.ui.select(conv.label, subOptions);
+      if (!action) return;
+
+      if (action === "Stop this conversation") {
+        clearInterval(conv.pollIntervalId);
+        conv.rtmSocket?.close();
+        conversations.delete(channelId);
+        updateConversationWidget();
+        ctx.ui.notify(`Stopped "${conv.label}"`, "info");
+      } else if (action === "Add steering note") {
+        const note = await ctx.ui.input(
+          "Steering note",
+          `Context for the next reply to ${conv.label}`,
         );
+        if (note?.trim()) {
+          conv.steeringQueue.push(note.trim());
+          ctx.ui.notify(`Steering note queued for "${conv.label}"`, "info");
+        }
+      } else if (action === "View transcript") {
+        const lines = conv.transcript
+          .slice(-15)
+          .map((e) => `${e.role === "me" ? "you" : e.username}: ${e.text}`)
+          .join("\n\n");
+        ctx.ui.notify(lines || "No messages yet.", "info");
       }
-
-      await delay(calculateTypingDelay(params.text), signal);
-
-      await slackApiCall(
-        "chat.postMessage",
-        { channel: conv.channelId, text: params.text },
-        { workspaceUrl: conv.workspaceUrl, signal },
-      );
-
-      const preview = params.text.length > 80 ? `${params.text.slice(0, 80)}...` : params.text;
-      return {
-        content: [{ type: "text" as const, text: `Sent: ${preview}` }],
-        details: { channel: conv.channelId, preview },
-      };
     },
+  });
+
+  pi.on("session_start", (_event, ctx) => {
+    capturedUi = ctx.hasUI ? ctx.ui : null;
+  });
+
+  pi.on("session_shutdown", async () => {
+    for (const conv of conversations.values()) {
+      clearInterval(conv.pollIntervalId);
+      conv.rtmSocket?.close();
+    }
+    conversations.clear();
   });
 }
