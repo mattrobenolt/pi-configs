@@ -2662,6 +2662,74 @@ export async function slackReply(
   };
 }
 
+const SlackPostParams = Type.Object({
+  channel: Type.String({
+    description: "Channel name like '#general' or a channel ID like 'C123...'. Also accepts DM channel IDs from SlackOpenDM.",
+  }),
+  text: Type.String({
+    description: "Message text to post.",
+  }),
+  dryRun: Type.Optional(
+    Type.Boolean({
+      description: "If true, validate auth and target channel without posting.",
+    }),
+  ),
+  format: OutputFormatParam,
+  outputFile: OutputFileParam,
+});
+
+type SlackPostInput = Static<typeof SlackPostParams>;
+
+type SlackPostResult = {
+  text: string;
+  details: Record<string, unknown>;
+};
+
+async function slackPost(
+  input: SlackPostInput,
+  options?: ToolExecutionOptions,
+): Promise<SlackPostResult> {
+  const format = getOutputFormat(input.format);
+  const workspaceUrl = await getConfiguredWorkspaceUrl(options?.cwd);
+  const channelId = await resolveChannelId(input.channel, workspaceUrl, options?.signal);
+  const channelName = await resolveChannelName(channelId, workspaceUrl, options?.signal);
+
+  if (input.dryRun) {
+    const details = { format, dryRun: true, workspaceUrl, channelId, channelName };
+    return {
+      text:
+        format === "json"
+          ? renderJsonDocument({ tool: "SlackPost", ...details, text: input.text })
+          : `[dry run] Would post to #${channelName}\n\n${normalizeText(input.text)}`,
+      details,
+    };
+  }
+
+  const response = await slackApiCall(
+    "chat.postMessage",
+    { channel: channelId, text: input.text },
+    { workspaceUrl, signal: options?.signal },
+  );
+
+  const postedChannelId = getString(response.channel) ?? channelId;
+  const ts = getString(response.ts);
+  const permalink = ts ? buildSlackPermalink(workspaceUrl, postedChannelId, ts) : undefined;
+  const details = { format, dryRun: false, workspaceUrl, channelId: postedChannelId, channelName, ts, permalink };
+
+  return {
+    text:
+      format === "json"
+        ? renderJsonDocument({ tool: "SlackPost", ...details, response })
+        : [
+            `Message posted to #${channelName}`,
+            permalink ?? `${workspaceUrl} · ${postedChannelId} · ${ts ?? "unknown ts"}`,
+            "",
+            normalizeText(input.text),
+          ].join("\n"),
+    details,
+  };
+}
+
 export async function slackUserLookup(
   input: SlackUserLookupInput,
   options?: ToolExecutionOptions,
@@ -2869,6 +2937,38 @@ export default function (pi: ExtensionAPI) {
           ...rendered.details,
           truncated: truncated.truncated,
         },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "SlackPost",
+    label: "Slack Post",
+    description: [
+      "Post a new top-level message to a Slack channel or DM.",
+      "Use this to start a new conversation or post without threading.",
+      "Accepts channel names like '#general', channel IDs, or DM channel IDs from SlackOpenDM.",
+      "Set dryRun=true to validate without posting.",
+    ].join("\n"),
+    promptSnippet:
+      "Post a new top-level message to a Slack channel or DM. Use for fresh messages, not thread replies. Auth comes from Slack.app.",
+    parameters: SlackPostParams,
+    async execute(_toolCallId, params: SlackPostInput, signal, onUpdate, ctx) {
+      onUpdate?.({
+        content: [{ type: "text", text: params.dryRun ? "Validating Slack post target…" : "Posting to Slack…" }],
+        details: { stage: params.dryRun ? "dry-run" : "post" },
+      });
+      const result = await slackPost(params, { signal, cwd: ctx.cwd });
+      const rendered = await finalizeSlackToolOutput(
+        "SlackPost",
+        result,
+        params.outputFile,
+        ctx.cwd,
+      );
+      const truncated = truncateForModel(rendered.text);
+      return {
+        content: [{ type: "text" as const, text: truncated.text }],
+        details: { ...rendered.details, truncated: truncated.truncated },
       };
     },
   });
