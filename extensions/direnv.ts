@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { createBashTool } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { exec } from "node:child_process";
+import { setTrackedCwd } from "./lib/cwd-state";
 
 const CWD_SENTINEL = "__PI_CWD__:";
 
@@ -45,6 +46,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     currentCwd = process.cwd();
+    setTrackedCwd(currentCwd);
     cachedEnv = await getDirenvEnv(currentCwd);
     updateGitStatus(currentCwd);
 
@@ -148,6 +150,7 @@ export default function (pi: ExtensionAPI) {
 
     if (newCwd && newCwd !== currentCwd) {
       currentCwd = newCwd;
+      setTrackedCwd(currentCwd);
       updateGitStatus(currentCwd);
     }
 
