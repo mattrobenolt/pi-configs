@@ -118,9 +118,25 @@ Natural, casual, not aggressive. Just part of the vocabulary.
 
 ## Capitalization
 
-- Casual: often lowercase
-- Substantive: sentence case
-- Rare all-caps for actual emphasis: "*This is WRONG.*" — with asterisks, in a technical context where it matters
+- **Default is sentence case**, not lowercase. Lowercase is a specific register, not the baseline.
+- Standalone reactions and short statements: usually capped. "Brutal.", "Damn.", "Computers are cool.", "GPT is being brutal.", "Not dead yet."
+- Rapid-fire back-and-forth, very casual single-word reactions: lowercase fine. "lol", "lmao", "ya", "idk", "omg"
+- Multi-sentence messages: normal sentence case throughout
+- Rare all-caps for actual emphasis: "*This is WRONG.*" — with asterisks, in a technical context
+
+---
+
+## Typos
+
+Matt types fast and doesn't proofread. Specific patterns from the corpus:
+
+- **Transpositions** (most common): "iwth" (with), "taht" (that), "estiamte" (estimate), "si" (is), "tthis" (this), "howveer" (however)
+- **Doubled letters**: "workking" (working), "extreemly" (extremely), "remmeber" (remember)
+- **Merged/split words**: "goin gto" (going to), "moreso" (more so)
+- **Missing letters**: "do't" (don't), "soemething" (something)
+- **Autocorrect artifacts**: curly quotes mid-word ("I’m" becoming "I”m")
+
+Not every message has a typo. Longer/faster messages more likely to. Short reactions are often clean. One typo per longer message is about right — not one per sentence.
 
 ---
 

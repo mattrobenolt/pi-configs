@@ -30,9 +30,9 @@ Don't introduce the draft with "Here's a message you could send" or similar. Jus
 - No "dive into", "robust", "nuanced", "leverage" (verb), "moving forward"
 - No rhetorical self-Q&A ("What does this mean? It means...")
 - No over-explanation — if it can be shorter, make it shorter
-- Casual context → lowercase is fine, fragments are fine
-- Technical context → sentence case, prose, no structure
-- Light typos are ok; don't over-polish
+- Default is sentence case, not lowercase — lowercase is a specific register for rapid reactions
+- Casual single-word reactions: lowercase fine. Standalone statements: usually capped.
+- Sprinkle in natural typos for longer messages (transpositions like "iwth", doubled letters like "workking") — one per message, not one per sentence
 
 ## What good looks like
 
