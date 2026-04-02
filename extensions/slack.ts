@@ -2662,6 +2662,70 @@ export async function slackReply(
   };
 }
 
+const SlackDeleteMessageParams = Type.Object({
+  url: Type.Optional(
+    Type.String({
+      description: "Slack message URL to delete.",
+    }),
+  ),
+  channel: Type.Optional(
+    Type.String({
+      description: "Channel name or ID. Required if not using url.",
+    }),
+  ),
+  ts: Type.Optional(
+    Type.String({
+      description: "Message timestamp to delete. Required if not using url. Format: '1775000000.123456'.",
+    }),
+  ),
+  format: OutputFormatParam,
+  outputFile: OutputFileParam,
+});
+
+type SlackDeleteMessageInput = Static<typeof SlackDeleteMessageParams>;
+
+type SlackDeleteMessageResult = {
+  text: string;
+  details: Record<string, unknown>;
+};
+
+async function slackDeleteMessage(
+  input: SlackDeleteMessageInput,
+  options?: ToolExecutionOptions,
+): Promise<SlackDeleteMessageResult> {
+  const format = getOutputFormat(input.format);
+  const workspaceUrl = await getConfiguredWorkspaceUrl(options?.cwd);
+
+  let channelId: string;
+  let ts: string;
+
+  if (input.url) {
+    const ref = parseSlackMessageUrl(input.url);
+    channelId = ref.channelId;
+    ts = ref.messageTs;
+  } else if (input.channel && input.ts) {
+    channelId = await resolveChannelId(input.channel, workspaceUrl, options?.signal);
+    ts = validateTs(input.ts, "ts");
+  } else {
+    throw new Error("SlackDeleteMessage requires either url or both channel and ts.");
+  }
+
+  await slackApiCall(
+    "chat.delete",
+    { channel: channelId, ts },
+    { workspaceUrl, signal: options?.signal },
+  );
+
+  const details = { format, workspaceUrl, channelId, ts };
+  return {
+    text:
+      format === "json"
+        ? renderJsonDocument({ tool: "SlackDeleteMessage", ...details })
+        : `Message deleted: ${ts} in ${channelId}`,
+    details,
+  };
+}
+
 const SlackPostParams = Type.Object({
   channel: Type.String({
     description: "Channel name like '#general' or a channel ID like 'C123...'. Also accepts DM channel IDs from SlackOpenDM.",
@@ -2942,6 +3006,37 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "SlackDeleteMessage",
+    label: "Slack Delete Message",
+    description: [
+      "Delete a Slack message by URL, or by channel + timestamp.",
+      "Only works on messages posted by the authenticated user.",
+      "Authentication is automatic on macOS from Slack.app.",
+    ].join("\n"),
+    promptSnippet:
+      "Delete a Slack message by URL or channel + ts. Only works on your own messages. Auth comes from Slack.app.",
+    parameters: SlackDeleteMessageParams,
+    async execute(_toolCallId, params: SlackDeleteMessageInput, signal, onUpdate, ctx) {
+      onUpdate?.({
+        content: [{ type: "text", text: "Deleting Slack message\u2026" }],
+        details: { stage: "delete" },
+      });
+      const result = await slackDeleteMessage(params, { signal, cwd: ctx.cwd });
+      const rendered = await finalizeSlackToolOutput(
+        "SlackDeleteMessage",
+        result,
+        params.outputFile,
+        ctx.cwd,
+      );
+      const truncated = truncateForModel(rendered.text);
+      return {
+        content: [{ type: "text" as const, text: truncated.text }],
+        details: { ...rendered.details, truncated: truncated.truncated },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "SlackPost",
     label: "Slack Post",
     description: [
@@ -2951,7 +3046,7 @@ export default function (pi: ExtensionAPI) {
       "Set dryRun=true to validate without posting.",
     ].join("\n"),
     promptSnippet:
-      "Post a new top-level message to a Slack channel or DM. Use for fresh messages, not thread replies. Auth comes from Slack.app.",
+      "Post a new top-level message to a Slack channel or DM. Use for fresh messages, not thread replies. Auth comes from Slack.app. To mention a user, use <@USERID> format — get IDs via SlackUserLookup first.",
     parameters: SlackPostParams,
     async execute(_toolCallId, params: SlackPostInput, signal, onUpdate, ctx) {
       onUpdate?.({
@@ -2982,7 +3077,7 @@ export default function (pi: ExtensionAPI) {
       "Set dryRun=true to validate auth and the target without posting anything.",
     ].join("\n"),
     promptSnippet:
-      "Reply in a Slack thread. Auth comes from Slack.app. The default workspace comes from settings.json.",
+      "Reply in a Slack thread. Auth comes from Slack.app. To mention a user, use <@USERID> format — get IDs via SlackUserLookup first.",
     parameters: SlackReplyParams,
     async execute(_toolCallId, params: SlackReplyInput, signal, onUpdate, ctx) {
       onUpdate?.({
