@@ -56,11 +56,22 @@ function padToWidth(line: string, width: number, bg: string): string {
 // ---------------------------------------------------------------------------
 
 interface Palette {
-  addGutterFg: string; addGutterBg: string; addLineBg: string; addEmphBg: string;
-  delGutterFg: string; delGutterBg: string; delLineBg: string; delEmphBg: string;
-  ctxGutterBg: string; ctxGutterFg: string;
-  panelBg: string; hunkBg: string; hunkFg: string;
-  splitDivFg: string; codeFg: string; collapsedFg: string;
+  addGutterFg: string;
+  addGutterBg: string;
+  addLineBg: string;
+  addEmphBg: string;
+  delGutterFg: string;
+  delGutterBg: string;
+  delLineBg: string;
+  delEmphBg: string;
+  ctxGutterBg: string;
+  ctxGutterFg: string;
+  panelBg: string;
+  hunkBg: string;
+  hunkFg: string;
+  splitDivFg: string;
+  codeFg: string;
+  collapsedFg: string;
 }
 
 function themeHex(s: string): string | undefined {
@@ -98,22 +109,34 @@ function buildPalette(theme: Theme): Palette {
     const dark = isDark(theme);
     const blend = dark ? darken : lighten;
 
-    const addFg   = themeHex(theme.fg("toolDiffAdded",   "x")) ?? "#50fa7b";
-    const delFg   = themeHex(theme.fg("toolDiffRemoved", "x")) ?? "#ff5555";
-    const ctxFg   = themeHex(theme.fg("toolDiffContext", "x")) ?? "#6272a4";
-    const mutedFg = themeHex(theme.fg("muted",           "x")) ?? "#6272a4";
-    const dimFg   = themeHex(theme.fg("dim",             "x")) ?? "#555566";
+    const addFg = themeHex(theme.fg("toolDiffAdded", "x")) ?? "#50fa7b";
+    const delFg = themeHex(theme.fg("toolDiffRemoved", "x")) ?? "#ff5555";
+    const ctxFg = themeHex(theme.fg("toolDiffContext", "x")) ?? "#6272a4";
+    const mutedFg = themeHex(theme.fg("muted", "x")) ?? "#6272a4";
+    const dimFg = themeHex(theme.fg("dim", "x")) ?? "#555566";
 
     const addLineBg = themeHex(theme.bg("toolSuccessBg", "x")) ?? (dark ? "#1e3328" : "#e6ffec");
-    const delLineBg = themeHex(theme.bg("toolErrorBg",   "x")) ?? (dark ? "#33201e" : "#ffebe9");
-    const panelBg   = (theme.name && KNOWN_BG_COLORS[theme.name]) ?? themeHex(theme.bg("userMessageBg", "x")) ?? (dark ? "#1e1e1e" : "#ffffff");
-    const hunkBg    = themeHex(theme.bg("toolPendingBg", "x")) ?? (dark ? "#21222c" : "#f0f0f0");
+    const delLineBg = themeHex(theme.bg("toolErrorBg", "x")) ?? (dark ? "#33201e" : "#ffebe9");
+    const panelBg =
+      (theme.name && KNOWN_BG_COLORS[theme.name]) ??
+      themeHex(theme.bg("userMessageBg", "x")) ??
+      (dark ? "#1e1e1e" : "#ffffff");
+    const hunkBg = themeHex(theme.bg("toolPendingBg", "x")) ?? (dark ? "#21222c" : "#f0f0f0");
 
     return {
-      addGutterFg: addFg,  addGutterBg: blend(addLineBg, 0.7),  addLineBg, addEmphBg: blend(addFg, 0.25),
-      delGutterFg: delFg,  delGutterBg: blend(delLineBg, 0.7),  delLineBg, delEmphBg: blend(delFg, 0.20),
-      ctxGutterBg: hunkBg, ctxGutterFg: ctxFg,
-      panelBg, hunkBg, hunkFg: mutedFg,
+      addGutterFg: addFg,
+      addGutterBg: blend(addLineBg, 0.7),
+      addLineBg,
+      addEmphBg: blend(addFg, 0.25),
+      delGutterFg: delFg,
+      delGutterBg: blend(delLineBg, 0.7),
+      delLineBg,
+      delEmphBg: blend(delFg, 0.2),
+      ctxGutterBg: hunkBg,
+      ctxGutterFg: ctxFg,
+      panelBg,
+      hunkBg,
+      hunkFg: mutedFg,
       splitDivFg: dimFg,
       codeFg: dark ? "#f8f8f2" : "#24292f",
       collapsedFg: dimFg,
@@ -123,9 +146,17 @@ function buildPalette(theme: Theme): Palette {
   }
 }
 
-const KNOWN_SHIKI_THEMES: Record<string, string> = { dracula: "dracula", light: "github-light", dark: "github-dark" };
+const KNOWN_SHIKI_THEMES: Record<string, string> = {
+  dracula: "dracula",
+  light: "github-light",
+  dark: "github-dark",
+};
 // Terminal background colors per named theme — used for transparent-looking context lines.
-const KNOWN_BG_COLORS: Record<string, string> = { dracula: "#191a24", dark: "#0d1117", light: "#ffffff" };
+const KNOWN_BG_COLORS: Record<string, string> = {
+  dracula: "#191a24",
+  dark: "#0d1117",
+  light: "#ffffff",
+};
 
 function pickShikiTheme(theme: Theme): string {
   if (theme.name && KNOWN_SHIKI_THEMES[theme.name]) return KNOWN_SHIKI_THEMES[theme.name]!;
@@ -133,21 +164,37 @@ function pickShikiTheme(theme: Theme): string {
 }
 
 const FALLBACK_PALETTE: Palette = {
-  addGutterFg: "#50fa7b", addGutterBg: "#152a1e", addLineBg: "#1e3328", addEmphBg: "#14501e",
-  delGutterFg: "#ff5555", delGutterBg: "#2d1515", delLineBg: "#33201e", delEmphBg: "#501414",
-  ctxGutterBg: "#21222c", ctxGutterFg: "#6272a4",
-  panelBg: "#282a36", hunkBg: "#21222c", hunkFg: "#6272a4",
-  splitDivFg: "#555566", codeFg: "#f8f8f2", collapsedFg: "#555566",
+  addGutterFg: "#50fa7b",
+  addGutterBg: "#152a1e",
+  addLineBg: "#1e3328",
+  addEmphBg: "#14501e",
+  delGutterFg: "#ff5555",
+  delGutterBg: "#2d1515",
+  delLineBg: "#33201e",
+  delEmphBg: "#501414",
+  ctxGutterBg: "#21222c",
+  ctxGutterFg: "#6272a4",
+  panelBg: "#282a36",
+  hunkBg: "#21222c",
+  hunkFg: "#6272a4",
+  splitDivFg: "#555566",
+  codeFg: "#f8f8f2",
+  collapsedFg: "#555566",
 };
 
 // ---------------------------------------------------------------------------
 // HAST → structured spans
 // ---------------------------------------------------------------------------
 
-interface Span { text: string; fg?: string; emph: boolean; }
+interface Span {
+  text: string;
+  fg?: string;
+  emph: boolean;
+}
 
 interface HastNode {
-  type: string; value?: string;
+  type: string;
+  value?: string;
   properties?: Record<string, unknown>;
   children?: HastNode[];
 }
@@ -160,7 +207,10 @@ function hastToSpans(node: HastNode | undefined): Span[] {
       const text = (n.value ?? "").replaceAll("\t", "  ").replaceAll("\n", "");
       if (!text) return;
       const last = spans.at(-1);
-      if (last && last.fg === fg && last.emph === emph) { last.text += text; return; }
+      if (last && last.fg === fg && last.emph === emph) {
+        last.text += text;
+        return;
+      }
       spans.push({ text, fg, emph });
       return;
     }
@@ -175,11 +225,12 @@ function hastToSpans(node: HastNode | undefined): Span[] {
 }
 
 function renderSpans(spans: Span[], emphBg: string, lineBg: string, codeFg: string): string {
-  return spans.map(s =>
-    hexAnsi(s.fg ?? codeFg, false) +
-    hexAnsi(s.emph ? emphBg : lineBg, true) +
-    s.text + RST
-  ).join("");
+  return spans
+    .map(
+      (s) =>
+        hexAnsi(s.fg ?? codeFg, false) + hexAnsi(s.emph ? emphBg : lineBg, true) + s.text + RST,
+    )
+    .join("");
 }
 
 // ---------------------------------------------------------------------------
@@ -211,14 +262,24 @@ function loadHighlighter(lang: string, shikiTheme: string): Promise<Highlighter 
 // Diff data model — linear, correct ordering
 // ---------------------------------------------------------------------------
 
-interface LineData { lineNum: number; spans: Span[]; }
+interface LineData {
+  lineNum: number;
+  spans: Span[];
+}
 
 type HunkItem =
   | { type: "context"; lines: LineData[] }
   | { type: "change"; deletions: LineData[]; additions: LineData[] };
 
-interface HunkData { header: string; collapsedBefore: number; items: HunkItem[]; }
-interface DiffData { hunks: HunkData[]; numWidth: number; }
+interface HunkData {
+  header: string;
+  collapsedBefore: number;
+  items: HunkItem[];
+}
+interface DiffData {
+  hunks: HunkData[];
+  numWidth: number;
+}
 
 function emptySpans(raw: string): Span[] {
   return raw ? [{ text: raw, fg: undefined, emph: false }] : [];
@@ -230,7 +291,10 @@ function buildDiffData(
   addNodes: (HastNode | undefined)[] | null,
 ): DiffData {
   const numWidth = String(
-    metadata.hunks.reduce((mx, h) => Math.max(mx, h.deletionStart + h.deletionCount, h.additionStart + h.additionCount), 1)
+    metadata.hunks.reduce(
+      (mx, h) => Math.max(mx, h.deletionStart + h.deletionCount, h.additionStart + h.additionCount),
+      1,
+    ),
   ).length;
 
   const hunks: HunkData[] = [];
@@ -239,35 +303,51 @@ function buildDiffData(
     const header = `@@ -${hunk.deletionStart},${hunk.deletionLines} +${hunk.additionStart},${hunk.additionLines} @@${hunk.hunkContext ? `  ${hunk.hunkContext}` : ""}`;
     const items: HunkItem[] = [];
 
-    let di = hunk.deletionLineIndex, ai = hunk.additionLineIndex;
-    let dl = hunk.deletionStart,     al = hunk.additionStart;
+    let di = hunk.deletionLineIndex,
+      ai = hunk.additionLineIndex;
+    let dl = hunk.deletionStart,
+      al = hunk.additionStart;
 
     for (const content of hunk.hunkContent) {
       if (content.type === "context") {
         const lines: LineData[] = [];
         for (let i = 0; i < content.lines; i++) {
           const raw = (metadata.additionLines[ai + i] ?? "").replace(/\n$/, "");
-          lines.push({ lineNum: al + i, spans: addNodes ? hastToSpans(addNodes[ai + i]) : emptySpans(raw) });
+          lines.push({
+            lineNum: al + i,
+            spans: addNodes ? hastToSpans(addNodes[ai + i]) : emptySpans(raw),
+          });
         }
         items.push({ type: "context", lines });
-        di += content.lines; ai += content.lines; dl += content.lines; al += content.lines;
+        di += content.lines;
+        ai += content.lines;
+        dl += content.lines;
+        al += content.lines;
         continue;
       }
 
       const deletions: LineData[] = [];
       for (let i = 0; i < content.deletions; i++) {
         const raw = (metadata.deletionLines[di + i] ?? "").replace(/\n$/, "");
-        deletions.push({ lineNum: dl + i, spans: delNodes ? hastToSpans(delNodes[di + i]) : emptySpans(raw) });
+        deletions.push({
+          lineNum: dl + i,
+          spans: delNodes ? hastToSpans(delNodes[di + i]) : emptySpans(raw),
+        });
       }
       const additions: LineData[] = [];
       for (let i = 0; i < content.additions; i++) {
         const raw = (metadata.additionLines[ai + i] ?? "").replace(/\n$/, "");
-        additions.push({ lineNum: al + i, spans: addNodes ? hastToSpans(addNodes[ai + i]) : emptySpans(raw) });
+        additions.push({
+          lineNum: al + i,
+          spans: addNodes ? hastToSpans(addNodes[ai + i]) : emptySpans(raw),
+        });
       }
       items.push({ type: "change", deletions, additions });
 
-      di += content.deletions; ai += content.additions;
-      dl += content.deletions; al += content.additions;
+      di += content.deletions;
+      ai += content.additions;
+      dl += content.deletions;
+      al += content.additions;
     }
 
     hunks.push({ header, collapsedBefore: hunk.collapsedBefore, items });
@@ -277,10 +357,14 @@ function buildDiffData(
 }
 
 function countStats(metadata: FileDiffMetadata) {
-  let additions = 0, deletions = 0;
+  let additions = 0,
+    deletions = 0;
   for (const hunk of metadata.hunks)
     for (const c of hunk.hunkContent)
-      if (c.type === "change") { additions += c.additions; deletions += c.deletions; }
+      if (c.type === "change") {
+        additions += c.additions;
+        deletions += c.deletions;
+      }
   return { additions, deletions };
 }
 
@@ -294,8 +378,8 @@ function wrapContent(ansiStr: string, maxWidth: number): string[] {
   if (visibleWidth(ansiStr) <= maxWidth) return [ansiStr];
   const wrapped = wrapTextWithAnsi(ansiStr, maxWidth);
   return Array.isArray(wrapped)
-    ? wrapped.map(l => truncateToWidth(l, maxWidth))
-    : (wrapped as string).split("\n").map(l => truncateToWidth(l, maxWidth));
+    ? wrapped.map((l) => truncateToWidth(l, maxWidth))
+    : (wrapped as string).split("\n").map((l) => truncateToWidth(l, maxWidth));
 }
 
 // ---------------------------------------------------------------------------
@@ -314,20 +398,31 @@ function renderStackLine(
   const oldN = oldNum != null ? String(oldNum).padStart(nw) : " ".repeat(nw);
   const newN = newNum != null ? String(newNum).padStart(nw) : " ".repeat(nw);
   const sign = kind === "addition" ? "+" : kind === "deletion" ? "-" : " ";
-  const gutterFg = kind === "addition" ? p.addGutterFg : kind === "deletion" ? p.delGutterFg : p.ctxGutterFg;
-  const gutterBg = kind === "addition" ? p.addGutterBg : kind === "deletion" ? p.delGutterBg : p.ctxGutterBg;
-  const lineBg   = kind === "addition" ? p.addLineBg   : kind === "deletion" ? p.delLineBg   : p.panelBg;
-  const emphBg   = kind === "addition" ? p.addEmphBg   : kind === "deletion" ? p.delEmphBg   : p.addEmphBg;
+  const gutterFg =
+    kind === "addition" ? p.addGutterFg : kind === "deletion" ? p.delGutterFg : p.ctxGutterFg;
+  const gutterBg =
+    kind === "addition" ? p.addGutterBg : kind === "deletion" ? p.delGutterBg : p.ctxGutterBg;
+  const lineBg = kind === "addition" ? p.addLineBg : kind === "deletion" ? p.delLineBg : p.panelBg;
+  const emphBg =
+    kind === "addition" ? p.addEmphBg : kind === "deletion" ? p.delEmphBg : p.addEmphBg;
 
-  const gutter     = styled(`${sign}${oldN} ${newN} `, gutterFg, gutterBg);
+  const gutter = styled(`${sign}${oldN} ${newN} `, gutterFg, gutterBg);
   const gutterCont = styled(`${"·".padStart(nw * 2 + 2)}`, p.ctxGutterFg, gutterBg);
-  const gutterW    = 1 + nw + 1 + nw + 1;
+  const gutterW = 1 + nw + 1 + nw + 1;
 
-  const contentAnsi = padToWidth(renderSpans(spans, emphBg, lineBg, p.codeFg), contentWidth, lineBg);
+  const contentAnsi = padToWidth(
+    renderSpans(spans, emphBg, lineBg, p.codeFg),
+    contentWidth,
+    lineBg,
+  );
   const rows = wrapContent(contentAnsi, contentWidth);
 
   return rows.map((row, i) =>
-    padToWidth((i === 0 ? gutter : gutterCont) + padToWidth(row, contentWidth, lineBg), gutterW + contentWidth, lineBg)
+    padToWidth(
+      (i === 0 ? gutter : gutterCont) + padToWidth(row, contentWidth, lineBg),
+      gutterW + contentWidth,
+      lineBg,
+    ),
   );
 }
 
@@ -339,13 +434,23 @@ function diffDataToStackLines(data: DiffData, width: number, p: Palette): string
 
   for (const hunk of data.hunks) {
     if (hunk.collapsedBefore > 0)
-      lines.push(padToWidth(styled(`  ··· ${hunk.collapsedBefore} unchanged ${hunk.collapsedBefore === 1 ? "line" : "lines"} ···`, p.collapsedFg, p.hunkBg), width, p.hunkBg));
+      lines.push(
+        padToWidth(
+          styled(
+            `  ··· ${hunk.collapsedBefore} unchanged ${hunk.collapsedBefore === 1 ? "line" : "lines"} ···`,
+            p.collapsedFg,
+            p.hunkBg,
+          ),
+          width,
+          p.hunkBg,
+        ),
+      );
 
     // Header: @@ part in hunkFg, function context in collapsedFg
     {
       const m = hunk.header.match(/^(@@ [^@]+ @@)(.*)/);
       const atAt = m ? m[1]! : hunk.header;
-      const ctx  = m ? m[2]!.trim() : "";
+      const ctx = m ? m[2]!.trim() : "";
       const h = ctx
         ? styled(` ${atAt}`, p.hunkFg, p.hunkBg) + styled(`  ${ctx}`, p.collapsedFg, p.hunkBg)
         : styled(` ${atAt}`, p.hunkFg, p.hunkBg);
@@ -355,12 +460,42 @@ function diffDataToStackLines(data: DiffData, width: number, p: Palette): string
     for (const item of hunk.items) {
       if (item.type === "context") {
         for (const line of item.lines)
-          lines.push(...renderStackLine("context", line.lineNum, line.lineNum, line.spans, nw, contentWidth, p));
+          lines.push(
+            ...renderStackLine(
+              "context",
+              line.lineNum,
+              line.lineNum,
+              line.spans,
+              nw,
+              contentWidth,
+              p,
+            ),
+          );
       } else {
         for (const line of item.deletions)
-          lines.push(...renderStackLine("deletion", line.lineNum, undefined, line.spans, nw, contentWidth, p));
+          lines.push(
+            ...renderStackLine(
+              "deletion",
+              line.lineNum,
+              undefined,
+              line.spans,
+              nw,
+              contentWidth,
+              p,
+            ),
+          );
         for (const line of item.additions)
-          lines.push(...renderStackLine("addition", undefined, line.lineNum, line.spans, nw, contentWidth, p));
+          lines.push(
+            ...renderStackLine(
+              "addition",
+              undefined,
+              line.lineNum,
+              line.spans,
+              nw,
+              contentWidth,
+              p,
+            ),
+          );
       }
     }
   }
@@ -385,28 +520,29 @@ function renderHalf(
     const gw = Math.min(nw + 2, halfWidth);
     const cw = Math.max(0, halfWidth - gw);
     const border = styled("▏", p.ctxGutterFg, p.panelBg);
-    const fill   = hexAnsi(p.panelBg, true) + " ".repeat(Math.max(0, gw - 1)) + RST;
+    const fill = hexAnsi(p.panelBg, true) + " ".repeat(Math.max(0, gw - 1)) + RST;
     return [border + fill + hexAnsi(p.panelBg, true) + " ".repeat(cw) + RST];
   }
 
-  const numStr  = lineNum != null ? String(lineNum).padStart(nw) : " ".repeat(nw);
-  const sign    = kind === "addition" ? "+" : kind === "deletion" ? "-" : " ";
-  const gutterFg = kind === "addition" ? p.addGutterFg : kind === "deletion" ? p.delGutterFg : p.ctxGutterFg;
-  const gutterBg = kind === "addition" ? p.addGutterBg : kind === "deletion" ? p.delGutterBg : p.ctxGutterBg;
-  const lineBg   = kind === "addition" ? p.addLineBg   : kind === "deletion" ? p.delLineBg   : p.panelBg;
-  const emphBg   = kind === "addition" ? p.addEmphBg   : kind === "deletion" ? p.delEmphBg   : p.addEmphBg;
-  const gw       = nw + 2;
-  const cw       = Math.max(0, halfWidth - gw);
+  const numStr = lineNum != null ? String(lineNum).padStart(nw) : " ".repeat(nw);
+  const sign = kind === "addition" ? "+" : kind === "deletion" ? "-" : " ";
+  const gutterFg =
+    kind === "addition" ? p.addGutterFg : kind === "deletion" ? p.delGutterFg : p.ctxGutterFg;
+  const gutterBg =
+    kind === "addition" ? p.addGutterBg : kind === "deletion" ? p.delGutterBg : p.ctxGutterBg;
+  const lineBg = kind === "addition" ? p.addLineBg : kind === "deletion" ? p.delLineBg : p.panelBg;
+  const emphBg =
+    kind === "addition" ? p.addEmphBg : kind === "deletion" ? p.delEmphBg : p.addEmphBg;
+  const gw = nw + 2;
+  const cw = Math.max(0, halfWidth - gw);
 
-  const gutter     = styled(`${sign}${numStr} `, gutterFg, gutterBg);
+  const gutter = styled(`${sign}${numStr} `, gutterFg, gutterBg);
   const gutterCont = styled(" ".repeat(gw), gutterFg, gutterBg);
 
   const contentAnsi = renderSpans(spans, emphBg, lineBg, p.codeFg);
   const rows = wrapContent(contentAnsi, cw);
 
-  return rows.map((row, i) =>
-    (i === 0 ? gutter : gutterCont) + padToWidth(row, cw, lineBg)
-  );
+  return rows.map((row, i) => (i === 0 ? gutter : gutterCont) + padToWidth(row, cw, lineBg));
 }
 
 function renderSplitPair(
@@ -422,11 +558,11 @@ function renderSplitPair(
   const rw = width - 1 - lw;
   const sep = styled("│", p.splitDivFg, p.panelBg);
 
-  const leftRows  = renderHalf(leftKind,  leftLine?.lineNum,  leftLine?.spans  ?? [], nw, lw, p);
+  const leftRows = renderHalf(leftKind, leftLine?.lineNum, leftLine?.spans ?? [], nw, lw, p);
   const rightRows = renderHalf(rightKind, rightLine?.lineNum, rightLine?.spans ?? [], nw, rw, p);
 
   const count = Math.max(leftRows.length, rightRows.length);
-  const emptyLeft  = hexAnsi(p.panelBg, true) + " ".repeat(lw) + RST;
+  const emptyLeft = hexAnsi(p.panelBg, true) + " ".repeat(lw) + RST;
   const emptyRight = hexAnsi(p.panelBg, true) + " ".repeat(rw) + RST;
 
   const result: string[] = [];
@@ -441,7 +577,7 @@ function splitHeader(hunk: HunkData, width: number, p: Palette): string {
   const rw = width - 1 - lw;
   const m = hunk.header.match(/^(@@ [^@]+ @@)(.*)/);
   const atAt = m ? m[1]! : hunk.header;
-  const ctx  = m ? m[2]!.trim() : "";
+  const ctx = m ? m[2]!.trim() : "";
   return (
     padToWidth(styled(` ${atAt}`, p.hunkFg, p.hunkBg), lw, p.hunkBg) +
     styled("│", p.splitDivFg, p.hunkBg) +
@@ -460,8 +596,10 @@ function diffDataToSplitLines(data: DiffData, width: number, p: Palette): string
       const text = `··· ${hunk.collapsedBefore} unchanged ${hunk.collapsedBefore === 1 ? "line" : "lines"} ···`;
       lines.push(
         padToWidth(styled(`  ${text}`, p.collapsedFg, p.hunkBg), lw, p.hunkBg) +
-        styled("│", p.splitDivFg, p.hunkBg) +
-        hexAnsi(p.hunkBg, true) + " ".repeat(rw) + RST
+          styled("│", p.splitDivFg, p.hunkBg) +
+          hexAnsi(p.hunkBg, true) +
+          " ".repeat(rw) +
+          RST,
       );
     }
     lines.push(splitHeader(hunk, width, p));
@@ -473,11 +611,17 @@ function diffDataToSplitLines(data: DiffData, width: number, p: Palette): string
       } else {
         const count = Math.max(item.deletions.length, item.additions.length);
         for (let i = 0; i < count; i++)
-          lines.push(...renderSplitPair(
-            item.deletions[i] ? "deletion" : "empty", item.deletions[i],
-            item.additions[i] ? "addition" : "empty", item.additions[i],
-            nw, width, p,
-          ));
+          lines.push(
+            ...renderSplitPair(
+              item.deletions[i] ? "deletion" : "empty",
+              item.deletions[i],
+              item.additions[i] ? "addition" : "empty",
+              item.additions[i],
+              nw,
+              width,
+              p,
+            ),
+          );
       }
     }
   }
@@ -521,7 +665,7 @@ class DiffView {
       if (this.isNewFile) return [styled("new file", this.palette.addGutterFg)];
       return [
         styled(`+${this.stats.additions} `, this.palette.addGutterFg) +
-        styled(`-${this.stats.deletions}`, this.palette.delGutterFg),
+          styled(`-${this.stats.deletions}`, this.palette.delGutterFg),
       ];
     }
 
@@ -531,7 +675,9 @@ class DiffView {
       : diffDataToStackLines(this.data, width, p);
   }
 
-  invalidate() { this.dirty = true; }
+  invalidate() {
+    this.dirty = true;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -539,77 +685,92 @@ class DiffView {
 // ---------------------------------------------------------------------------
 
 interface DiffState {
-  oldContent?: string; newContent?: string; path?: string;
+  oldContent?: string;
+  newContent?: string;
+  path?: string;
   metadata?: FileDiffMetadata;
-  hlStarted?: boolean; shikiTheme?: string;
-  delNodes?: (HastNode | undefined)[]; addNodes?: (HastNode | undefined)[];
-  hlVersion?: number;      // increments when highlight data arrives
-  builtVersion?: number;   // version of the last built DiffData
-  builtData?: DiffData;    // cached build result
+  hlStarted?: boolean;
+  shikiTheme?: string;
+  delNodes?: (HastNode | undefined)[];
+  addNodes?: (HastNode | undefined)[];
+  hlVersion?: number; // increments when highlight data arrives
+  builtVersion?: number; // version of the last built DiffData
+  builtData?: DiffData; // cached build result
   error?: string;
   view?: DiffView;
 }
 
 function applyState(
-  state: DiffState, view: DiffView, expanded: boolean,
-  palette: Palette, context: { invalidate(): void },
+  state: DiffState,
+  view: DiffView,
+  expanded: boolean,
+  palette: Palette,
+  context: { invalidate(): void },
 ): void {
   const prevExpanded = view.expanded;
-  const prevPalette  = view.palette;
-  view.palette  = palette;
+  const prevPalette = view.palette;
+  view.palette = palette;
   view.expanded = expanded;
   if (prevExpanded !== expanded || prevPalette !== palette) view.invalidate();
 
   if (state.newContent === undefined) return;
 
   try {
-
-  if (!state.metadata) {
-    try {
-      state.metadata = parseDiffFromFile(
-        { name: state.path ?? "", contents: state.oldContent ?? "", cacheKey: `old:${state.path}` },
-        { name: state.path ?? "", contents: state.newContent,       cacheKey: `new:${state.path}` },
-        { context: 2 }, true,
-      );
-    } catch { return; }
-  }
-
-  const metadata = state.metadata;
-  if (!metadata || metadata.hunks.length === 0) {
-    view.stats     = { additions: 0, deletions: 0 };
-    view.isNewFile = state.oldContent === "";
-    return;
-  }
-
-  view.stats     = countStats(metadata);
-  view.isNewFile = state.oldContent === "";
-  if (!expanded) return;
-
-  if (!state.hlStarted) {
-    state.hlStarted = true;
-    const lang = getFiletypeFromFileName(state.path ?? "") ?? "text";
-    loadHighlighter(lang, state.shikiTheme ?? "github-dark").then(hl => {
-      if (hl && state.metadata) {
-        const res = renderDiffWithHighlighter(state.metadata, hl, {
-          theme: state.shikiTheme ?? "github-dark", tokenizeMaxLineLength: 1000, lineDiffType: "word-alt",
-        });
-        state.delNodes = res.code.deletionLines as (HastNode | undefined)[];
-        state.addNodes = res.code.additionLines as (HastNode | undefined)[];
+    if (!state.metadata) {
+      try {
+        state.metadata = parseDiffFromFile(
+          {
+            name: state.path ?? "",
+            contents: state.oldContent ?? "",
+            cacheKey: `old:${state.path}`,
+          },
+          { name: state.path ?? "", contents: state.newContent, cacheKey: `new:${state.path}` },
+          { context: 2 },
+          true,
+        );
+      } catch {
+        return;
       }
-      state.hlVersion = (state.hlVersion ?? 0) + 1;
-      view.invalidate();
-      context.invalidate();
-    });
-  }
+    }
 
-  // Rebuild DiffData only when highlight data changed or first time
-  const currentVersion = state.hlVersion ?? 0;
-  if (!state.builtData || state.builtVersion !== currentVersion) {
-    state.builtData    = buildDiffData(metadata, state.delNodes ?? null, state.addNodes ?? null);
-    state.builtVersion = currentVersion;
-    view.invalidate();
-  }
-  view.data = state.builtData;
+    const metadata = state.metadata;
+    if (!metadata || metadata.hunks.length === 0) {
+      view.stats = { additions: 0, deletions: 0 };
+      view.isNewFile = state.oldContent === "";
+      return;
+    }
+
+    view.stats = countStats(metadata);
+    view.isNewFile = state.oldContent === "";
+    if (!expanded) return;
+
+    if (!state.hlStarted) {
+      state.hlStarted = true;
+      const lang = getFiletypeFromFileName(state.path ?? "") ?? "text";
+      loadHighlighter(lang, state.shikiTheme ?? "github-dark").then((hl) => {
+        if (hl && state.metadata) {
+          const res = renderDiffWithHighlighter(state.metadata, hl, {
+            theme: state.shikiTheme ?? "github-dark",
+            tokenizeMaxLineLength: 1000,
+            lineDiffType: "word-alt",
+          });
+          state.delNodes = res.code.deletionLines as (HastNode | undefined)[];
+          state.addNodes = res.code.additionLines as (HastNode | undefined)[];
+        }
+        state.hlVersion = (state.hlVersion ?? 0) + 1;
+        view.invalidate();
+        context.invalidate();
+      });
+    }
+
+    // Rebuild DiffData only when highlight data changed or first time
+    const currentVersion = state.hlVersion ?? 0;
+    if (!state.builtData || state.builtVersion !== currentVersion) {
+      state.builtData = buildDiffData(metadata, state.delNodes ?? null, state.addNodes ?? null);
+      state.builtVersion = currentVersion;
+      view.invalidate();
+    }
+    view.data = state.builtData;
   } catch (e) {
     view.error = String(e);
     state.error = String(e);
@@ -658,7 +819,7 @@ function renderDiffResult(
   if (state.oldContent === undefined) {
     state.oldContent = det._old ?? "";
     state.newContent = det._new;
-    state.path       = det._path ?? (context.args.path as string);
+    state.path = det._path ?? (context.args.path as string);
     state.shikiTheme = pickShikiTheme(theme);
   }
 
@@ -672,24 +833,37 @@ function renderDiffResult(
 
 export default function (pi: ExtensionAPI) {
   const cwd = process.cwd();
-  const originalEdit  = createEditTool(cwd);
+  const originalEdit = createEditTool(cwd);
   const originalWrite = createWriteTool(cwd);
 
   // ── edit ──────────────────────────────────────────────────────────────────
 
   pi.registerTool({
-    name: "edit", label: "edit",
+    name: "edit",
+    label: "edit",
     description: originalEdit.description,
     parameters: originalEdit.parameters,
 
     async execute(id, params, signal, onUpdate, ctx) {
       const absPath = resolve(ctx.cwd, params.path as string);
       let oldContent = "";
-      try { oldContent = await readFile(absPath, "utf8"); } catch {}
+      try {
+        oldContent = await readFile(absPath, "utf8");
+      } catch {}
       const result = await originalEdit.execute(id, params, signal, onUpdate);
       let newContent = "";
-      try { newContent = await readFile(absPath, "utf8"); } catch {}
-      return { ...result, details: { ...(result.details as object), _old: oldContent, _new: newContent, _path: params.path as string } };
+      try {
+        newContent = await readFile(absPath, "utf8");
+      } catch {}
+      return {
+        ...result,
+        details: {
+          ...(result.details as object),
+          _old: oldContent,
+          _new: newContent,
+          _path: params.path as string,
+        },
+      };
     },
 
     renderCall(args, theme) {
@@ -702,7 +876,9 @@ export default function (pi: ExtensionAPI) {
       try {
         return renderDiffResult(result, expanded, isPartial, theme, context);
       } catch (e) {
-        const v = new DiffView(); v.error = String(e); return v;
+        const v = new DiffView();
+        v.error = String(e);
+        return v;
       }
     },
   });
@@ -710,22 +886,37 @@ export default function (pi: ExtensionAPI) {
   // ── write ─────────────────────────────────────────────────────────────────
 
   pi.registerTool({
-    name: "write", label: "write",
+    name: "write",
+    label: "write",
     description: originalWrite.description,
     parameters: originalWrite.parameters,
 
     async execute(id, params, signal, onUpdate, ctx) {
       const absPath = resolve(ctx.cwd, params.path as string);
       let oldContent = "";
-      try { oldContent = await readFile(absPath, "utf8"); } catch {}
+      try {
+        oldContent = await readFile(absPath, "utf8");
+      } catch {}
       const result = await originalWrite.execute(id, params, signal, onUpdate);
-      return { ...result, details: { ...(result.details as object), _old: oldContent, _new: params.content as string, _path: params.path as string } };
+      return {
+        ...result,
+        details: {
+          ...(result.details as object),
+          _old: oldContent,
+          _new: params.content as string,
+          _path: params.path as string,
+        },
+      };
     },
 
     renderCall(args, theme) {
       const t = new Text("", 0, 0);
       const lc = (args.content as string).split("\n").length;
-      t.setText(theme.fg("toolTitle", theme.bold("write ")) + theme.fg("accent", args.path) + theme.fg("dim", ` (${lc} lines)`));
+      t.setText(
+        theme.fg("toolTitle", theme.bold("write ")) +
+          theme.fg("accent", args.path) +
+          theme.fg("dim", ` (${lc} lines)`),
+      );
       return t;
     },
 
@@ -733,7 +924,9 @@ export default function (pi: ExtensionAPI) {
       try {
         return renderDiffResult(result, expanded, isPartial, theme, context);
       } catch (e) {
-        const v = new DiffView(); v.error = String(e); return v;
+        const v = new DiffView();
+        v.error = String(e);
+        return v;
       }
     },
   });

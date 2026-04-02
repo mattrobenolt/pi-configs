@@ -34,7 +34,10 @@ function extractToken(): string {
 
     const key = crypto.pbkdf2Sync(keyB64, "saltysalt", 1003, 16, "sha1");
 
-    const dbPath = path.join(os.homedir(), "Library/Application Support/Notion/Partitions/notion/Cookies");
+    const dbPath = path.join(
+      os.homedir(),
+      "Library/Application Support/Notion/Partitions/notion/Cookies",
+    );
     const hex = execSync(
       `sqlite3 "${dbPath}" "SELECT hex(encrypted_value) FROM cookies WHERE name='token_v2' AND host_key='.www.notion.so';"`,
       { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
@@ -150,7 +153,10 @@ async function resolveNames(
 }
 
 // Scan rich text for user/page mention IDs that need resolving.
-function collectMentionIds(chunks: any[] | undefined, out: { users: Set<string>; pages: Set<string> }): void {
+function collectMentionIds(
+  chunks: any[] | undefined,
+  out: { users: Set<string>; pages: Set<string> },
+): void {
   if (!chunks?.length) return;
   for (const chunk of chunks) {
     if (!Array.isArray(chunk) || !chunk[1]) continue;
@@ -216,7 +222,9 @@ function internalRichTextToMd(chunks: any[] | undefined): string {
           case "d": {
             // Inline date — value is { type, start_date, ... }
             if (value?.start_date) {
-              result = value.end_date ? `${value.start_date} → ${value.end_date}` : value.start_date;
+              result = value.end_date
+                ? `${value.start_date} → ${value.end_date}`
+                : value.start_date;
             }
             break;
           }
@@ -255,10 +263,7 @@ function internalPlainText(chunks: any[] | undefined): string {
 
 // --- Block tree loading with pagination ---
 
-async function fetchBlockTree(
-  blockId: string,
-  signal?: AbortSignal,
-): Promise<Map<string, any>> {
+async function fetchBlockTree(blockId: string, signal?: AbortSignal): Promise<Map<string, any>> {
   const blocks = new Map<string, any>();
   let cursor = { stack: [] as any[] };
 
@@ -330,7 +335,9 @@ async function internalBlocksToMarkdown(
       case "bulleted_list":
         lines.push(`${indent}- ${text}`);
         if (children.length) {
-          lines.push(await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "  "));
+          lines.push(
+            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "  "),
+          );
         }
         break;
 
@@ -338,7 +345,9 @@ async function internalBlocksToMarkdown(
         numIdx++;
         lines.push(`${indent}${numIdx}. ${text}`);
         if (children.length) {
-          lines.push(await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "   "));
+          lines.push(
+            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "   "),
+          );
         }
         break;
 
@@ -346,7 +355,9 @@ async function internalBlocksToMarkdown(
         const checked = block.properties?.checked?.[0]?.[0] === "Yes";
         lines.push(`${indent}- [${checked ? "x" : " "}] ${text}`);
         if (children.length) {
-          lines.push(await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "  "));
+          lines.push(
+            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "  "),
+          );
         }
         break;
       }
@@ -369,7 +380,9 @@ async function internalBlocksToMarkdown(
       case "quote":
         lines.push(`${indent}> ${text}`);
         if (children.length) {
-          lines.push(await internalBlocksToMarkdown(children, blocks, signal, depth + 1, `${indent}> `));
+          lines.push(
+            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, `${indent}> `),
+          );
         }
         lines.push("");
         break;
@@ -378,7 +391,9 @@ async function internalBlocksToMarkdown(
         const icon = block.format?.page_icon ?? "";
         lines.push(`${indent}> ${icon} ${text}`);
         if (children.length) {
-          lines.push(await internalBlocksToMarkdown(children, blocks, signal, depth + 1, `${indent}> `));
+          lines.push(
+            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, `${indent}> `),
+          );
         }
         lines.push("");
         break;
@@ -431,7 +446,9 @@ async function internalBlocksToMarkdown(
         for (const childId of children) {
           const col = blocks.get(childId);
           if (col?.content?.length) {
-            lines.push(await internalBlocksToMarkdown(col.content, blocks, signal, depth + 1, indent));
+            lines.push(
+              await internalBlocksToMarkdown(col.content, blocks, signal, depth + 1, indent),
+            );
           }
         }
         break;
@@ -441,7 +458,10 @@ async function internalBlocksToMarkdown(
       case "collection_view": {
         const title = internalPlainText(block.properties?.title);
         const icon = type === "page" ? "📄" : "🗃️";
-        lines.push(`${icon} [${title || "(untitled)"}](https://www.notion.so/${id.replace(/-/g, "")})`, "");
+        lines.push(
+          `${icon} [${title || "(untitled)"}](https://www.notion.so/${id.replace(/-/g, "")})`,
+          "",
+        );
         break;
       }
 
@@ -581,7 +601,8 @@ async function readCollectionInternal(
     signal,
   );
 
-  const blockIds: string[] = queryResp.result?.reducerResults?.collection_group_results?.blockIds ?? [];
+  const blockIds: string[] =
+    queryResp.result?.reducerResults?.collection_group_results?.blockIds ?? [];
   const blocks = queryResp.recordMap?.block ?? {};
 
   // Collect and resolve mentions across all rows
@@ -619,7 +640,8 @@ async function readCollectionInternal(
     rows.push(`| ${cells.join(" | ")} |`);
   }
 
-  const truncNote = blockIds.length >= MAX_DB_RESULTS ? `\n\n*Showing first ${MAX_DB_RESULTS} entries*` : "";
+  const truncNote =
+    blockIds.length >= MAX_DB_RESULTS ? `\n\n*Showing first ${MAX_DB_RESULTS} entries*` : "";
 
   return {
     title,
@@ -671,7 +693,8 @@ async function discoverSpaces(signal?: AbortSignal): Promise<SpaceInfo[]> {
   );
 
   cachedSpaces = [...spaceIds].map((id) => {
-    const val = nameResp.recordMap?.space?.[id]?.value?.value ?? nameResp.recordMap?.space?.[id]?.value;
+    const val =
+      nameResp.recordMap?.space?.[id]?.value?.value ?? nameResp.recordMap?.space?.[id]?.value;
     return { id, name: val?.name ?? "(unnamed)" };
   });
 
@@ -692,7 +715,8 @@ async function searchNotion(
     targets = await discoverSpaces(signal);
   }
 
-  const results: Array<{ type: string; id: string; title: string; url: string; space: string }> = [];
+  const results: Array<{ type: string; id: string; title: string; url: string; space: string }> =
+    [];
 
   for (const space of targets) {
     const resp = await notionPost(
@@ -722,13 +746,15 @@ async function searchNotion(
     // Collect mentions from search result titles so we can resolve them.
     const mentions = { users: new Set<string>(), pages: new Set<string>() };
     for (const r of resp.results ?? []) {
-      const block = resp.recordMap?.block?.[r.id]?.value?.value ?? resp.recordMap?.block?.[r.id]?.value;
+      const block =
+        resp.recordMap?.block?.[r.id]?.value?.value ?? resp.recordMap?.block?.[r.id]?.value;
       collectMentionIds(block?.properties?.title, mentions);
     }
     if (mentions.users.size || mentions.pages.size) await resolveNames(mentions, signal);
 
     for (const r of resp.results ?? []) {
-      const block = resp.recordMap?.block?.[r.id]?.value?.value ?? resp.recordMap?.block?.[r.id]?.value;
+      const block =
+        resp.recordMap?.block?.[r.id]?.value?.value ?? resp.recordMap?.block?.[r.id]?.value;
       let title = internalRichTextToMd(block?.properties?.title) || "";
 
       // collection_view_page blocks have no title in properties — pull from the collection.
@@ -766,7 +792,8 @@ const NotionSearchParams = Type.Object({
   }),
   spaceId: Type.Optional(
     Type.String({
-      description: "Optional Notion space/workspace ID to search in. Omit to search all accessible spaces.",
+      description:
+        "Optional Notion space/workspace ID to search in. Omit to search all accessible spaces.",
     }),
   ),
 });
@@ -831,8 +858,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const lines = results.map(
-        (r) =>
-          `- **${r.title}** (${r.type})${r.space ? ` [${r.space}]` : ""} — ${r.url}`,
+        (r) => `- **${r.title}** (${r.type})${r.space ? ` [${r.space}]` : ""} — ${r.url}`,
       );
 
       return {

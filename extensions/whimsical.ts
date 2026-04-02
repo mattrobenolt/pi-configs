@@ -424,17 +424,17 @@ function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
   else [r, g, b] = [c, 0, x];
 
   const m = v - c;
-  return [
-    Math.round((r + m) * 255),
-    Math.round((g + m) * 255),
-    Math.round((b + m) * 255),
-  ];
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
 }
 
-function normalShimmer(text: string, _theme: { fg(color: string, text: string): string }, tick: number): string {
+function normalShimmer(
+  text: string,
+  _theme: { fg(color: string, text: string): string },
+  tick: number,
+): string {
   const chars = [...text];
   const width = 5;
-  const center = tick % (chars.length + width * 2) - width;
+  const center = (tick % (chars.length + width * 2)) - width;
 
   return chars
     .map((char, i) => {
@@ -447,7 +447,11 @@ function normalShimmer(text: string, _theme: { fg(color: string, text: string): 
     .join("");
 }
 
-function rainbowShimmer(text: string, _theme: { fg(color: string, text: string): string }, tick: number): string {
+function rainbowShimmer(
+  text: string,
+  _theme: { fg(color: string, text: string): string },
+  tick: number,
+): string {
   const chars = [...text];
   return chars
     .map((char, i) => {
