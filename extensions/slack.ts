@@ -155,6 +155,29 @@ const userInfoCache = new Map<string, Promise<SlackUser | undefined>>();
 const channelNameCache = new Map<string, string>();
 const channelNamePromiseCache = new Map<string, Promise<string>>();
 let cachedDesktopCredentialsPromise: Promise<SlackDesktopCredentials> | undefined;
+
+type PendingMessage = {
+  ts: string;
+  userId: string;
+  username: string;
+  text: string;
+};
+
+type ConversationState = {
+  workspaceUrl: string;
+  channelId: string;
+  lastSeenTs: string;
+  steeringQueue: string[];
+  pendingMessages: PendingMessage[];
+  triggerPending: boolean;
+  pollIntervalId: ReturnType<typeof setInterval>;
+  rtmSocket: WebSocket | null;
+  rtmMsgId: number;
+  systemContext: string;
+  myUserId: string;
+};
+
+let activeConversation: ConversationState | null = null;
 const cachedWorkspaceAuth = new Map<string, Promise<SlackAuth>>();
 
 const OutputFormatParam = Type.Optional(
@@ -2675,7 +2698,8 @@ const SlackDeleteMessageParams = Type.Object({
   ),
   ts: Type.Optional(
     Type.String({
-      description: "Message timestamp to delete. Required if not using url. Format: '1775000000.123456'.",
+      description:
+        "Message timestamp to delete. Required if not using url. Format: '1775000000.123456'.",
     }),
   ),
   format: OutputFormatParam,
@@ -2728,7 +2752,8 @@ async function slackDeleteMessage(
 
 const SlackPostParams = Type.Object({
   channel: Type.String({
-    description: "Channel name like '#general' or a channel ID like 'C123...'. Also accepts DM channel IDs from SlackOpenDM.",
+    description:
+      "Channel name like '#general' or a channel ID like 'C123...'. Also accepts DM channel IDs from SlackOpenDM.",
   }),
   text: Type.String({
     description: "Message text to post.",
@@ -2778,7 +2803,15 @@ async function slackPost(
   const postedChannelId = getString(response.channel) ?? channelId;
   const ts = getString(response.ts);
   const permalink = ts ? buildSlackPermalink(workspaceUrl, postedChannelId, ts) : undefined;
-  const details = { format, dryRun: false, workspaceUrl, channelId: postedChannelId, channelName, ts, permalink };
+  const details = {
+    format,
+    dryRun: false,
+    workspaceUrl,
+    channelId: postedChannelId,
+    channelName,
+    ts,
+    permalink,
+  };
 
   return {
     text:
@@ -2845,7 +2878,8 @@ export async function slackUserLookup(
 
 const SlackOpenDMParams = Type.Object({
   user: Type.String({
-    description: "User to open a DM with. Accepts a name, handle, display name, real name, email, or user ID.",
+    description:
+      "User to open a DM with. Accepts a name, handle, display name, real name, email, or user ID.",
   }),
   format: OutputFormatParam,
   outputFile: OutputFileParam,
@@ -2900,6 +2934,51 @@ async function slackOpenDM(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+const STYLE_PROFILE_PATH = path.join(
+  os.homedir(),
+  ".pi",
+  "agent",
+  "skills",
+  "write-like-matt",
+  "references",
+  "style-profile.md",
+);
+
+function calculateTypingDelay(text: string): number {
+  const charsPerSec = 5 + Math.random() * 3;
+  const baseDelay = 500 + Math.random() * 800;
+  const typingTime = (text.length / charsPerSec) * 1000;
+  const jitter = (Math.random() - 0.3) * 1200;
+  return Math.max(300, Math.min(baseDelay + typingTime + jitter, 15000));
+}
+
+async function connectRtm(workspaceUrl: string): Promise<WebSocket | null> {
+  try {
+    const response = await slackApiCall("rtm.connect", {}, { workspaceUrl });
+    const wsUrl = getString(response.url);
+    if (!wsUrl) return null;
+
+    const ws = new WebSocket(wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ws.close();
+        reject(new Error("RTM connect timeout"));
+      }, 8000);
+      ws.onopen = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      ws.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error("RTM WebSocket error"));
+      };
+    });
+    return ws;
+  } catch {
+    return null;
+  }
 }
 
 export default function (pi: ExtensionAPI) {
@@ -3050,7 +3129,12 @@ export default function (pi: ExtensionAPI) {
     parameters: SlackPostParams,
     async execute(_toolCallId, params: SlackPostInput, signal, onUpdate, ctx) {
       onUpdate?.({
-        content: [{ type: "text", text: params.dryRun ? "Validating Slack post target…" : "Posting to Slack…" }],
+        content: [
+          {
+            type: "text",
+            text: params.dryRun ? "Validating Slack post target…" : "Posting to Slack…",
+          },
+        ],
         details: { stage: params.dryRun ? "dry-run" : "post" },
       });
       const result = await slackPost(params, { signal, cwd: ctx.cwd });
@@ -3171,6 +3255,277 @@ export default function (pi: ExtensionAPI) {
           ...rendered.details,
           truncated: truncated.truncated,
         },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "SlackStartConversation",
+    label: "Slack Start Conversation",
+    description: [
+      "Start a background polling loop for a Slack channel or DM.",
+      "Automatically triggers LLM turns when new messages arrive.",
+      "Use SlackStopConversation to end the loop.",
+    ].join("\n"),
+    promptSnippet:
+      "Start a background Slack conversation loop. Polls for new messages and triggers reply turns automatically.",
+    parameters: Type.Object({
+      channel: Type.String({
+        description:
+          "Channel name, channel ID, or DM channel ID (e.g. D01TJRVTQ5C). Accepts '#general', 'C123...', or 'D123...'.",
+      }),
+      systemContext: Type.Optional(
+        Type.String({
+          description:
+            "Instructions for the LLM on how to reply. Defaults to the write-like-matt style profile.",
+        }),
+      ),
+    }),
+    async execute(
+      _toolCallId,
+      params: { channel: string; systemContext?: string },
+      signal,
+      onUpdate,
+      ctx,
+    ) {
+      if (activeConversation) {
+        throw new Error("A conversation is already active. Call SlackStopConversation first.");
+      }
+
+      onUpdate?.({
+        content: [{ type: "text", text: "Starting Slack conversation loop…" }],
+        details: { stage: "start" },
+      });
+
+      const workspaceUrl = await getConfiguredWorkspaceUrl(ctx.cwd);
+
+      const channelId = isChannelId(params.channel.trim())
+        ? params.channel.trim()
+        : await resolveChannelId(params.channel, workspaceUrl, signal);
+
+      const authTestResponse = await slackApiCall("auth.test", {}, { workspaceUrl, signal });
+      const myUserId = getString(authTestResponse.user_id) ?? "";
+
+      let systemContext: string;
+      if (params.systemContext) {
+        systemContext = params.systemContext;
+      } else {
+        const styleProfile = await fs.readFile(STYLE_PROFILE_PATH, "utf8");
+        systemContext = [
+          "You are replying to Slack messages on Matt's behalf. Reply in Matt's voice using this style guide:",
+          "",
+          styleProfile.trim(),
+          "",
+          "Use SlackConversationReply to send replies. Do not use SlackPost.",
+        ].join("\n");
+      }
+
+      const historyResponse = await slackApiCall(
+        "conversations.history",
+        { channel: channelId, limit: 1 },
+        { workspaceUrl, signal },
+      );
+      const historyMessages = asArray(historyResponse.messages).filter(isRecord);
+      const lastSeenTs =
+        historyMessages.length > 0
+          ? (getString(historyMessages[0]!.ts) ?? String(Date.now() / 1000))
+          : String(Date.now() / 1000);
+
+      const rtmSocket = await connectRtm(workspaceUrl);
+
+      const conv: ConversationState = {
+        workspaceUrl,
+        channelId,
+        lastSeenTs,
+        steeringQueue: [],
+        pendingMessages: [],
+        triggerPending: false,
+        rtmSocket,
+        rtmMsgId: 0,
+        systemContext,
+        myUserId,
+        pollIntervalId: undefined as unknown as ReturnType<typeof setInterval>,
+      };
+
+      conv.pollIntervalId = setInterval(async () => {
+        const c = activeConversation;
+        if (!c) return;
+
+        try {
+          const response = await slackApiCall(
+            "conversations.history",
+            { channel: c.channelId, oldest: c.lastSeenTs, limit: 20 },
+            { workspaceUrl: c.workspaceUrl },
+          );
+
+          const messages = asArray(response.messages)
+            .filter(isRecord)
+            .filter((msg) => {
+              const ts = getString(msg.ts);
+              const userId = getString(msg.user);
+              return ts && ts > c.lastSeenTs && userId !== c.myUserId;
+            })
+            .sort((a, b) => {
+              const tsA = Number.parseFloat(getString(a.ts) ?? "0");
+              const tsB = Number.parseFloat(getString(b.ts) ?? "0");
+              return tsA - tsB;
+            });
+
+          if (messages.length === 0) return;
+
+          const latestTs = getString(messages[messages.length - 1]!.ts)!;
+          c.lastSeenTs = latestTs;
+
+          for (const msg of messages) {
+            const userId = getString(msg.user) ?? "";
+            const username = userId
+              ? await resolveUserName(userId, getString(msg.username), c.workspaceUrl)
+              : (getString(msg.username) ?? "unknown");
+            c.pendingMessages.push({
+              ts: getString(msg.ts) ?? "",
+              userId,
+              username,
+              text: getString(msg.text) ?? "",
+            });
+          }
+
+          if (c.triggerPending) return;
+          c.triggerPending = true;
+
+          const pending = [...c.pendingMessages];
+          c.pendingMessages = [];
+          const steering = [...c.steeringQueue];
+          c.steeringQueue = [];
+
+          const messageLines = pending.map((m) => `${m.username}: "${m.text}"`).join("\n");
+
+          const steeringSection =
+            steering.length > 0
+              ? `\n\nSteering notes from Matt (incorporate naturally):\n${steering.map((s) => `- ${s}`).join("\n")}`
+              : "";
+
+          const prompt = [
+            `New message(s) in the active Slack conversation (channel ${c.channelId}):`,
+            ``,
+            messageLines,
+            steeringSection,
+            ``,
+            c.systemContext,
+          ]
+            .join("\n")
+            .trim();
+
+          pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+        } catch {
+          // don't let poll errors crash the loop
+        } finally {
+          if (activeConversation) {
+            activeConversation.triggerPending = false;
+          }
+        }
+      }, 4000);
+
+      activeConversation = conv;
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Conversation loop started for channel ${channelId}. I'll respond to new messages automatically.`,
+          },
+        ],
+        details: { channelId, workspaceUrl, myUserId },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "SlackStopConversation",
+    label: "Slack Stop Conversation",
+    description: "Stop the active Slack conversation polling loop.",
+    promptSnippet: "Stop the active Slack conversation loop started by SlackStartConversation.",
+    parameters: Type.Object({}),
+    async execute() {
+      if (!activeConversation) {
+        return {
+          content: [{ type: "text" as const, text: "No active conversation." }],
+          details: {},
+        };
+      }
+      clearInterval(activeConversation.pollIntervalId);
+      activeConversation.rtmSocket?.close();
+      activeConversation = null;
+      return {
+        content: [{ type: "text" as const, text: "Conversation loop stopped." }],
+        details: {},
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "SlackConversationSteer",
+    label: "Slack Conversation Steer",
+    description:
+      "Queue a steering note to inject into the next reply turn. Call this when the user provides context or instructions for the ongoing conversation.",
+    promptSnippet:
+      "Queue a steering note for the active Slack conversation loop. The note will be included in the next triggered reply turn.",
+    parameters: Type.Object({
+      note: Type.String({ description: "Context or instruction to inject into the next reply." }),
+    }),
+    async execute(_toolCallId, params: { note: string }) {
+      if (!activeConversation) {
+        return {
+          content: [{ type: "text" as const, text: "No active conversation to steer." }],
+          details: {},
+        };
+      }
+      activeConversation.steeringQueue.push(params.note);
+      return {
+        content: [{ type: "text" as const, text: `Steering note queued: "${params.note}"` }],
+        details: { note: params.note } as Record<string, unknown>,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "SlackConversationReply",
+    label: "Slack Conversation Reply",
+    description:
+      "Post a reply in the active Slack conversation with a typing indicator and natural jitter delay. Use this instead of SlackPost during conversation loops.",
+    promptSnippet:
+      "Post a reply in the active Slack conversation loop. Adds typing indicator and natural delay before sending.",
+    parameters: Type.Object({
+      text: Type.String({ description: "The reply text to send." }),
+    }),
+    async execute(_toolCallId, params: { text: string }, signal, onUpdate) {
+      if (!activeConversation) {
+        throw new Error("No active conversation.");
+      }
+      const conv = activeConversation;
+
+      onUpdate?.({
+        content: [{ type: "text", text: "Typing…" }],
+        details: { stage: "typing" },
+      });
+
+      if (conv.rtmSocket?.readyState === WebSocket.OPEN) {
+        conv.rtmSocket.send(
+          JSON.stringify({ id: ++conv.rtmMsgId, type: "typing", channel: conv.channelId }),
+        );
+      }
+
+      await delay(calculateTypingDelay(params.text), signal);
+
+      await slackApiCall(
+        "chat.postMessage",
+        { channel: conv.channelId, text: params.text },
+        { workspaceUrl: conv.workspaceUrl, signal },
+      );
+
+      const preview = params.text.length > 80 ? `${params.text.slice(0, 80)}...` : params.text;
+      return {
+        content: [{ type: "text" as const, text: `Sent: ${preview}` }],
+        details: { channel: conv.channelId, preview },
       };
     },
   });
