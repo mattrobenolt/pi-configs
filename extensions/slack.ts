@@ -138,13 +138,22 @@ type ToolExecutionOptions = {
   cwd?: string;
 };
 
+type SlackRenderedOutput = {
+  text: string;
+  details: Record<string, unknown>;
+  outputFile?: string;
+};
+
 type LevelDBEntry = {
   key: Buffer;
   value: Buffer;
 };
 
 const userNameCache = new Map<string, string>();
+const userNamePromiseCache = new Map<string, Promise<string>>();
+const userInfoCache = new Map<string, Promise<SlackUser | undefined>>();
 const channelNameCache = new Map<string, string>();
+const channelNamePromiseCache = new Map<string, Promise<string>>();
 let cachedDesktopCredentialsPromise: Promise<SlackDesktopCredentials> | undefined;
 const cachedWorkspaceAuth = new Map<string, Promise<SlackAuth>>();
 
@@ -153,6 +162,13 @@ const OutputFormatParam = Type.Optional(
     Type.Literal("markdown", { description: "Return markdown with YAML frontmatter metadata." }),
     Type.Literal("json", { description: "Return raw JSON-oriented output instead of markdown." }),
   ]),
+);
+
+const OutputFileParam = Type.Optional(
+  Type.String({
+    description:
+      "Optional file path to write the full tool output to. Relative paths are resolved from the current working directory.",
+  }),
 );
 
 const SlackReadParams = Type.Object({
@@ -180,6 +196,7 @@ const SlackReadParams = Type.Object({
     ]),
   ),
   format: OutputFormatParam,
+  outputFile: OutputFileParam,
 });
 
 const SlackSearchParams = Type.Object({
@@ -220,6 +237,7 @@ const SlackSearchParams = Type.Object({
     }),
   ),
   format: OutputFormatParam,
+  outputFile: OutputFileParam,
 });
 
 const SlackReplyParams = Type.Object({
@@ -249,6 +267,7 @@ const SlackReplyParams = Type.Object({
     }),
   ),
   format: OutputFormatParam,
+  outputFile: OutputFileParam,
 });
 
 const SlackUserLookupParams = Type.Object({
@@ -268,6 +287,7 @@ const SlackUserLookupParams = Type.Object({
     }),
   ),
   format: OutputFormatParam,
+  outputFile: OutputFileParam,
 });
 
 const SlackChannelHistoryParams = Type.Object({
@@ -293,6 +313,7 @@ const SlackChannelHistoryParams = Type.Object({
     }),
   ),
   format: OutputFormatParam,
+  outputFile: OutputFileParam,
 });
 
 type SlackReadInput = Static<typeof SlackReadParams>;
@@ -395,6 +416,42 @@ function clipText(text: string, maxChars: number): string {
   return `${normalized.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
+function getOutputFilePath(outputFile: unknown, cwd?: string): string | undefined {
+  const value = getString(outputFile)?.trim();
+  if (!value) return undefined;
+  return path.resolve(cwd ?? process.cwd(), value);
+}
+
+async function writeOutputFile(outputFilePath: string, text: string): Promise<void> {
+  await fs.mkdir(path.dirname(outputFilePath), { recursive: true });
+  await fs.writeFile(outputFilePath, text, "utf8");
+}
+
+async function finalizeSlackToolOutput(
+  tool: string,
+  result: { text: string; details: Record<string, unknown> },
+  outputFile: unknown,
+  cwd?: string,
+): Promise<SlackRenderedOutput> {
+  const outputFilePath = getOutputFilePath(outputFile, cwd);
+  if (!outputFilePath) {
+    return {
+      text: result.text,
+      details: result.details,
+    };
+  }
+
+  await writeOutputFile(outputFilePath, result.text);
+  return {
+    text: `${tool} output written to ${outputFilePath}`,
+    outputFile: outputFilePath,
+    details: {
+      ...result.details,
+      outputFile: outputFilePath,
+    },
+  };
+}
+
 function formatTimestamp(ts: string): string {
   const millis = Number.parseFloat(ts) * 1000;
   if (!Number.isFinite(millis)) return ts;
@@ -413,6 +470,14 @@ function tsToPermalinkId(ts: string): string {
 
 function buildSlackPermalink(workspaceUrl: string, channelId: string, ts: string): string {
   return `${normalizeWorkspaceUrl(workspaceUrl)}/archives/${channelId}/${tsToPermalinkId(ts)}`;
+}
+
+function getWorkspaceChannelCacheKey(workspaceUrl: string, channelId: string): string {
+  return `${normalizeWorkspaceUrl(workspaceUrl)}:${channelId}`;
+}
+
+function getWorkspaceUserCacheKey(workspaceUrl: string, userId: string): string {
+  return `${normalizeWorkspaceUrl(workspaceUrl)}:${userId}`;
 }
 
 function parseSlackMessageUrl(input: string): SlackMessageRef {
@@ -650,7 +715,10 @@ function parseLocalConfig(raw: Buffer): unknown {
   }
 
   const data = raw[0] === 0x00 || raw[0] === 0x01 || raw[0] === 0x02 ? raw.subarray(1) : raw;
-  const nulCount = [...data].filter((byte) => byte === 0).length;
+  let nulCount = 0;
+  for (const byte of data) {
+    if (byte === 0) nulCount += 1;
+  }
   const encodings: BufferEncoding[] =
     nulCount > data.length / 4 ? ["utf16le", "utf8"] : ["utf8", "utf16le"];
 
@@ -1237,27 +1305,35 @@ async function resolveChannelName(
   workspaceUrl: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const cached = channelNameCache.get(channelId);
+  const cacheKey = getWorkspaceChannelCacheKey(workspaceUrl, channelId);
+  const cached = channelNameCache.get(cacheKey);
   if (cached) return cached;
 
-  try {
-    const response = await slackApiCall(
-      "conversations.info",
-      { channel: channelId },
-      { workspaceUrl, signal },
-    );
-    const channel = isRecord(response.channel) ? response.channel : undefined;
-    const name = channel ? getString(channel.name) : undefined;
-    if (name) {
-      channelNameCache.set(channelId, name);
-      return name;
-    }
-  } catch {
-    // ignore
-  }
+  const inFlight = channelNamePromiseCache.get(cacheKey);
+  if (inFlight) return inFlight;
 
-  channelNameCache.set(channelId, channelId);
-  return channelId;
+  const promise = (async () => {
+    try {
+      const response = await slackApiCall(
+        "conversations.info",
+        { channel: channelId },
+        { workspaceUrl, signal },
+      );
+      const channel = isRecord(response.channel) ? response.channel : undefined;
+      const name = channel ? getString(channel.name) : undefined;
+      const resolved = name ?? channelId;
+      channelNameCache.set(cacheKey, resolved);
+      return resolved;
+    } catch {
+      channelNameCache.set(cacheKey, channelId);
+      return channelId;
+    } finally {
+      channelNamePromiseCache.delete(cacheKey);
+    }
+  })();
+
+  channelNamePromiseCache.set(cacheKey, promise);
+  return promise;
 }
 
 function slackUserFromApi(raw: Record<string, unknown>): SlackUser {
@@ -1280,13 +1356,22 @@ async function getSlackUser(
   workspaceUrl: string,
   signal?: AbortSignal,
 ): Promise<SlackUser | undefined> {
-  try {
-    const response = await slackApiCall("users.info", { user: userId }, { workspaceUrl, signal });
-    const user = isRecord(response.user) ? response.user : undefined;
-    return user ? slackUserFromApi(user) : undefined;
-  } catch {
-    return undefined;
-  }
+  const cacheKey = getWorkspaceUserCacheKey(workspaceUrl, userId);
+  const cached = userInfoCache.get(cacheKey);
+  if (cached) return cached;
+
+  const promise = (async () => {
+    try {
+      const response = await slackApiCall("users.info", { user: userId }, { workspaceUrl, signal });
+      const user = isRecord(response.user) ? response.user : undefined;
+      return user ? slackUserFromApi(user) : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+
+  userInfoCache.set(cacheKey, promise);
+  return promise;
 }
 
 async function resolveUserId(
@@ -1350,13 +1435,26 @@ async function resolveUserName(
 ): Promise<string> {
   if (!userId) return username ?? "unknown";
 
-  const cached = userNameCache.get(userId);
+  const cacheKey = getWorkspaceUserCacheKey(workspaceUrl, userId);
+  const cached = userNameCache.get(cacheKey);
   if (cached) return cached;
 
-  const user = await getSlackUser(userId, workspaceUrl, signal);
-  const resolved = user?.displayName || user?.realName || user?.name || username || userId;
-  userNameCache.set(userId, resolved);
-  return resolved;
+  const inFlight = userNamePromiseCache.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    try {
+      const user = await getSlackUser(userId, workspaceUrl, signal);
+      const resolved = user?.displayName || user?.realName || user?.name || username || userId;
+      userNameCache.set(cacheKey, resolved);
+      return resolved;
+    } finally {
+      userNamePromiseCache.delete(cacheKey);
+    }
+  })();
+
+  userNamePromiseCache.set(cacheKey, promise);
+  return promise;
 }
 
 async function resolveSearchChannelToken(
@@ -1807,12 +1905,17 @@ async function resolveSlackMentionsInText(
     return text;
   }
 
-  const userIds = [...new Set(matches.map((match) => match[1]).filter(Boolean))] as string[];
-  const resolvedNames = new Map<string, string>();
+  const fallbacks = new Map<string, string | undefined>();
+  for (const match of matches) {
+    const userId = match[1];
+    if (userId && !fallbacks.has(userId)) {
+      fallbacks.set(userId, match[2]);
+    }
+  }
 
+  const resolvedNames = new Map<string, string>();
   await Promise.all(
-    userIds.map(async (userId) => {
-      const fallback = matches.find((match) => match[1] === userId)?.[2];
+    [...fallbacks.entries()].map(async ([userId, fallback]) => {
       const resolved = await resolveUserName(userId, fallback, workspaceUrl, signal);
       resolvedNames.set(userId, `@${resolved}`);
     }),
@@ -1836,11 +1939,9 @@ async function renderMessage(
     signal?: AbortSignal;
   },
 ): Promise<string> {
-  const channelName = await resolveChannelName(
-    message.channelId,
-    message.workspaceUrl,
-    options?.signal,
-  );
+  const channelName = options?.includeChannel
+    ? await resolveChannelName(message.channelId, message.workspaceUrl, options?.signal)
+    : undefined;
   const author = await resolveUserName(
     message.userId,
     message.username ?? message.botId,
@@ -2500,24 +2601,12 @@ export async function slackReply(
               source: target.source,
               text: input.text,
             })
-          : renderMarkdownDocument(
-              {
-                tool: "SlackReply",
-                format,
-                dryRun: true,
-                workspaceUrl: target.workspaceUrl,
-                channelId: target.channelId,
-                channelName,
-                threadTs: target.threadTs,
-                source: target.source,
-              },
-              [
-                `Dry run: would reply in #${channelName}`,
-                `Thread root: ${target.threadTs}`,
-                "",
-                normalizeText(input.text),
-              ].join("\n"),
-            ),
+          : [
+              `[dry run] Would reply in #${channelName}`,
+              `Thread root: ${target.threadTs}`,
+              "",
+              normalizeText(input.text),
+            ].join("\n"),
       details,
     };
   }
@@ -2563,24 +2652,12 @@ export async function slackReply(
             source: target.source,
             response,
           })
-        : renderMarkdownDocument(
-            {
-              tool: "SlackReply",
-              format,
-              dryRun: false,
-              workspaceUrl: target.workspaceUrl,
-              channelId,
-              channelName,
-              threadTs: target.threadTs,
-              ts,
-              permalink,
-              source: target.source,
-            },
-            [
-              `Reply posted to #${channelName}`,
-              permalink ?? `${target.workspaceUrl} · ${channelId} · ${ts ?? "unknown ts"}`,
-            ].join("\n"),
-          ),
+        : [
+            `Reply posted to #${channelName}`,
+            permalink ?? `${target.workspaceUrl} · ${channelId} · ${ts ?? "unknown ts"}`,
+            "",
+            normalizeText(input.text),
+          ].join("\n"),
     details,
   };
 }
@@ -2634,6 +2711,61 @@ export async function slackUserLookup(
   };
 }
 
+const SlackOpenDMParams = Type.Object({
+  user: Type.String({
+    description: "User to open a DM with. Accepts a name, handle, display name, real name, email, or user ID.",
+  }),
+  format: OutputFormatParam,
+  outputFile: OutputFileParam,
+});
+
+type SlackOpenDMInput = Static<typeof SlackOpenDMParams>;
+
+type SlackOpenDMResult = {
+  text: string;
+  details: Record<string, unknown>;
+};
+
+async function slackOpenDM(
+  input: SlackOpenDMInput,
+  options?: ToolExecutionOptions,
+): Promise<SlackOpenDMResult> {
+  const format = getOutputFormat(input.format);
+  const workspaceUrl = await getConfiguredWorkspaceUrl(options?.cwd);
+
+  const users = await lookupSlackUsers({ query: input.user, limit: 1 }, options);
+  if (users.length === 0) {
+    throw new Error(`No Slack user found matching: ${input.user}`);
+  }
+  const user = users[0]!;
+
+  const response = await slackApiCall(
+    "conversations.open",
+    { users: user.id },
+    { workspaceUrl, signal: options?.signal },
+  );
+
+  const channel = isRecord(response.channel) ? response.channel : undefined;
+  const channelId = channel ? getString(channel.id) : undefined;
+  if (!channelId) {
+    throw new Error(`Failed to open DM with ${user.realName ?? user.name}`);
+  }
+
+  const displayName = user.realName ?? user.displayName ?? user.name ?? user.id;
+  const details = { format, workspaceUrl, userId: user.id, channelId, displayName };
+
+  return {
+    text:
+      format === "json"
+        ? renderJsonDocument({ tool: "SlackOpenDM", ...details })
+        : renderMarkdownDocument(
+            { tool: "SlackOpenDM", ...details },
+            `DM channel with **${displayName}** (${user.id}): \`${channelId}\``,
+          ),
+    details,
+  };
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -2656,11 +2788,17 @@ export default function (pi: ExtensionAPI) {
         details: { stage: "read" },
       });
       const result = await slackRead(params, { signal, cwd: ctx.cwd });
-      const truncated = truncateForModel(result.text);
+      const rendered = await finalizeSlackToolOutput(
+        "SlackRead",
+        result,
+        params.outputFile,
+        ctx.cwd,
+      );
+      const truncated = truncateForModel(rendered.text);
       return {
         content: [{ type: "text" as const, text: truncated.text }],
         details: {
-          ...result.details,
+          ...rendered.details,
           truncated: truncated.truncated,
         },
       };
@@ -2684,11 +2822,17 @@ export default function (pi: ExtensionAPI) {
         details: { stage: "search", mode: params.mode ?? "messages" },
       });
       const result = await slackSearch(params, { signal, cwd: ctx.cwd });
-      const truncated = truncateForModel(result.text);
+      const rendered = await finalizeSlackToolOutput(
+        "SlackSearch",
+        result,
+        params.outputFile,
+        ctx.cwd,
+      );
+      const truncated = truncateForModel(rendered.text);
       return {
         content: [{ type: "text" as const, text: truncated.text }],
         details: {
-          ...result.details,
+          ...rendered.details,
           truncated: truncated.truncated,
         },
       };
@@ -2712,11 +2856,17 @@ export default function (pi: ExtensionAPI) {
         details: { stage: "channel-history" },
       });
       const result = await slackChannelHistory(params, { signal, cwd: ctx.cwd });
-      const truncated = truncateForModel(result.text);
+      const rendered = await finalizeSlackToolOutput(
+        "SlackChannelHistory",
+        result,
+        params.outputFile,
+        ctx.cwd,
+      );
+      const truncated = truncateForModel(rendered.text);
       return {
         content: [{ type: "text" as const, text: truncated.text }],
         details: {
-          ...result.details,
+          ...rendered.details,
           truncated: truncated.truncated,
         },
       };
@@ -2745,11 +2895,51 @@ export default function (pi: ExtensionAPI) {
         details: { stage: params.dryRun ? "dry-run" : "reply" },
       });
       const result = await slackReply(params, { signal, cwd: ctx.cwd });
-      const truncated = truncateForModel(result.text);
+      const rendered = await finalizeSlackToolOutput(
+        "SlackReply",
+        result,
+        params.outputFile,
+        ctx.cwd,
+      );
+      const truncated = truncateForModel(rendered.text);
       return {
         content: [{ type: "text" as const, text: truncated.text }],
         details: {
-          ...result.details,
+          ...rendered.details,
+          truncated: truncated.truncated,
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "SlackOpenDM",
+    label: "Slack Open DM",
+    description: [
+      "Open or find a direct message channel with a Slack user by name, handle, display name, real name, email, or user ID.",
+      "Returns the DM channel ID, which can then be used with SlackChannelHistory to read the conversation.",
+      "Authentication is automatic on macOS from Slack.app.",
+    ].join("\n"),
+    promptSnippet:
+      "Open or find a DM channel with a Slack user. Returns the channel ID for use with SlackChannelHistory. Auth comes from Slack.app.",
+    parameters: SlackOpenDMParams,
+    async execute(_toolCallId, params: SlackOpenDMInput, signal, onUpdate, ctx) {
+      onUpdate?.({
+        content: [{ type: "text", text: `Opening DM with ${params.user}…` }],
+        details: { stage: "open-dm" },
+      });
+      const result = await slackOpenDM(params, { signal, cwd: ctx.cwd });
+      const rendered = await finalizeSlackToolOutput(
+        "SlackOpenDM",
+        result,
+        params.outputFile,
+        ctx.cwd,
+      );
+      const truncated = truncateForModel(rendered.text);
+      return {
+        content: [{ type: "text" as const, text: truncated.text }],
+        details: {
+          ...rendered.details,
           truncated: truncated.truncated,
         },
       };
@@ -2773,11 +2963,17 @@ export default function (pi: ExtensionAPI) {
         details: { stage: "user-lookup" },
       });
       const result = await slackUserLookup(params, { signal, cwd: ctx.cwd });
-      const truncated = truncateForModel(result.text);
+      const rendered = await finalizeSlackToolOutput(
+        "SlackUserLookup",
+        result,
+        params.outputFile,
+        ctx.cwd,
+      );
+      const truncated = truncateForModel(rendered.text);
       return {
         content: [{ type: "text" as const, text: truncated.text }],
         details: {
-          ...result.details,
+          ...rendered.details,
           truncated: truncated.truncated,
         },
       };
