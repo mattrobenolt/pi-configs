@@ -17,5 +17,8 @@
   "quietStartup": true,
   "editorPaddingX": 1,
   "showHardwareCursor": true,
-  "treeFilterMode": "default"
+  "treeFilterMode": "default",
+  "slack": {
+    "workspaceUrl": "https://planetscale.slack.com"
+  }
 }

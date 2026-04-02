@@ -18,7 +18,8 @@
     "@mariozechner/pi-coding-agent": "*",
     "@sinclair/typebox": "^0.34.48",
     "@tintinweb/pi-subagents": "^0.5.2",
-    "turndown": "^7.2.2",
-    "pi-memory": "^0.3.6"
+    "hysnappy": "^1.1.1",
+    "pi-memory": "^0.3.6",
+    "turndown": "^7.2.2"
   }
 }

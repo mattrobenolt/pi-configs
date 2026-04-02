@@ -29,6 +29,7 @@ Extensions are loaded automatically from the `extensions/` directory on session 
 | `notify.ts` | Sends a native desktop notification (OSC 777) when the agent finishes a turn — requires Ghostty with `desktop-notifications = true` |
 | `prompt-editor.ts` | Named "modes" for model + thinking level combinations — cycle with `Ctrl+Space`, pick with `/mode` |
 | `setup.ts` | Session defaults: activates `grep`, `find`, `ls` built-in tools; auto-expands tool outputs; registers `get_system_prompt`, `get_tools`, `get_last_payload` introspection tools |
+| `slack.ts` | Native Slack tools: `SlackRead`, `SlackSearch`, `SlackReply`, `SlackUserLookup`, `SlackChannelHistory`; auth comes from Slack.app and default workspace comes from `settings.json` |
 | `statusline.ts` | Footer showing repo name, git branch, dirty state, current time, model, and token usage |
 | `todos/` | File-backed todo manager with locking, tags, session assignment, and a TUI selector — the `todo` tool used for task tracking in longer sessions |
 | `webfetch.ts` | `webfetch` and `websearch` tools — GitHub-URL-aware fetching and Exa-powered web search |
@@ -59,7 +60,6 @@ Skills are markdown files loaded by the agent to provide domain-specific knowled
 
 | Skill | What it does |
 |---|---|
-| `agent-slack` | Read, search, and interact with Slack |
 | `code-simplifier` | Refactor code for clarity and consistency |
 | `commit` | Write concise git commit messages |
 | `curate-memory` | Non-interactive memory curation — consolidates and compacts memory files |
