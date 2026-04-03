@@ -277,6 +277,24 @@ const SlackSearchParams = Type.Object({
       Type.Literal("threads", { description: "Expand matches into full threads." }),
     ]),
   ),
+  sort: Type.Optional(
+    Type.Union([
+      Type.Literal("relevance", { description: "Sort by relevance score (default)." }),
+      Type.Literal("timestamp", { description: "Sort by message timestamp." }),
+    ]),
+  ),
+  sort_dir: Type.Optional(
+    Type.Union([
+      Type.Literal("asc", { description: "Oldest first (default for timestamp sort)." }),
+      Type.Literal("desc", { description: "Newest first." }),
+    ]),
+  ),
+  page: Type.Optional(
+    Type.Number({
+      description: "Page number for pagination (1-indexed). Defaults to 1.",
+      minimum: 1,
+    }),
+  ),
   limit: Type.Optional(
     Type.Number({
       description: `Maximum number of results to return. Defaults to ${DEFAULT_SEARCH_LIMIT}, max ${MAX_SEARCH_LIMIT}.`,
@@ -1565,10 +1583,13 @@ async function searchMessagesRaw(
   workspaceUrl: string,
   limit: number,
   signal?: AbortSignal,
+  sort: "score" | "timestamp" = "score",
+  sortDir: "asc" | "desc" = sort === "timestamp" ? "asc" : "desc",
+  startPage = 1,
 ): Promise<SearchRawMatch[]> {
   const out: SearchRawMatch[] = [];
-  let page = 1;
-  let pages = 1;
+  let page = startPage;
+  let pages = startPage;
 
   for (;;) {
     const response = await slackApiCall(
@@ -1578,8 +1599,8 @@ async function searchMessagesRaw(
         count: Math.min(Math.max(limit, 1), SEARCH_PAGE_SIZE),
         page,
         highlight: false,
-        sort: "timestamp",
-        sort_dir: "desc",
+        sort,
+        sort_dir: sortDir,
       },
       { workspaceUrl, signal },
     );
@@ -2446,7 +2467,10 @@ export async function slackSearch(
   );
   const rawLimit = mode === "threads" ? Math.min(limit * 3, 100) : limit;
   const searchQuery = await buildSearchQuery(input, workspaceUrl, options?.signal);
-  const rawMatches = await searchMessagesRaw(searchQuery, workspaceUrl, rawLimit, options?.signal);
+  const apiSort = input.sort === "timestamp" ? "timestamp" as const : "score" as const;
+  const apiSortDir = input.sort_dir ?? (apiSort === "timestamp" ? "asc" as const : "desc" as const);
+  const startPage = Math.max(Math.trunc(input.page ?? 1), 1);
+  const rawMatches = await searchMessagesRaw(searchQuery, workspaceUrl, rawLimit, options?.signal, apiSort, apiSortDir, startPage);
 
   if (mode === "messages") {
     const messages: SlackMessage[] = [];
