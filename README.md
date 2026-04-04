@@ -31,6 +31,7 @@ Extensions are loaded automatically from the `extensions/` directory on session 
 | `setup.ts` | Session defaults: activates `grep`, `find`, `ls` built-in tools; auto-expands tool outputs; registers `get_system_prompt`, `get_tools`, `get_last_payload` introspection tools |
 | `slack.ts` | Native Slack tools: `SlackRead`, `SlackSearch`, `SlackReply`, `SlackUserLookup`, `SlackChannelHistory`; auth comes from Slack.app and default workspace comes from `settings.json` |
 | `statusline.ts` | Footer showing repo name, git branch, dirty state, current time, model, and token usage |
+| `zellij.ts` | `zellij` tool for session/pane/tab management via the official CLI automation surface; new panes default to a quiet shell launched through `direnv exec <cwd>` so flake/devshell context loads without prompt junk |
 | `todos/` | File-backed todo manager with locking, tags, session assignment, and a TUI selector — the `todo` tool used for task tracking in longer sessions |
 | `webfetch.ts` | `webfetch` and `websearch` tools — GitHub-URL-aware fetching and Exa-powered web search |
 | `whimsical.ts` | Animated loading messages with shimmer effect. Purely cosmetic. |
