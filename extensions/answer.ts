@@ -81,13 +81,16 @@ async function selectExtractionModel(
   currentModel: Model<Api>,
   modelRegistry: {
     find: (provider: string, modelId: string) => Model<Api> | undefined;
-    getApiKey: (model: Model<Api>) => Promise<string | undefined>;
+    getApiKeyAndHeaders: (model: Model<Api>) => Promise<
+      | { ok: true; apiKey?: string; headers?: Record<string, string> }
+      | { ok: false; error: string }
+    >;
   },
 ): Promise<Model<Api>> {
   const haikuModel = modelRegistry.find("anthropic", HAIKU_MODEL_ID);
   if (haikuModel) {
-    const apiKey = await modelRegistry.getApiKey(haikuModel);
-    if (apiKey) {
+    const auth = await modelRegistry.getApiKeyAndHeaders(haikuModel);
+    if (auth.ok && auth.apiKey) {
       return haikuModel;
     }
   }

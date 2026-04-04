@@ -14,10 +14,9 @@
     "oxlint": "^1.57.0"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "*",
-    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "0.64.0",
+    "@mariozechner/pi-coding-agent": "0.64.0",
     "@sinclair/typebox": "^0.34.48",
-    "@tintinweb/pi-subagents": "^0.5.2",
     "hysnappy": "^1.1.1",
     "pi-memory": "^0.3.6",
     "turndown": "^7.2.2"
