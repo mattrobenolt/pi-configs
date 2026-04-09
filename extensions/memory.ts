@@ -29,6 +29,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
@@ -455,6 +456,47 @@ function updateMemoryWidget() {
   ]);
 }
 
+function getMessageTimestamp(message: AgentMessage): number {
+  const timestamp = (message as { timestamp?: number | string }).timestamp;
+  if (typeof timestamp === "number") return timestamp;
+  if (typeof timestamp === "string") {
+    const parsed = Date.parse(timestamp);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function injectEphemeralContextMessage(
+  messages: AgentMessage[],
+  customType: string,
+  content: string,
+): AgentMessage[] {
+  const nextMessages = messages.filter(
+    (message) => !(message.role === "custom" && message.customType === customType),
+  );
+
+  let insertAt = nextMessages.length;
+  for (let i = nextMessages.length - 1; i >= 0; i--) {
+    if (nextMessages[i].role === "user") {
+      insertAt = i;
+      break;
+    }
+  }
+
+  const timestamp =
+    insertAt < nextMessages.length ? getMessageTimestamp(nextMessages[insertAt]) : Date.now();
+
+  nextMessages.splice(insertAt, 0, {
+    role: "custom",
+    customType,
+    content,
+    display: false,
+    timestamp,
+  });
+
+  return nextMessages;
+}
+
 function formatLastMemoryInjection(
   injection: LastMemoryInjection | null,
   includeContext = true,
@@ -543,28 +585,30 @@ export function buildMemoryContext(
     return "";
   }
 
-  const section = formatContextSection(
-    "## Relevant memories (auto-retrieved)",
-    searchResults,
-    "start",
-    CONTEXT_SEARCH_MAX_LINES,
-    CONTEXT_SEARCH_MAX_CHARS,
-  );
-  if (!section) {
+  const result = buildPreview(searchResults, {
+    maxLines: CONTEXT_SEARCH_MAX_LINES,
+    maxChars: CONTEXT_SEARCH_MAX_CHARS,
+    mode: "start",
+  });
+  if (!result.preview) {
     return "";
   }
 
-  const context = `# Memory\n\n${section}`;
+  const body = result.truncated
+    ? `${result.preview}\n\n[truncated: showing ${result.previewLines}/${result.totalLines} lines, ${result.previewChars}/${result.totalChars} chars]`
+    : result.preview;
+
+  const context = `<memory>\n${body}\n</memory>`;
   if (context.length > CONTEXT_MAX_CHARS) {
-    const result = buildPreview(context, {
+    const overall = buildPreview(context, {
       maxLines: Number.POSITIVE_INFINITY,
       maxChars: CONTEXT_MAX_CHARS,
       mode: "start",
     });
-    const note = result.truncated
-      ? `\n\n[truncated overall context: showing ${result.previewChars}/${result.totalChars} chars]`
+    const note = overall.truncated
+      ? `\n\n[truncated overall context: showing ${overall.previewChars}/${overall.totalChars} chars]`
       : "";
-    return `${result.preview}${note}`;
+    return `${overall.preview}${note}`;
   }
 
   return context;
@@ -772,6 +816,61 @@ function getQmdResultPath(r: QmdSearchResult): string | undefined {
 
 function getQmdResultText(r: QmdSearchResult): string {
   return r.content ?? r.chunk ?? r.snippet ?? "";
+}
+
+function normalizeMemoryPath(filePath: string): string {
+  return filePath.replace(/^qmd:\/\//, "").replace(/^_+|_+$/g, "");
+}
+
+function stripLeadingLineNumber(line: string): string {
+  return line.replace(/^\s*\d+:\s*/, "");
+}
+
+function normalizeMemorySnippet(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map(stripLeadingLineNumber)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      if (/^_(?:qmd:\/\/)?[^_]+_$/.test(trimmed)) return false;
+      if (/^@@\s+-\d+(?:,\d+)?\s+@@/.test(trimmed)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
+function extractInlineMemoryPath(text: string): string | undefined {
+  const firstNonEmptyLine = text
+    .split(/\r?\n/)
+    .map(stripLeadingLineNumber)
+    .map((line) => line.trim())
+    .find(Boolean);
+
+  if (!firstNonEmptyLine) return undefined;
+  const match = firstNonEmptyLine.match(/^_((?:qmd:\/\/)?[^_]+)_$/);
+  return match ? normalizeMemoryPath(match[1]) : undefined;
+}
+
+function formatRelevantMemoryResults(results: QmdSearchResult[]): string {
+  const sections = results
+    .map((result) => {
+      const rawText = getQmdResultText(result);
+      const body = normalizeMemorySnippet(rawText);
+      if (!body) return null;
+
+      const filePath = getQmdResultPath(result) ?? extractInlineMemoryPath(rawText);
+      const normalizedPath = filePath ? normalizeMemoryPath(filePath) : undefined;
+      if (!normalizedPath) {
+        return body;
+      }
+
+      return [`<memory-source path="${normalizedPath}">`, body, "</memory-source>"].join("\n");
+    })
+    .filter((section): section is string => Boolean(section));
+
+  return sections.join("\n\n");
 }
 
 function stripAnsi(text: string): string {
@@ -1154,20 +1253,13 @@ export async function searchRelevantMemories(prompt: string): Promise<RelevantMe
 
     const files = results.results
       .map((r) => getQmdResultPath(r))
-      .filter((v): v is string => Boolean(v));
-    const snippets = results.results
-      .map((r) => {
-        const text = getQmdResultText(r);
-        if (!text.trim()) return null;
-        const filePath = getQmdResultPath(r);
-        const filePart = filePath ? `_${filePath}_` : "";
-        return filePart ? `${filePart}\n${text.trim()}` : text.trim();
-      })
-      .filter(Boolean);
+      .filter((v): v is string => Boolean(v))
+      .map(normalizeMemoryPath);
+    const formatted = formatRelevantMemoryResults(results.results);
 
-    if (snippets.length === 0) return null;
+    if (!formatted) return null;
     return {
-      text: snippets.join("\n\n---\n\n"),
+      text: formatted,
       hitCount: results.results.length,
       files,
       transports: results.transports,
@@ -1277,11 +1369,8 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // --- Inject memory context before every agent turn ---
+  // --- Retrieve memory context once per prompt and inject it late in request context ---
   pi.on("before_agent_start", async (event, _ctx) => {
-    // Skip if memory is already injected (e.g. btw side sessions that inherit the main system prompt).
-    if (event.systemPrompt.includes("\n## Memory\n")) return;
-
     const skipSearch = process.env.PI_MEMORY_NO_SEARCH === "1";
     const [searchResults, currentProjectKey] = await Promise.all([
       skipSearch ? Promise.resolve(null) : searchRelevantMemories(event.prompt ?? ""),
@@ -1309,22 +1398,16 @@ export default function (pi: ExtensionAPI) {
       skippedSearch: skipSearch,
     };
     updateMemoryWidget();
+  });
 
-    const memoryInstructions = [
-      "\n\n## Memory",
-      "The following memory files have been loaded. Use the memory_write tool to persist important information.",
-      "- Decisions, preferences, and durable facts \u2192 MEMORY.md",
-      "- Day-to-day notes and running context \u2192 daily/<YYYY-MM-DD>.md",
-      "- Things to fix later or keep in mind \u2192 scratchpad tool",
-      "- Use memory_search to find past context across all memory files (keyword, semantic, or deep search).",
-      "- Use #tags (e.g. #decision, #preference) and [[links]] (e.g. [[auth-strategy]]) in memory content to improve future search recall.",
-      '- If someone says "remember this," write it immediately.',
-      "",
-      memoryContext,
-    ].join("\n");
-
+  pi.on("context", async (event) => {
+    if (!lastMemoryInjection?.memoryContext) return;
     return {
-      systemPrompt: event.systemPrompt + memoryInstructions,
+      messages: injectEphemeralContextMessage(
+        event.messages,
+        "memory-context",
+        lastMemoryInjection.memoryContext,
+      ),
     };
   });
 
