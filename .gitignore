@@ -1,5 +1,6 @@
 auth.json
 profiles/
+modes.json
 sessions/
 sessions-index/
 memory/

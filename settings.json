@@ -2,9 +2,9 @@
   "packages": [
     "./pi-subagents"
   ],
-  "lastChangelogVersion": "0.64.0",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.4",
+  "lastChangelogVersion": "0.66.1",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-4-6",
   "defaultThinkingLevel": "medium",
   "theme": "dracula",
   "transport": "sse",
@@ -13,12 +13,14 @@
     "openai-codex/gpt-5.4",
     "anthropic/claude-sonnet-4-6"
   ],
-  "steeringMode": "one-at-a-time",
+  "steeringMode": "all",
   "quietStartup": true,
   "editorPaddingX": 1,
   "showHardwareCursor": true,
   "treeFilterMode": "default",
   "slack": {
     "workspaceUrl": "https://planetscale.slack.com"
-  }
+  },
+  "doubleEscapeAction": "tree",
+  "followUpMode": "all"
 }

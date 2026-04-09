@@ -21,6 +21,7 @@
               nodejs
               nodePackages.typescript
               nodePackages.typescript-language-server
+              nushell
               zoxide
             ];
           };
