@@ -30,7 +30,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { StringEnum } from "@mariozechner/pi-ai";
-import { type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { getTrackedCwd, onTrackedCwdChange } from "./lib/cwd-state";
 
@@ -419,6 +419,68 @@ function formatContextSection(
   return `${label}\n\n${result.preview}${note}`;
 }
 
+function uniqStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function summarizeMemoryInjection(injection: LastMemoryInjection | null): string {
+  if (!injection) return "mem: no injection yet";
+  const transport =
+    injection.transports.length > 0 ? uniqStrings(injection.transports).join("/") : "none";
+  const hits = injection.skippedSearch
+    ? "search skipped"
+    : `${injection.searchHitCount} hit${injection.searchHitCount === 1 ? "" : "s"}`;
+  return `mem: ${injection.chars} chars · ${injection.sections} section${injection.sections === 1 ? "" : "s"} · ${hits} · ${transport}`;
+}
+
+function updateMemoryWidget() {
+  if (!capturedUi) return;
+  if (!lastMemoryInjection) {
+    capturedUi.setWidget("memory-context", []);
+    return;
+  }
+  const transport =
+    lastMemoryInjection.transports.length > 0
+      ? uniqStrings(lastMemoryInjection.transports).join("/")
+      : "none";
+  const files =
+    lastMemoryInjection.searchFiles.length > 0
+      ? uniqStrings(lastMemoryInjection.searchFiles).slice(0, 2).join(", ")
+      : lastMemoryInjection.skippedSearch
+        ? "search skipped"
+        : "no hits";
+  capturedUi.setWidget("memory-context", [
+    `🧠 ${summarizeMemoryInjection(lastMemoryInjection)}`,
+    `   ${transport} · ${files}`,
+  ]);
+}
+
+function formatLastMemoryInjection(
+  injection: LastMemoryInjection | null,
+  includeContext = true,
+): string {
+  if (!injection) return "No memory has been injected yet in this session.";
+
+  const lines = [
+    `Time: ${injection.at}`,
+    `Prompt: ${injection.prompt || "(empty)"}`,
+    `Summary: ${summarizeMemoryInjection(injection)}`,
+    `Project: ${injection.projectKey ?? "(none)"}`,
+    `Search chars: ${injection.searchChars}`,
+    `Search files: ${
+      injection.searchFiles.length > 0
+        ? uniqStrings(injection.searchFiles).join(", ")
+        : injection.skippedSearch
+          ? "search skipped"
+          : "none"
+    }`,
+    `Debug: ${injection.debug.length > 0 ? injection.debug.join(" | ") : "(none)"}`,
+  ];
+
+  if (!includeContext) return lines.join("\n");
+  return `${lines.join("\n")}\n\n${formatPreviewBlock("Injected memory context", injection.memoryContext, "start")}`;
+}
+
 function getQmdUpdateMode(): "background" | "manual" | "off" {
   const mode = (process.env.PI_MEMORY_QMD_UPDATE ?? "background").toLowerCase();
   if (mode === "manual" || mode === "off" || mode === "background") {
@@ -475,95 +537,24 @@ export function serializeScratchpad(items: ScratchpadItem[]): string {
 
 export function buildMemoryContext(
   searchResults?: string,
-  currentProjectKey?: string | null,
+  _currentProjectKey?: string | null,
 ): string {
-  ensureDirs();
-  // Priority order: scratchpad > today's daily > search results > project MEMORY.md > global MEMORY.md > yesterday's daily
-  const sections: string[] = [];
-
-  const scratchpad = readFileSafe(SCRATCHPAD_FILE);
-  if (scratchpad?.trim()) {
-    const openItems = parseScratchpad(scratchpad).filter((i) => !i.done);
-    if (openItems.length > 0) {
-      const serialized = serializeScratchpad(openItems);
-      const section = formatContextSection(
-        "## SCRATCHPAD.md (working context)",
-        serialized,
-        "start",
-        CONTEXT_SCRATCHPAD_MAX_LINES,
-        CONTEXT_SCRATCHPAD_MAX_CHARS,
-      );
-      if (section) sections.push(section);
-    }
-  }
-
-  if (searchResults?.trim()) {
-    const section = formatContextSection(
-      "## Relevant memories (auto-retrieved)",
-      searchResults,
-      "start",
-      CONTEXT_SEARCH_MAX_LINES,
-      CONTEXT_SEARCH_MAX_CHARS,
-    );
-    if (section) sections.push(section);
-  }
-
-  if (currentProjectKey) {
-    const rawProjectContent = readFileSafe(projectMemoryFile(currentProjectKey));
-    const projectContent = rawProjectContent ? stripFrontmatter(rawProjectContent) : null;
-    if (projectContent?.trim()) {
-      const section = formatContextSection(
-        `## Project memory: ${currentProjectKey}`,
-        projectContent,
-        "middle",
-        CONTEXT_PROJECT_MAX_LINES,
-        CONTEXT_PROJECT_MAX_CHARS,
-      );
-      if (section) sections.push(section);
-    }
-  }
-
-  const selfContent = readFileSafe(SELF_FILE);
-  if (selfContent?.trim()) {
-    const section = formatContextSection(
-      "## Self (my learnings & behavioral patterns)",
-      selfContent,
-      "end",
-      CONTEXT_SELF_MAX_LINES,
-      CONTEXT_SELF_MAX_CHARS,
-    );
-    if (section) sections.push(section);
-  }
-
-  const userContent = readFileSafe(USER_FILE);
-  if (userContent?.trim()) {
-    const section = formatContextSection(
-      "## User (about Matt)",
-      userContent,
-      "end",
-      CONTEXT_USER_MAX_LINES,
-      CONTEXT_USER_MAX_CHARS,
-    );
-    if (section) sections.push(section);
-  }
-
-  const longTerm = readFileSafe(MEMORY_FILE);
-  if (longTerm?.trim()) {
-    const section = formatContextSection(
-      "## MEMORY.md (global)",
-      longTerm,
-      "middle",
-      CONTEXT_LONG_TERM_MAX_LINES,
-      CONTEXT_LONG_TERM_MAX_CHARS,
-    );
-    if (section) sections.push(section);
-  }
-
-  if (sections.length === 0) {
+  if (!searchResults?.trim()) {
     return "";
   }
 
-  const context = `# Memory\n\n${sections.join("\n\n---\n\n")}`;
+  const section = formatContextSection(
+    "## Relevant memories (auto-retrieved)",
+    searchResults,
+    "start",
+    CONTEXT_SEARCH_MAX_LINES,
+    CONTEXT_SEARCH_MAX_CHARS,
+  );
+  if (!section) {
+    return "";
+  }
+
+  const context = `# Memory\n\n${section}`;
   if (context.length > CONTEXT_MAX_CHARS) {
     const result = buildPreview(context, {
       maxLines: Number.POSITIVE_INFINITY,
@@ -582,10 +573,31 @@ export function buildMemoryContext(
 type ExecFileFn = typeof execFile;
 let execFileFn: ExecFileFn = execFile;
 
+interface LastMemoryInjection {
+  at: string;
+  prompt: string;
+  memoryContext: string;
+  chars: number;
+  sections: number;
+  searchHitCount: number;
+  searchFiles: string[];
+  searchChars: number;
+  transports: string[];
+  debug: string[];
+  projectKey: string | null;
+  skippedSearch: boolean;
+}
+
 let qmdAvailable = false;
 let updateTimer: ReturnType<typeof setTimeout> | null = null;
 let projectKeyCache = new Map<string, string | null>();
 let unsubscribeTrackedCwd: (() => void) | null = null;
+let qmdDaemonHealthy: boolean | null = null;
+let qmdDaemonEnsurePromise: Promise<boolean> | null = null;
+let qmdDaemonRetryAfter = 0;
+let qmdLastDebug = "";
+let capturedUi: ExtensionContext["ui"] | null = null;
+let lastMemoryInjection: LastMemoryInjection | null = null;
 
 /** Normalize a git remote URL to a canonical key like "git/github.com/org/repo". */
 export function normalizeGitRemote(url: string): string | null {
@@ -694,6 +706,12 @@ export function _clearUpdateTimer() {
 }
 
 const QMD_REPO_URL = "https://github.com/tobi/qmd";
+const DEFAULT_QMD_DAEMON_URL = "http://localhost:8181";
+const QMD_DAEMON_HEALTH_TIMEOUT_MS = 750;
+const QMD_DAEMON_START_TIMEOUT_MS = 15_000;
+const QMD_DAEMON_RETRY_COOLDOWN_MS = 30_000;
+const QMD_DAEMON_READY_ATTEMPTS = 10;
+const QMD_DAEMON_READY_DELAY_MS = 300;
 
 export function qmdInstallInstructions(): string {
   return [
@@ -735,171 +753,6 @@ export async function setupProjectsCollection(): Promise<boolean> {
     return false;
   }
   return true;
-}
-
-/** Search both pi-memory and pi-projects, merge and rank results. */
-export async function runQmdSearchAll(
-  mode: "keyword" | "semantic" | "deep",
-  query: string,
-  limit: number,
-): Promise<{ results: QmdSearchResult[]; stderr: string }> {
-  const [mem, proj, sessions] = await Promise.allSettled([
-    runQmdSearch(mode, query, limit, "pi-memory"),
-    runQmdSearch(mode, query, limit, "pi-projects"),
-    runQmdSearch(mode, query, limit, "pi-sessions"),
-  ]);
-  const combined: QmdSearchResult[] = [];
-  let stderr = "";
-  if (mem.status === "fulfilled") {
-    combined.push(...mem.value.results);
-    stderr += mem.value.stderr;
-  }
-  if (proj.status === "fulfilled") {
-    combined.push(...proj.value.results);
-    stderr += proj.value.stderr;
-  }
-  if (sessions.status === "fulfilled") {
-    combined.push(...sessions.value.results);
-    stderr += sessions.value.stderr;
-  }
-  combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  return { results: combined.slice(0, limit), stderr };
-}
-
-/** Auto-create the pi-memory collection and path contexts in qmd. */
-export async function setupQmdCollection(): Promise<boolean> {
-  try {
-    await new Promise<void>((resolve, reject) => {
-      execFileFn(
-        "qmd",
-        ["collection", "add", MEMORY_DIR, "--name", "pi-memory"],
-        { timeout: 10_000 },
-        (err) => (err ? reject(err) : resolve()),
-      );
-    });
-  } catch {
-    // Collection may already exist under a different name — not critical
-    return false;
-  }
-
-  // Add path contexts (best-effort, ignore errors)
-  const contexts: [string, string][] = [
-    ["/daily", "Daily append-only work logs organized by date"],
-    ["/", "Curated long-term memory: decisions, preferences, facts, lessons"],
-  ];
-  for (const [ctxPath, desc] of contexts) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        execFileFn(
-          "qmd",
-          ["context", "add", ctxPath, desc, "-c", "pi-memory"],
-          { timeout: 10_000 },
-          (err) => (err ? reject(err) : resolve()),
-        );
-      });
-    } catch {
-      // Ignore — context may already exist
-    }
-  }
-  return true;
-}
-
-export function detectQmd(): Promise<boolean> {
-  return new Promise((resolve) => {
-    // qmd doesn't reliably support --version; use a fast command that exits 0 when available.
-    execFileFn("qmd", ["status"], { timeout: 5_000 }, (err) => {
-      resolve(!err);
-    });
-  });
-}
-
-export function checkCollection(name: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    execFileFn("qmd", ["collection", "list", "--json"], { timeout: 10_000 }, (err, stdout) => {
-      if (err) {
-        resolve(false);
-        return;
-      }
-      try {
-        const collections = JSON.parse(stdout);
-        if (Array.isArray(collections)) {
-          resolve(
-            collections.some((entry) => {
-              if (typeof entry === "string") return entry === name;
-              if (entry && typeof entry === "object" && "name" in entry) {
-                return (entry as { name?: string }).name === name;
-              }
-              return false;
-            }),
-          );
-        } else {
-          // qmd may output an object with a collections array or similar
-          resolve(stdout.includes(name));
-        }
-      } catch {
-        // Fallback: just check if the name appears in the output
-        resolve(stdout.includes(name));
-      }
-    });
-  });
-}
-
-export function scheduleQmdUpdate() {
-  if (getQmdUpdateMode() !== "background") return;
-  if (!qmdAvailable) return;
-  if (updateTimer) clearTimeout(updateTimer);
-  updateTimer = setTimeout(() => {
-    updateTimer = null;
-    execFileFn("qmd", ["update"], { timeout: 30_000 }, () => {});
-  }, 500);
-}
-
-async function runQmdUpdateNow() {
-  if (getQmdUpdateMode() !== "background") return;
-  if (!qmdAvailable) return;
-  await new Promise<void>((resolve) => {
-    execFileFn("qmd", ["update"], { timeout: 30_000 }, () => resolve());
-  });
-}
-
-/** Search for memories relevant to the user's prompt. Returns formatted markdown or empty string on error. */
-export async function searchRelevantMemories(prompt: string): Promise<string> {
-  if (!qmdAvailable || !prompt.trim()) return "";
-
-  // Sanitize: strip control chars, limit to 200 chars for the search query
-  const sanitized = prompt
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: we intentionally strip control chars.
-    .replace(/[\x00-\x1f\x7f]/g, " ")
-    .trim()
-    .slice(0, 200);
-  if (!sanitized) return "";
-
-  try {
-    const hasCollection = await checkCollection("pi-memory");
-    if (!hasCollection) return "";
-
-    const results = await Promise.race([
-      runQmdSearchAll("keyword", sanitized, 3),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3_000)),
-    ]);
-
-    if (!results || results.results.length === 0) return "";
-
-    const snippets = results.results
-      .map((r) => {
-        const text = getQmdResultText(r);
-        if (!text.trim()) return null;
-        const filePath = getQmdResultPath(r);
-        const filePart = filePath ? `_${filePath}_` : "";
-        return filePart ? `${filePart}\n${text.trim()}` : text.trim();
-      })
-      .filter(Boolean);
-
-    if (snippets.length === 0) return "";
-    return snippets.join("\n\n---\n\n");
-  } catch {
-    return "";
-  }
 }
 
 export interface QmdSearchResult {
@@ -950,16 +803,179 @@ function parseQmdJson(stdout: string): unknown {
   return JSON.parse(jsonText);
 }
 
-export function runQmdSearch(
+function getQmdDaemonUrl(): string {
+  return (process.env.PI_MEMORY_QMD_DAEMON_URL ?? DEFAULT_QMD_DAEMON_URL).replace(/\/+$/, "");
+}
+
+async function qmdHttpGetJson(endpoint: string, timeoutMs: number): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${getQmdDaemonUrl()}${endpoint}`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`QMD daemon ${response.status}: ${await response.text()}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function qmdHttpPostJson(
+  endpoint: string,
+  body: unknown,
+  timeoutMs: number,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${getQmdDaemonUrl()}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`QMD daemon ${response.status}: ${await response.text()}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function qmdDaemonHealthCheck(timeoutMs = QMD_DAEMON_HEALTH_TIMEOUT_MS): Promise<boolean> {
+  try {
+    const response = (await qmdHttpGetJson("/health", timeoutMs)) as { status?: string };
+    return response?.status === "ok";
+  } catch (err) {
+    qmdLastDebug = `health-check failed: ${err instanceof Error ? err.message : String(err)}`;
+    return false;
+  }
+}
+
+async function startQmdDaemon(): Promise<boolean> {
+  return await new Promise((resolve) => {
+    execFileFn(
+      "qmd",
+      ["mcp", "--http", "--daemon"],
+      { timeout: QMD_DAEMON_START_TIMEOUT_MS },
+      (err, stdout, stderr) => {
+        if (!err) {
+          qmdLastDebug = `daemon started: ${(stdout ?? stderr ?? "").trim() || "ok"}`;
+          resolve(true);
+          return;
+        }
+        const message = [stderr?.trim(), stdout?.trim(), err.message].filter(Boolean).join(" | ");
+        if (/already running/i.test(message)) {
+          qmdLastDebug = `daemon already running: ${message}`;
+          resolve(true);
+          return;
+        }
+        qmdLastDebug = `daemon start failed: ${message}`;
+        resolve(false);
+      },
+    );
+  });
+}
+
+async function waitForQmdDaemonReady(): Promise<boolean> {
+  for (let attempt = 0; attempt < QMD_DAEMON_READY_ATTEMPTS; attempt++) {
+    if (await qmdDaemonHealthCheck()) return true;
+    await new Promise((resolve) => setTimeout(resolve, QMD_DAEMON_READY_DELAY_MS));
+  }
+  return false;
+}
+
+async function ensureQmdDaemon(): Promise<boolean> {
+  if (qmdDaemonHealthy === true) {
+    qmdLastDebug = "daemon cached healthy";
+    return true;
+  }
+  if (qmdDaemonEnsurePromise) {
+    qmdLastDebug = "daemon ensure already in progress";
+    return qmdDaemonEnsurePromise;
+  }
+  if (Date.now() < qmdDaemonRetryAfter) {
+    qmdLastDebug = `daemon retry cooldown until ${new Date(qmdDaemonRetryAfter).toISOString()}`;
+    return false;
+  }
+
+  qmdDaemonEnsurePromise = (async () => {
+    if (await qmdDaemonHealthCheck()) {
+      qmdDaemonHealthy = true;
+      qmdDaemonRetryAfter = 0;
+      qmdLastDebug = "daemon healthy before start";
+      return true;
+    }
+
+    const started = await startQmdDaemon();
+    if (!started) {
+      const healthy = await qmdDaemonHealthCheck();
+      qmdDaemonHealthy = healthy;
+      qmdDaemonRetryAfter = healthy ? 0 : Date.now() + QMD_DAEMON_RETRY_COOLDOWN_MS;
+      qmdLastDebug = healthy ? "daemon became healthy after failed start" : qmdLastDebug;
+      return healthy;
+    }
+
+    const healthy = await waitForQmdDaemonReady();
+    qmdDaemonHealthy = healthy;
+    qmdDaemonRetryAfter = healthy ? 0 : Date.now() + QMD_DAEMON_RETRY_COOLDOWN_MS;
+    qmdLastDebug = healthy ? "daemon healthy after start" : `${qmdLastDebug} | ready check failed`;
+    return healthy;
+  })().finally(() => {
+    qmdDaemonEnsurePromise = null;
+  });
+
+  return qmdDaemonEnsurePromise;
+}
+
+function qmdHttpSearches(
+  mode: "keyword" | "semantic" | "deep",
+  query: string,
+): Array<{ type: "lex" | "vec"; query: string }> {
+  if (mode === "keyword") return [{ type: "lex", query }];
+  if (mode === "semantic") return [{ type: "vec", query }];
+  return [
+    { type: "lex", query },
+    { type: "vec", query },
+  ];
+}
+
+async function runQmdSearchHttp(
   mode: "keyword" | "semantic" | "deep",
   query: string,
   limit: number,
-  collection = "pi-memory",
-): Promise<{ results: QmdSearchResult[]; stderr: string }> {
+  collection: string,
+): Promise<{ results: QmdSearchResult[]; stderr: string; transport: string }> {
+  const parsed = (await qmdHttpPostJson(
+    "/query",
+    {
+      searches: qmdHttpSearches(mode, query),
+      limit,
+      collections: [collection],
+    },
+    60_000,
+  )) as { results?: QmdSearchResult[]; hits?: QmdSearchResult[] } | QmdSearchResult[];
+
+  const results = Array.isArray(parsed) ? parsed : (parsed.results ?? parsed.hits ?? []);
+  qmdLastDebug = `http search ok (${collection}, ${mode})`;
+  return { results, stderr: "", transport: "http" };
+}
+
+async function runQmdSearchCli(
+  mode: "keyword" | "semantic" | "deep",
+  query: string,
+  limit: number,
+  collection: string,
+): Promise<{ results: QmdSearchResult[]; stderr: string; transport: string }> {
   const subcommand = mode === "keyword" ? "search" : mode === "semantic" ? "vsearch" : "query";
   const args = [subcommand, "--json", "-c", collection, "-n", String(limit), query];
 
-  return new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     execFileFn("qmd", args, { timeout: 60_000 }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(stderr?.trim() || err.message));
@@ -970,7 +986,8 @@ export function runQmdSearch(
         const results = Array.isArray(parsed)
           ? parsed
           : ((parsed as any).results ?? (parsed as any).hits ?? []);
-        resolve({ results, stderr: stderr ?? "" });
+        qmdLastDebug = `cli search ok (${collection}, ${mode})`;
+        resolve({ results, stderr: stderr ?? "", transport: "cli" });
       } catch (parseErr) {
         if (parseErr instanceof Error) {
           reject(parseErr);
@@ -982,9 +999,209 @@ export function runQmdSearch(
   });
 }
 
+export function detectQmd(): Promise<boolean> {
+  return new Promise((resolve) => {
+    // qmd doesn't reliably support --version; use a fast command that exits 0 when available.
+    execFileFn("qmd", ["status"], { timeout: 5_000 }, (err) => {
+      resolve(!err);
+    });
+  });
+}
+
+export function checkCollection(name: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFileFn("qmd", ["collection", "list", "--json"], { timeout: 10_000 }, (err, stdout) => {
+      if (err) {
+        resolve(false);
+        return;
+      }
+      try {
+        const collections = JSON.parse(stdout);
+        if (Array.isArray(collections)) {
+          resolve(
+            collections.some((entry) => {
+              if (typeof entry === "string") return entry === name;
+              if (entry && typeof entry === "object" && "name" in entry) {
+                return (entry as { name?: string }).name === name;
+              }
+              return false;
+            }),
+          );
+        } else {
+          // qmd may output an object with a collections array or similar
+          resolve(stdout.includes(name));
+        }
+      } catch {
+        // Fallback: just check if the name appears in the output
+        resolve(stdout.includes(name));
+      }
+    });
+  });
+}
+
+/** Search both pi-memory and pi-projects, merge and rank results. */
+export async function runQmdSearchAll(
+  mode: "keyword" | "semantic" | "deep",
+  query: string,
+  limit: number,
+  collections: string[] = ["pi-memory", "pi-projects", "pi-sessions"],
+): Promise<{ results: QmdSearchResult[]; stderr: string; transports: string[]; debug: string[] }> {
+  const searches = collections.map((collection) =>
+    runQmdSearch(mode, query, limit, collection).then((value) => ({ collection, value })),
+  );
+  const settled = await Promise.allSettled(searches);
+  const combined: QmdSearchResult[] = [];
+  let stderr = "";
+  const transports: string[] = [];
+  const debug: string[] = [];
+  for (const entry of settled) {
+    if (entry.status === "fulfilled") {
+      combined.push(...entry.value.value.results);
+      stderr += entry.value.value.stderr;
+      transports.push(`${entry.value.collection}:${entry.value.value.transport}`);
+      debug.push(`${entry.value.collection}:${entry.value.value.debug}`);
+    } else {
+      debug.push(entry.reason instanceof Error ? entry.reason.message : String(entry.reason));
+    }
+  }
+  combined.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  return { results: combined.slice(0, limit), stderr, transports, debug };
+}
+
+/** Auto-create the pi-memory collection and path contexts in qmd. */
+export async function setupQmdCollection(): Promise<boolean> {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFileFn(
+        "qmd",
+        ["collection", "add", MEMORY_DIR, "--name", "pi-memory"],
+        { timeout: 10_000 },
+        (err) => (err ? reject(err) : resolve()),
+      );
+    });
+  } catch {
+    // Collection may already exist under a different name — not critical
+    return false;
+  }
+
+  // Add path contexts (best-effort, ignore errors)
+  const contexts: [string, string][] = [
+    ["/daily", "Daily append-only work logs organized by date"],
+    ["/", "Curated long-term memory: decisions, preferences, facts, lessons"],
+  ];
+  for (const [ctxPath, desc] of contexts) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFileFn(
+          "qmd",
+          ["context", "add", ctxPath, desc, "-c", "pi-memory"],
+          { timeout: 10_000 },
+          (err) => (err ? reject(err) : resolve()),
+        );
+      });
+    } catch {
+      // Ignore — context may already exist
+    }
+  }
+  return true;
+}
+
+export function scheduleQmdUpdate() {
+  if (getQmdUpdateMode() !== "background") return;
+  if (!qmdAvailable) return;
+  if (updateTimer) clearTimeout(updateTimer);
+  updateTimer = setTimeout(() => {
+    updateTimer = null;
+    execFileFn("qmd", ["update"], { timeout: 30_000 }, () => {});
+  }, 500);
+}
+
+async function runQmdUpdateNow() {
+  if (getQmdUpdateMode() !== "background") return;
+  if (!qmdAvailable) return;
+  await new Promise<void>((resolve) => {
+    execFileFn("qmd", ["update"], { timeout: 30_000 }, () => resolve());
+  });
+}
+
+interface RelevantMemorySearch {
+  text: string;
+  hitCount: number;
+  files: string[];
+  transports: string[];
+  debug: string[];
+}
+
+/** Search for memories relevant to the user's prompt. Returns formatted markdown or null on error/no results. */
+export async function searchRelevantMemories(prompt: string): Promise<RelevantMemorySearch | null> {
+  if (!qmdAvailable || !prompt.trim()) return null;
+
+  // Sanitize: strip control chars, limit to 200 chars for the search query
+  const sanitized = prompt
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: we intentionally strip control chars.
+    .replace(/[\x00-\x1f\x7f]/g, " ")
+    .trim()
+    .slice(0, 200);
+  if (!sanitized) return null;
+
+  try {
+    const hasCollection = await checkCollection("pi-memory");
+    if (!hasCollection) return null;
+
+    const results = await runQmdSearchAll("keyword", sanitized, 3, ["pi-memory", "pi-projects"]);
+
+    if (!results || results.results.length === 0) return null;
+
+    const files = results.results
+      .map((r) => getQmdResultPath(r))
+      .filter((v): v is string => Boolean(v));
+    const snippets = results.results
+      .map((r) => {
+        const text = getQmdResultText(r);
+        if (!text.trim()) return null;
+        const filePath = getQmdResultPath(r);
+        const filePart = filePath ? `_${filePath}_` : "";
+        return filePart ? `${filePart}\n${text.trim()}` : text.trim();
+      })
+      .filter(Boolean);
+
+    if (snippets.length === 0) return null;
+    return {
+      text: snippets.join("\n\n---\n\n"),
+      hitCount: results.results.length,
+      files,
+      transports: results.transports,
+      debug: results.debug,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function runQmdSearch(
+  mode: "keyword" | "semantic" | "deep",
+  query: string,
+  limit: number,
+  collection = "pi-memory",
+): Promise<{ results: QmdSearchResult[]; stderr: string; transport: string; debug: string }> {
+  if (await ensureQmdDaemon()) {
+    try {
+      const result = await runQmdSearchHttp(mode, query, limit, collection);
+      return { ...result, debug: qmdLastDebug };
+    } catch (err) {
+      qmdDaemonHealthy = false;
+      qmdDaemonRetryAfter = Date.now() + QMD_DAEMON_RETRY_COOLDOWN_MS;
+      qmdLastDebug = `http search failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  const result = await runQmdSearchCli(mode, query, limit, collection);
+  return { ...result, debug: qmdLastDebug };
+}
+
 export default function (pi: ExtensionAPI) {
   // --- session_start: detect project + qmd, auto-setup collection ---
-  pi.on("session_start", async (_event, _ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     // Reset project key cache so the first prompt re-detects from the current CWD.
     projectKeyCache = new Map();
     unsubscribeTrackedCwd?.();
@@ -992,6 +1209,11 @@ export default function (pi: ExtensionAPI) {
       projectKeyCache = new Map();
     });
 
+    capturedUi = ctx.hasUI ? ctx.ui : null;
+    updateMemoryWidget();
+    qmdDaemonHealthy = null;
+    qmdDaemonEnsurePromise = null;
+    qmdDaemonRetryAfter = 0;
     qmdAvailable = await detectQmd();
     if (!qmdAvailable) return;
 
@@ -1021,6 +1243,7 @@ export default function (pi: ExtensionAPI) {
 
   // --- session_shutdown: index session + clean up timer ---
   pi.on("session_shutdown", async (_event, ctx) => {
+    capturedUi = null;
     if (updateTimer) {
       clearTimeout(updateTimer);
       updateTimer = null;
@@ -1061,11 +1284,31 @@ export default function (pi: ExtensionAPI) {
 
     const skipSearch = process.env.PI_MEMORY_NO_SEARCH === "1";
     const [searchResults, currentProjectKey] = await Promise.all([
-      skipSearch ? Promise.resolve("") : searchRelevantMemories(event.prompt ?? ""),
+      skipSearch ? Promise.resolve(null) : searchRelevantMemories(event.prompt ?? ""),
       getProjectKey(),
     ]);
-    const memoryContext = buildMemoryContext(searchResults, currentProjectKey);
-    if (!memoryContext) return;
+    const memoryContext = buildMemoryContext(searchResults?.text, currentProjectKey);
+    if (!memoryContext) {
+      lastMemoryInjection = null;
+      updateMemoryWidget();
+      return;
+    }
+
+    lastMemoryInjection = {
+      at: new Date().toISOString(),
+      prompt: event.prompt ?? "",
+      memoryContext,
+      chars: memoryContext.length,
+      sections: (memoryContext.match(/^## /gm) ?? []).length,
+      searchHitCount: searchResults?.hitCount ?? 0,
+      searchFiles: searchResults?.files ?? [],
+      searchChars: searchResults?.text.length ?? 0,
+      transports: searchResults?.transports ?? [],
+      debug: searchResults?.debug ?? [],
+      projectKey: currentProjectKey,
+      skippedSearch: skipSearch,
+    };
+    updateMemoryWidget();
 
     const memoryInstructions = [
       "\n\n## Memory",
@@ -1083,6 +1326,23 @@ export default function (pi: ExtensionAPI) {
     return {
       systemPrompt: event.systemPrompt + memoryInstructions,
     };
+  });
+
+  pi.registerCommand("memory-context", {
+    description: "Show a summary of the last memory context injected into the prompt.",
+    handler: async (_args, ctx) => {
+      if (!ctx.hasUI) return;
+      const summary = formatLastMemoryInjection(lastMemoryInjection, false);
+      ctx.ui.notify(`${summary}\n\nUse /memory-context-full for the full rendered block.`, "info");
+    },
+  });
+
+  pi.registerCommand("memory-context-full", {
+    description: "Show the full last memory context injected into the prompt.",
+    handler: async (_args, ctx) => {
+      if (!ctx.hasUI) return;
+      ctx.ui.notify(formatLastMemoryInjection(lastMemoryInjection, true), "info");
+    },
   });
 
   // --- Pre-compaction: auto-capture session handoff ---
@@ -1685,6 +1945,40 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "memory_last_context",
+    label: "Memory Last Context",
+    description:
+      "Show the last memory block injected into the system prompt for this session, with metadata about hits, transports, and the rendered context.",
+    parameters: Type.Object({
+      full: Type.Optional(
+        Type.Boolean({ description: "Include the rendered injected context. Default: true." }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: formatLastMemoryInjection(lastMemoryInjection, params.full ?? true),
+          },
+        ],
+        details: lastMemoryInjection
+          ? {
+              at: lastMemoryInjection.at,
+              chars: lastMemoryInjection.chars,
+              sections: lastMemoryInjection.sections,
+              searchHitCount: lastMemoryInjection.searchHitCount,
+              searchFiles: uniqStrings(lastMemoryInjection.searchFiles),
+              transports: uniqStrings(lastMemoryInjection.transports),
+              projectKey: lastMemoryInjection.projectKey,
+              skippedSearch: lastMemoryInjection.skippedSearch,
+            }
+          : {},
+      };
+    },
+  });
+
   // --- memory_search tool ---
   pi.registerTool({
     name: "memory_search",
@@ -1737,7 +2031,11 @@ export default function (pi: ExtensionAPI) {
       const limit = params.limit ?? 5;
 
       try {
-        const { results, stderr } = await runQmdSearchAll(mode, params.query, limit);
+        const { results, stderr, transports, debug } = await runQmdSearchAll(
+          mode,
+          params.query,
+          limit,
+        );
         const needsEmbed = /need embeddings/i.test(stderr ?? "");
 
         if (results.length === 0) {
@@ -1755,7 +2053,7 @@ export default function (pi: ExtensionAPI) {
                   ].join("\n"),
                 },
               ],
-              details: { mode, query: params.query, count: 0, needsEmbed: true },
+              details: { mode, query: params.query, count: 0, needsEmbed: true, transports, debug },
             };
           }
           return {
@@ -1765,7 +2063,7 @@ export default function (pi: ExtensionAPI) {
                 text: `No results found for "${params.query}" (mode: ${mode}).`,
               },
             ],
-            details: { mode, query: params.query, count: 0, needsEmbed },
+            details: { mode, query: params.query, count: 0, needsEmbed, transports, debug },
           };
         }
 
@@ -1783,7 +2081,14 @@ export default function (pi: ExtensionAPI) {
 
         return {
           content: [{ type: "text", text: formatted }],
-          details: { mode, query: params.query, count: results.length, needsEmbed },
+          details: {
+            mode,
+            query: params.query,
+            count: results.length,
+            needsEmbed,
+            transports,
+            debug,
+          },
         };
       } catch (err) {
         return {

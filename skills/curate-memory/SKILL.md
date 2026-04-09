@@ -109,38 +109,54 @@ Rewrite the file content with these rules:
 
 This is the most important step. Sessions routinely contain decisions, preferences, and conclusions that never get written to memory. Your job is to find them.
 
-Run **at least 3 targeted searches** per memory file using `qmd query` (hybrid search, not just keywords):
+Run **at least 3 targeted searches** per memory file using the daemon-aware helper below (hybrid search, not just keywords):
+
+```bash
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "<query>" --collection pi-sessions --limit 5 --mode deep
+```
+
+This helper prefers the shared QMD HTTP daemon and falls back to CLI if needed. It prints JSON results with `file`, `score`, and `snippet` fields.
+
+When you want to open a hit with `qmd get`, convert the helper's `file` value from `pi-sessions/foo/bar.md` into `qmd://pi-sessions/foo/bar.md` first, then append the line number from the snippet if needed.
 
 **For project memory files**, derive queries from the project name and key topics:
 ```bash
 # Search for the project specifically
-qmd query "<project-name> decision" -c pi-sessions -n 5
-qmd query "<project-name> architecture approach" -c pi-sessions -n 5
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "<project-name> decision" --collection pi-sessions --limit 5 --mode deep
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "<project-name> architecture approach" --collection pi-sessions --limit 5 --mode deep
 # Search for key subsystems mentioned in the memory file
-qmd query "<specific-subsystem-or-feature>" -c pi-sessions -n 5
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "<specific-subsystem-or-feature>" --collection pi-sessions --limit 5 --mode deep
 ```
 
 **For SELF.md**, search for behavioral corrections and patterns:
 ```bash
-qmd query "correction mistake wrong" -c pi-sessions -n 5
-qmd query "don't do that stop" -c pi-sessions -n 5
-qmd query "frustrated annoyed" -c pi-sessions -n 5
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "correction mistake wrong" --collection pi-sessions --limit 5 --mode deep
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "don't do that stop" --collection pi-sessions --limit 5 --mode deep
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "frustrated annoyed" --collection pi-sessions --limit 5 --mode deep
 ```
 
 **For USER.md**, search for personality, preferences, and reactions:
 ```bash
-qmd query "I prefer I like I want" -c pi-sessions -n 5
-qmd query "skip it don't need that" -c pi-sessions -n 5
-qmd query "that's cool nice rad" -c pi-sessions -n 5
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "I prefer I like I want" --collection pi-sessions --limit 5 --mode deep
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "skip it don't need that" --collection pi-sessions --limit 5 --mode deep
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "that's cool nice rad" --collection pi-sessions --limit 5 --mode deep
 ```
 
 **For global MEMORY.md**, search for environment and config discussions:
 ```bash
-qmd query "nix flake config setup" -c pi-sessions -n 5
-qmd query "pi extension tool" -c pi-sessions -n 5
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "nix flake config setup" --collection pi-sessions --limit 5 --mode deep
+nu ~/.pi/agent/skills/curate-memory/qmd-search.nu "pi extension tool" --collection pi-sessions --limit 5 --mode deep
 ```
 
-For each search result, **read the surrounding context** (use `qmd get <file>:<line> -l 40`) to understand the full exchange. Look for:
+For each search result, **read the surrounding context** (use `qmd get qmd://<collection>/<path>:<line> -l 40`) to understand the full exchange. For helper results, derive that URI by replacing the first `/` in the `file` field with `qmd://`.
+
+Examples:
+```bash
+qmd get qmd://pi-sessions/2026-04/example.md:120 -l 40
+# helper result file `pi-sessions/2026-04/example.md` -> `qmd://pi-sessions/2026-04/example.md`
+```
+
+Look for:
 - Decisions or conclusions that were reached but not recorded in this memory file
 - Things that were explicitly evaluated and rejected ("decided against X because Y" is valuable)
 - Corrections, gotchas, or lessons learned
