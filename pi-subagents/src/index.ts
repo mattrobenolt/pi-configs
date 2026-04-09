@@ -430,10 +430,8 @@ export default function (pi: ExtensionAPI) {
   // Capture ctx from session_start for RPC spawn handler
   pi.on("session_start", async (_event, ctx) => {
     currentCtx = ctx;
-    manager.clearCompleted();           // preserve existing behavior
+    manager.clearCompleted();
   });
-
-  pi.on("session_switch", () => { manager.clearCompleted(); });
 
   const { unsubPing: unsubPingRpc, unsubSpawn: unsubSpawnRpc, unsubStop: unsubStopRpc } = registerRpcHandlers({
     events: pi.events,

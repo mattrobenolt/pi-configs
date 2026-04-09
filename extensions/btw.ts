@@ -603,7 +603,7 @@ export default function (pi: ExtensionAPI) {
 
     const seedMessages = buildSeedMessages(ctx, thread);
     if (seedMessages.length > 0) {
-      session.agent.replaceMessages(seedMessages as typeof session.state.messages);
+      session.agent.state.messages = seedMessages as typeof session.state.messages;
     }
 
     const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
@@ -998,10 +998,6 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    await restoreThread(ctx);
-  });
-
-  pi.on("session_switch", async (_event, ctx) => {
     await restoreThread(ctx);
   });
 

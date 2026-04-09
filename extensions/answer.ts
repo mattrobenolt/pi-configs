@@ -81,9 +81,10 @@ async function selectExtractionModel(
   currentModel: Model<Api>,
   modelRegistry: {
     find: (provider: string, modelId: string) => Model<Api> | undefined;
-    getApiKeyAndHeaders: (model: Model<Api>) => Promise<
-      | { ok: true; apiKey?: string; headers?: Record<string, string> }
-      | { ok: false; error: string }
+    getApiKeyAndHeaders: (
+      model: Model<Api>,
+    ) => Promise<
+      { ok: true; apiKey?: string; headers?: Record<string, string> } | { ok: false; error: string }
     >;
   },
 ): Promise<Model<Api>> {
