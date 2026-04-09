@@ -51,7 +51,7 @@ export default function (pi: ExtensionAPI) {
     let gitCacheAt = 0;
     const GIT_TTL = 3000;
 
-    ctx.ui.setFooter((tui, theme) => {
+    ctx.ui.setFooter((tui, theme, footerData) => {
       const clockTimer = setInterval(() => tui.requestRender(), 1000);
 
       function refreshGitInfo(): void {
@@ -111,7 +111,13 @@ export default function (pi: ExtensionAPI) {
           const dirtyPart = isDirty ? " " + theme.fg("warning", "*") : "";
           const timePart = "  " + theme.fg("dim", nowHMS());
 
-          const left = dirPart + branchPart + dirtyPart + timePart;
+          const statuses = footerData.getExtensionStatuses();
+          const statusPart =
+            statuses.size > 0
+              ? "  " + [...statuses.values()].map((s) => theme.fg("accent", s)).join("  ")
+              : "";
+
+          const left = dirPart + branchPart + dirtyPart + timePart + statusPart;
 
           const right = theme.fg("dim", `${modelId}  ${thinking}  ↑${fmt(input)} ↓${fmt(output)}`);
 

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#
+# pi-profile — wrapper that swaps auth.json before pi starts, restores on exit.
+#
+# This solves the timing issue where pi loads auth.json into memory before
+# extensions run. Using this wrapper guarantees the profile's credentials are
+# active from the very first request, not just after token expiry.
+#
+# Usage:
+#   PI_PROFILE=work pi-profile          # explicit
+#   alias pi-work='PI_PROFILE=work pi-profile'
+#
+# Add to PATH (e.g. in ~/.zshrc or shell config):
+#   export PATH="$HOME/.pi/agent/scripts:$PATH"
+#
+set -euo pipefail
+
+AUTH_FILE="${HOME}/.pi/agent/auth.json"
+BACKUP_FILE="${HOME}/.pi/agent/.auth.json.profile-backup"
+
+cleanup() {
+  if [[ -f "$BACKUP_FILE" ]]; then
+    mv "$BACKUP_FILE" "$AUTH_FILE" 2>/dev/null || true
+  fi
+}
+
+if [[ -n "${PI_PROFILE:-}" ]]; then
+  PROFILE_FILE="${HOME}/.pi/agent/profiles/${PI_PROFILE}.json"
+
+  if [[ ! -f "$PROFILE_FILE" ]]; then
+    echo "pi-profile: profile '${PI_PROFILE}' not found at ${PROFILE_FILE}" >&2
+    echo "pi-profile: create it with: PI_PROFILE=${PI_PROFILE} pi, then /profile save ${PI_PROFILE}" >&2
+    exit 1
+  fi
+
+  cp "$AUTH_FILE" "$BACKUP_FILE" 2>/dev/null || true
+  trap cleanup EXIT INT TERM
+
+  AUTH_FILE="$AUTH_FILE" PROFILE_FILE="$PROFILE_FILE" node -e "
+    const fs = require('fs');
+    const profile = JSON.parse(fs.readFileSync(process.env.PROFILE_FILE, 'utf-8'));
+    fs.writeFileSync(process.env.AUTH_FILE, JSON.stringify(profile.auth ?? {}, null, 2));
+    fs.chmodSync(process.env.AUTH_FILE, 0o600);
+  "
+fi
+
+${PI_BIN:-pi} "$@"
