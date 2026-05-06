@@ -1,6 +1,5 @@
 import {
   buildSessionContext,
-  codingTools,
   createAgentSession,
   createExtensionRuntime,
   getMarkdownTheme,
@@ -31,6 +30,7 @@ import {
 
 const BTW_ENTRY_TYPE = "btw-thread-entry";
 const BTW_RESET_TYPE = "btw-thread-reset";
+const BTW_BUILTIN_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 
 const BTW_SYSTEM_PROMPT = [
   "You are BTW, a side-channel assistant embedded in the user's coding agent.",
@@ -597,7 +597,7 @@ export default function (pi: ExtensionAPI) {
       model: ctx.model,
       modelRegistry: ctx.modelRegistry as AgentSession["modelRegistry"],
       thinkingLevel: pi.getThinkingLevel() as SessionThinkingLevel,
-      tools: codingTools,
+      tools: BTW_BUILTIN_TOOLS,
       resourceLoader: createBtwResourceLoader(ctx),
     });
 

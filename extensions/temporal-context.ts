@@ -1,5 +1,8 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ContextEvent, ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+type AgentMessage = ContextEvent["messages"][number];
+
+const TEMPORAL_CONTEXT_PREFIX = "Time context:";
 
 function getMessageTimestamp(message: AgentMessage): number {
   const timestamp = (message as { timestamp?: number | string }).timestamp;
@@ -11,13 +14,9 @@ function getMessageTimestamp(message: AgentMessage): number {
   return Date.now();
 }
 
-function injectEphemeralContextMessage(
-  messages: AgentMessage[],
-  customType: string,
-  content: string,
-): AgentMessage[] {
+function injectEphemeralContextMessage(messages: AgentMessage[], content: string): AgentMessage[] {
   const nextMessages = messages.filter(
-    (message) => !(message.role === "custom" && message.customType === customType),
+    (message) => !(message.role === "user" && message.content === content),
   );
 
   let insertAt = nextMessages.length;
@@ -32,10 +31,8 @@ function injectEphemeralContextMessage(
     insertAt < nextMessages.length ? getMessageTimestamp(nextMessages[insertAt]) : Date.now();
 
   nextMessages.splice(insertAt, 0, {
-    role: "custom",
-    customType,
+    role: "user",
     content,
-    display: false,
     timestamp,
   });
 
@@ -54,6 +51,19 @@ function formatIsoWithOffset(date: Date): string {
   const offsetHours = String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, "0");
   const offsetRemainder = String(Math.abs(offsetMinutes) % 60).padStart(2, "0");
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${sign}${offsetHours}:${offsetRemainder}`;
+}
+
+const MIN_TIME_GAP_SECONDS = 30 * 60;
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} minutes`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours} hours`;
+
+  const days = Math.round(hours / 24);
+  return `${days} days`;
 }
 
 function buildTemporalBlock(messages: AgentMessage[]): string | null {
@@ -77,21 +87,13 @@ function buildTemporalBlock(messages: AgentMessage[]): string | null {
       break;
     }
   }
+  if (!previousMessage) return null;
 
-  const lines = ["<temporal>", `current_time: ${formatIsoWithOffset(new Date(currentTimestamp))}`];
+  const previousTimestamp = getMessageTimestamp(previousMessage);
+  const deltaSeconds = Math.max(0, Math.floor((currentTimestamp - previousTimestamp) / 1000));
+  if (deltaSeconds < MIN_TIME_GAP_SECONDS) return null;
 
-  if (previousMessage) {
-    const previousTimestamp = getMessageTimestamp(previousMessage);
-    const deltaSeconds = Math.max(0, Math.floor((currentTimestamp - previousTimestamp) / 1000));
-    lines.push(`previous_message_role: ${previousMessage.role}`);
-    lines.push(`seconds_since_previous_message: ${deltaSeconds}`);
-  } else {
-    lines.push("previous_message_role: none");
-    lines.push("seconds_since_previous_message: session-start");
-  }
-
-  lines.push("</temporal>");
-  return lines.join("\n");
+  return `${TEMPORAL_CONTEXT_PREFIX} the previous ${previousMessage.role} message was about ${formatDuration(deltaSeconds)} ago. Current local time is ${formatIsoWithOffset(new Date(currentTimestamp))}.`;
 }
 
 export default function temporalContextExtension(pi: ExtensionAPI) {
@@ -100,7 +102,7 @@ export default function temporalContextExtension(pi: ExtensionAPI) {
     if (!temporalBlock) return;
 
     return {
-      messages: injectEphemeralContextMessage(event.messages, "temporal-context", temporalBlock),
+      messages: injectEphemeralContextMessage(event.messages, temporalBlock),
     };
   });
 }

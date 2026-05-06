@@ -1,17 +1,45 @@
 {
   "packages": [
-    "./pi-subagents"
+    "./packages/better-diff",
+    "./packages/memory",
+    "./packages/slack",
+    "./packages/term",
+    "./packages/todos",
+    "git:github.com/ocodista/pi-token-bloat",
+    "git:github.com/nicobailon/pi-subagents",
+    "git:github.com/nicobailon/pi-mcp-adapter",
+    "git:github.com/HazAT/pi-ghostty",
+    "git:github.com/championswimmer/pi-cache-graph"
   ],
-  "lastChangelogVersion": "0.66.1",
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-sonnet-4-6",
-  "defaultThinkingLevel": "medium",
+  "lastChangelogVersion": "0.73.0",
+  "defaultProvider": "cloudflare-ai-gateway",
+  "defaultModel": "gpt-oss-120b",
+  "defaultThinkingLevel": "minimal",
   "theme": "dracula",
   "transport": "sse",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 4096,
+    "keepRecentTokens": 16000
+  },
   "enabledModels": [
-    "anthropic/claude-opus-4-6",
+    "openai-codex/gpt-5.5",
     "openai-codex/gpt-5.4",
-    "anthropic/claude-sonnet-4-6"
+    "llamacpp/qwen3-8b-balanced",
+    "llamacpp/qwen3.5-9b",
+    "llamacpp/gemma4-26b-a4b",
+    "llamacpp/qwen3.6-35b",
+    "llamacpp/qwen3.6-35b-no-reasoning",
+    "cloudflare-ai-gateway/llama-3.3-70b-instruct-fp8-fast",
+    "cloudflare-ai-gateway/gpt-oss-120b",
+    "cloudflare-ai-gateway/kimi-k2-6",
+    "cloudflare-ai-gateway/deepseek-v4-pro",
+    "cloudflare-ai-gateway/glm-5-1",
+    "cloudflare-ai-gateway/minimax-m2-5",
+    "cloudflare-ai-gateway/minimax-m2-7",
+    "cloudflare-ai-gateway/deepseek-v3-2",
+    "cloudflare-ai-gateway/kimi-k2-5",
+    "cloudflare-ai-gateway/glm-5"
   ],
   "steeringMode": "all",
   "quietStartup": true,
@@ -22,5 +50,8 @@
     "workspaceUrl": "https://planetscale.slack.com"
   },
   "doubleEscapeAction": "tree",
-  "followUpMode": "all"
+  "followUpMode": "all",
+  "terminal": {
+    "showTerminalProgress": true
+  }
 }

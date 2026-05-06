@@ -7,49 +7,61 @@ This is an evolving workbench — some things are battle-tested, some are experi
 ## Structure
 
 ```
-extensions/   TypeScript extensions that add tools, UI, and behavior to pi
-agents/       Custom agent definitions for specialized subagent tasks
-skills/       Markdown skill files that give the agent domain-specific knowledge
-themes/       Color themes (just Dracula)
+extensions/   Pi-only TypeScript extensions: tools, UI, hooks, and session behavior
+agents/       Pi subagent definitions loaded by the subagent package/tool
+skills/       Loose pi-local skills and compatibility adapters
+plugins/      Claude Code plugin bundles exposed through the local marketplace
+packages/     Local package/fork code and workspace packages
+scripts/      Repo-local automation and eval helpers
+themes/       Color themes
 ```
+
+The portability boundary is intentional:
+
+- Put shareable domain bundles in `plugins/`. A plugin may contain skills, slash commands, agents, LSP settings, MCP config, or other Claude Code plugin metadata.
+- Put pi runtime behavior in `extensions/`. These files call the pi extension API directly and are not portable to Claude Code or Codex without being rewritten as MCP tools, CLIs, or skills.
+- Put package-shaped code in `packages/`. If it has its own `package.json`, tests, changelog, README, and source tree, it does not belong at the repo root.
+- Put only loose local skills in `skills/`. If a skill belongs to a shareable domain such as Zig, the plugin copy is canonical and the root skill should be a pi compatibility adapter.
 
 ## Extensions
 
 Extensions are loaded automatically from the `extensions/` directory on session start.
 
-| Extension            | What it does                                                                                                                                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `answer.ts`          | `/answer` command and `Ctrl+.` shortcut — presents an interactive TUI for answering questions extracted from the last assistant message                                                                            |
-| `better-diff/`       | Replaces default edit/write diff output with Shiki syntax-highlighted diffs, adapting to split or unified layout based on terminal width                                                                           |
-| `btw.ts`             | `/btw` — floating side-chat overlay for tangential questions without polluting the main session                                                                                                                    |
-| `cost.ts`            | `/cost [days]` — token usage summary broken down by date, project, and model                                                                                                                                       |
-| `direnv.ts`          | Loads direnv environments into bash tool invocations, tracks CWD across commands, shows a rich footer with git status, nix badge, and token usage                                                                  |
-| `execute-command.ts` | `execute_command` tool — lets the agent queue a slash command or message to fire after its current turn ends                                                                                                       |
-| `memory.ts`          | Five-target memory system (global, project, self, user, daily) with context injection before every turn and qmd-powered semantic search                                                                            |
-| `notify.ts`          | Sends a native desktop notification (OSC 777) when the agent finishes a turn — requires Ghostty with `desktop-notifications = true`                                                                                |
-| `prompt-editor.ts`   | Named "modes" for model + thinking level combinations — cycle with `Ctrl+Space`, pick with `/mode`                                                                                                                 |
-| `setup.ts`           | Session defaults: activates `grep`, `find`, `ls` built-in tools; auto-expands tool outputs; registers `get_system_prompt`, `get_tools`, `get_last_payload` introspection tools                                     |
-| `slack.ts`           | Native Slack tools: `SlackRead`, `SlackSearch`, `SlackReply`, `SlackUserLookup`, `SlackChannelHistory`; auth comes from Slack.app and default workspace comes from `settings.json`                                 |
-| `statusline.ts`      | Footer showing repo name, git branch, dirty state, current time, model, and token usage                                                                                                                            |
-| `term.ts`            | `term` tool for named terminals in an implicit per-session workspace backed by zellij; exposes higher-level ensure/send/read/wait/kill primitives with file-like scrollback reads                                  |
-| `todos/`             | File-backed todo manager with locking, tags, session assignment, and a TUI selector — the `todo` tool used for task tracking in longer sessions                                                                    |
-| `webfetch.ts`        | `webfetch` and `websearch` tools — GitHub-URL-aware fetching and Exa-powered web search                                                                                                                            |
-| `whimsical.ts`       | Animated loading messages with shimmer effect. Purely cosmetic.                                                                                                                                                    |
+| Extension              | What it does                                                                                                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `answer.ts`            | `/answer` command and `Ctrl+.` shortcut — presents an interactive TUI for answering questions extracted from the last assistant message                         |
+| `btw.ts`               | `/btw` — floating side-chat overlay for tangential questions without polluting the main session                                                                 |
+| `compaction-model.ts`  | Uses a local llamacpp model for compaction when the active model is local                                                                                       |
+| `cost.ts`              | `/cost [days]` — token usage summary broken down by date, project, and model                                                                                    |
+| `cwd.ts`               | `/cd` command plus CWD-aware path handling for bash/read/write/edit/grep/find/ls, with zoxide support                                                           |
+| `direnv.ts`            | Loads direnv environments for the current working directory and reports blocked/error status in the footer                                                       |
+| `execute-command.ts`   | `execute_command` tool — lets the agent queue a slash command or message to fire after its current turn ends                                                    |
+| `notion.ts`            | `NotionRead` and `NotionSearch` tools — read/search Notion using `NOTION_TOKEN` or the local macOS Notion app token                                             |
+| `notify.ts`            | Sends a native desktop notification (OSC 777) when the agent finishes a turn — requires Ghostty with `desktop-notifications = true`                             |
+| `prompt-editor.ts`     | Named "modes" for model + thinking combinations — cycle with `Ctrl+Space`, pick with `/mode` or `Ctrl+Shift+M`                                                 |
+| `setup.ts`             | Session defaults: activates `grep`, `find`, `ls`; auto-expands tool outputs; registers `get_system_prompt`, `get_tools`, `get_last_payload` introspection tools |
+| `statusline.ts`        | Footer showing repo/directory, branch, dirty state, current time, extension statuses, model, thinking level, and token usage                                    |
+| `temporal-context.ts`  | Injects hidden temporal context only after long pauses, currently gaps of 30+ minutes between user/assistant messages                                           |
+| `webfetch.ts`          | `webfetch` and `websearch` tools — GitHub-URL-aware fetching and Exa-powered web search                                                                         |
+| `whimsical.ts`         | Animated loading messages with shimmer effect. Purely cosmetic.                                                                                                 |
 
 ## Agents
 
-Custom agent definitions invoked as subagents via the `Agent` tool.
+Custom agent definitions invoked as subagents via the `subagent` tool/package.
 
 **General purpose:**
 
-| Agent          | What it does                                                                                                   |
-| -------------- | -------------------------------------------------------------------------------------------------------------- |
-| `planner`      | Interactive brainstorming and planning — clarifies requirements, explores approaches, writes plans             |
-| `researcher`   | Deep research using `websearch` and `webfetch` — produces a structured findings report                         |
-| `reviewer`     | Code review for quality, security, and correctness                                                             |
-| `scout`        | Fast read-only codebase recon — maps code, conventions, and patterns before making changes                     |
-| `worker`       | Implements tasks from todos — writes code, runs tests, commits                                                 |
-| `autoresearch` | Autonomous experiment loop for optimization targets — runs benchmarks, keeps improvements, reverts regressions |
+| Agent                     | What it does                                                                                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `autoresearch`            | Autonomous experiment loop for optimization targets — runs benchmarks, keeps improvements, reverts regressions |
+| `code-review`             | Orchestrates a two-model parallel code review plus adversarial consolidation                                   |
+| `incident-summary`        | Summarizes a Slack incident channel with timeline, root cause, and resolution                                  |
+| `planner`                 | Interactive brainstorming and planning — clarifies requirements, explores approaches, writes plans             |
+| `researcher`              | Deep research using `websearch` and `webfetch` — produces a structured findings report                         |
+| `reviewer`                | Code review for quality, security, and correctness                                                             |
+| `reviewer-second-opinion` | Adversarial synthesis for parallel code reviews                                                               |
+| `scout`                   | Fast read-only codebase recon — maps code, conventions, and patterns before making changes                     |
+| `worker`                  | Implements tasks from todos — writes code, runs tests, commits                                                |
 
 **Zig review suite** — runs in parallel via the `zig-review` skill, then synthesizes via `zig-review-second-opinion`:
 
@@ -58,6 +70,8 @@ Custom agent definitions invoked as subagents via the `Agent` tool.
 ## Skills
 
 Skills are markdown files loaded by the agent to provide domain-specific knowledge and workflows.
+
+Root-level skills are pi-local. For shareable plugin-owned domains, prefer the plugin version as the source of truth. Today `plugins/zig` owns the canonical Zig writing and Tiger Style skills; `skills/zig` and `skills/tiger-style` are compatibility adapters so pi can still load them from the root skill directory.
 
 | Skill             | What it does                                                             |
 | ----------------- | ------------------------------------------------------------------------ |
@@ -70,32 +84,68 @@ Skills are markdown files loaded by the agent to provide domain-specific knowled
 | `learn-codebase`  | Discover project conventions and surface security concerns               |
 | `nix-devshell`    | Work within Nix flake-based devShells                                    |
 | `nushell`         | Write and edit Nushell scripts                                           |
+| `pi-update`       | Update the local pi coding agent packages                                |
 | `self-improve`    | Meta-skill for improving agent behavior and configuration                |
 | `session-reader`  | Read and analyze pi session JSONL files                                  |
 | `simplify`        | Find simplification opportunities in code                                |
 | `skill-creator`   | Guide for creating new skills                                            |
 | `tiger-style`     | TigerBeetle's coding style guide for Zig                                 |
+| `write-like-matt` | Draft Slack messages in Matt's voice                                     |
 | `zig`             | Idiomatic Zig 0.15 patterns and common migration pitfalls                |
 | `zig-review`      | Orchestrates the full parallel Zig review suite                          |
 
 ## Setup
 
-Uses a Nix flake devshell. From the repo root:
+Uses a Nix flake devshell and npm workspaces. From the repo root:
 
 ```sh
 direnv allow   # or: nix develop
 npm install
 ```
 
-Type checking:
+Normal checks:
 
 ```sh
 npm run check
+npm run lint
 npm run fmt
+npm run fmt:check
+```
+
+The root `package-lock.json` owns workspace dependencies. Do not add per-package lockfiles under `packages/*`; run package dependency changes from the root with npm workspace flags:
+
+```sh
+npm install <dep> --workspace=<package-name>
+npm update --workspaces
+npm outdated --workspaces
 ```
 
 ## Packages
 
+Local workspaces:
+
+- `./packages/better-diff` — syntax-highlighted edit/write diff renderer
+- `./packages/memory` — five-target memory system with qmd-backed search
+- `./packages/pi-subagents` — local fork/staging copy of the subagent package
+- `./packages/slack` — native Slack tools and background conversation loop
+- `./packages/term` — named terminal workspace backed by zellij
+- `./packages/todos` — file-backed todo manager and selector
+
 Loaded via `settings.json`:
 
-- `./pi-subagents` — subagent infrastructure (local fork)
+- `./packages/better-diff`
+- `./packages/memory`
+- `./packages/slack` with `extensions: []`, so the package is installed but its extension resources are filtered out by default
+- `./packages/term`
+- `./packages/todos`
+- `git:github.com/ocodista/pi-token-bloat`
+- `git:github.com/nicobailon/pi-subagents`
+
+Use `pi config` or edit `settings.json` to re-enable the Slack package resources when you actually want them.
+
+## Plugins
+
+`.claude-plugin/marketplace.json` is a local Claude Code marketplace index. It points at plugin bundles under `plugins/`; it is not a pi extension loader.
+
+- `plugins/zig` — canonical Zig development bundle: skills, commands, and agents for Zig 0.15 / Tiger Style work.
+- `plugins/lsp` — Claude Code LSP configuration bundle.

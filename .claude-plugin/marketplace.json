@@ -1,0 +1,19 @@
+{
+  "name": "matt",
+  "description": "Matt Robenolt's personal Claude Code plugins",
+  "owner": {
+    "name": "Matt Robenolt"
+  },
+  "plugins": [
+    {
+      "name": "zig",
+      "description": "Zig development toolkit — writing, reviewing, and Tiger Style compliance for Zig 0.15 projects",
+      "source": "./plugins/zig"
+    },
+    {
+      "name": "lsp",
+      "description": "Opinionated LSP configurations for Go, Zig, Python, Nix, Rust, Ruby, and YAML",
+      "source": "./plugins/lsp"
+    }
+  ]
+}

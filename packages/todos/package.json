@@ -1,0 +1,31 @@
+{
+  "name": "todos-extension",
+  "version": "0.0.0",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "fmt": "oxfmt index.ts",
+    "fmt:check": "oxfmt index.ts --check",
+    "lint": "oxlint index.ts"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.70.2",
+    "@mariozechner/pi-coding-agent": "^0.70.2",
+    "@mariozechner/pi-tui": "^0.70.2",
+    "typebox": "^1.1.33"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.46.0",
+    "oxlint": "^1.57.0",
+    "typescript": "^6.0.3"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

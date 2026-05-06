@@ -9,3 +9,4 @@ pi-crash.log
 git/
 node_modules/
 .direnv/
+local-llm-evals/

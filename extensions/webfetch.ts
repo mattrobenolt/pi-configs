@@ -6,11 +6,23 @@ import {
   truncateHead,
 } from "@mariozechner/pi-coding-agent";
 import { StringEnum } from "@mariozechner/pi-ai";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type Static } from "typebox";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import TurndownService from "turndown";
+import Defuddle from "defuddle/full";
+// Default Defuddle options – always applied to minimise token usage.
+const DEFUDDLE_OPTS = {
+  markdown: true,
+  removeExactSelectors: true,
+  removePartialSelectors: true,
+  removeHiddenElements: true,
+  removeLowScoring: true,
+  removeSmallImages: true,
+  standardize: true,
+} as const;
+
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 const DEFAULT_WEBFETCH_TIMEOUT_SECONDS = 30;
@@ -37,6 +49,7 @@ const WEBFETCH_PARAMS = Type.Object({
       maximum: MAX_WEBFETCH_TIMEOUT_SECONDS,
     }),
   ),
+  // (Defuddle options are now hard‑coded below – no longer exposed via the tool params)
 });
 
 type WebFetchParams = Static<typeof WEBFETCH_PARAMS>;
@@ -301,7 +314,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const raw = new TextDecoder().decode(arrayBuffer);
-      const transformed = transformContent(raw, contentType, format);
+      const transformed = await transformContent(raw, contentType, format);
       const truncated = await truncateForModel(transformed, "webfetch");
 
       return {
@@ -423,14 +436,24 @@ function validateAndNormalizeUrl(value: string): string {
   return parsed.toString();
 }
 
-function transformContent(
+async function transformContent(
   raw: string,
   contentType: string,
   format: "text" | "markdown" | "html",
-): string {
+): Promise<string> {
   if (format === "html") return raw;
   if (contentType.toLowerCase().includes("text/html")) {
     if (format === "text") return extractTextFromHTML(raw);
+    // Use Defuddle to extract main content and convert to Markdown
+    // @ts-ignore // defuddle's type definitions aren't compatible with our TS config
+const defuddle = new Defuddle(DEFUDDLE_OPTS);
+    // Defuddle API may be async; assume parse method returns { content }
+    // @ts-ignore – defuddle's API is untyped in this context
+const result = await (defuddle.parse ? defuddle.parse(raw) : defuddle.run(raw));
+    if (result && typeof result.content === "string") {
+      return result.content;
+    }
+    // If Defuddle didn't return content for any reason, fall back to Turndown conversion
     return convertHTMLToMarkdown(raw);
   }
   return raw;

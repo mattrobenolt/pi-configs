@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "disabledTools": [
+    "execute_command",
+    "get_last_payload",
+    "get_system_prompt",
+    "get_tools",
+    "memory_last_context",
+    "NotionRead",
+    "NotionSearch",
+    "SlackChannelHistory",
+    "SlackConversationInterject",
+    "SlackConversationSteer",
+    "SlackDeleteMessage",
+    "SlackOpenDM",
+    "SlackPost",
+    "SlackRead",
+    "SlackReply",
+    "SlackSearch",
+    "SlackStartConversation",
+    "SlackStopConversation",
+    "SlackUserLookup"
+  ]
+}

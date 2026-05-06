@@ -1,0 +1,7 @@
+{
+  "name": "zig",
+  "description": "Zig development toolkit — writing, reviewing, and Tiger Style compliance for Zig 0.15 projects",
+  "author": {
+    "name": "Matt Robenolt"
+  }
+}

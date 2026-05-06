@@ -1,0 +1,144 @@
+{
+  "name": "lsp",
+  "description": "Opinionated LSP configurations for Go, Zig, Python, Nix, Rust, Ruby, and YAML",
+  "author": {
+    "name": "Matt Robenolt"
+  },
+  "lspServers": {
+    "gopls": {
+      "command": "gopls",
+      "extensionToLanguage": {
+        ".go": "go"
+      },
+      "initializationOptions": {
+        "usePlaceholders": true,
+        "gofumpt": true,
+        "analyses": {
+          "stdmethods": false,
+          "ST1000": false,
+          "ST1013": false
+        },
+        "codelenses": {
+          "gc_details": true,
+          "generate": true,
+          "test": true,
+          "tidy": true,
+          "upgrade_dependency": true,
+          "vendor": false
+        },
+        "completeUnimported": true,
+        "staticcheck": true,
+        "semanticTokens": true,
+        "hints": {
+          "assignVariableTypes": true,
+          "compositeLiteralFields": true,
+          "compositeLiteralTypes": true,
+          "constantValues": true,
+          "functionTypeParameters": true,
+          "parameterNames": true,
+          "rangeVariableTypes": true
+        },
+        "buildFlags": [
+          "-tags",
+          "goexperiment.jsonv2,goexperiment.synctest"
+        ],
+        "templateExtensions": [
+          "html",
+          "tmpl",
+          "tpl"
+        ]
+      }
+    },
+    "zls": {
+      "command": "zls",
+      "extensionToLanguage": {
+        ".zig": "zig",
+        ".zon": "zig"
+      },
+      "initializationOptions": {
+        "enable_build_on_save": true
+      }
+    },
+    "ruff": {
+      "command": "ruff",
+      "args": [
+        "server"
+      ],
+      "extensionToLanguage": {
+        ".py": "python",
+        ".pyi": "python"
+      },
+      "initializationOptions": {
+        "settings": {
+          "lint": {
+            "extendSelect": [
+              "I"
+            ]
+          }
+        }
+      }
+    },
+    "nixd": {
+      "command": "nixd",
+      "extensionToLanguage": {
+        ".nix": "nix"
+      },
+      "initializationOptions": {
+        "formatting": {
+          "command": [
+            "nixfmt"
+          ]
+        }
+      }
+    },
+    "rust-analyzer": {
+      "command": "rust-analyzer",
+      "extensionToLanguage": {
+        ".rs": "rust"
+      },
+      "initializationOptions": {
+        "inlayHints": {
+          "maxLength": null,
+          "lifetimeElisionHints": {
+            "enable": "skip_trivial",
+            "useParameterNames": true
+          },
+          "closureReturnTypeHints": {
+            "enable": "always"
+          }
+        }
+      }
+    },
+    "ruby-lsp": {
+      "command": "ruby-lsp",
+      "extensionToLanguage": {
+        ".rb": "ruby",
+        ".rake": "ruby",
+        ".gemspec": "ruby",
+        ".ru": "ruby"
+      },
+      "initializationOptions": {
+        "enabledFeatures": {
+          "diagnostics": false
+        }
+      }
+    },
+    "yaml-language-server": {
+      "command": "yaml-language-server",
+      "args": [
+        "--stdio"
+      ],
+      "extensionToLanguage": {
+        ".yaml": "yaml",
+        ".yml": "yaml"
+      },
+      "settings": {
+        "yaml": {
+          "format": {
+            "singleQuote": true
+          }
+        }
+      }
+    }
+  }
+}

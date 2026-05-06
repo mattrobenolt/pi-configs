@@ -2,9 +2,12 @@
 name: scout
 description: Fast codebase reconnaissance - maps existing code, conventions, and patterns for a task
 tools: read, bash
-deny-tools: claude
-model: anthropic/claude-haiku-4-5
+model: openai-codex/gpt-5.4-mini
+systemPromptMode: replace
+inheritProjectContext: false
+inheritSkills: false
 output: context.md
+deny-tools: claude
 spawning: false
 auto-exit: true
 ---

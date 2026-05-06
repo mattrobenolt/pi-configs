@@ -5,17 +5,26 @@ This directory is a personal `pi` config/workbench. Treat it like an experimenta
 ## What lives here
 
 - `extensions/`: custom pi extensions and tools, mostly TypeScript.
+- `agents/`: custom subagent definitions consumed by the subagent package/tool.
+- `plugins/`: Claude Code plugin bundles exposed through the local marketplace.
+- `packages/`: package-shaped local forks, workspace packages, or installable pi packages.
+- `scripts/`: repo-local automation and eval helpers.
 - `themes/`: local theme definitions.
-- `skills/`: local skills and skill development scratch space.
+- `skills/`: local skills, scratch space, and compatibility adapters for pi's root skill loader.
 - `APPEND_SYSTEM.md`: extra system-style behavior and tone guidance.
+- `settings.json`, `models.json`, `modes.json`: machine-local pi runtime configuration.
 - `flake.nix`: the dev shell. Prefer it over installing random stuff globally.
 
 Ignore generated or runtime state unless a task explicitly targets it:
 
 - `node_modules/`
 - `sessions/`
+- `sessions-index/`
 - `.direnv/`
 - `auth.json`
+- `run-history.jsonl`
+- `response.txt`
+- `token-bloat.json`
 
 ## Working style
 
@@ -40,15 +49,37 @@ When adding or editing extensions:
 - Avoid hidden side effects on session start unless the behavior is clearly intentional.
 - If enabling tools globally, be explicit about which tools and why.
 
+## Ownership boundaries
+
+Do not blend artifact types:
+
+- Pi-only runtime behavior belongs in `extensions/`.
+- Custom subagent definitions belong in `agents/`.
+- Claude Code marketplace bundles belong in `plugins/`.
+- Package-shaped code with its own `package.json` belongs in `packages/`.
+- Root `skills/` should contain loose local skills or adapters only. If a domain has a plugin, the plugin copy is canonical.
+
+For Zig, `plugins/zig` is the source of truth. Root `skills/zig` and `skills/tiger-style` exist so pi can still discover those skills from the root skill directory.
+
 ## Commands
 
-Use the dev shell from `flake.nix`. Inside it, the normal checks are:
+Use the dev shell from `flake.nix`. Dependencies are managed with npm workspaces from the repo root. Do not add per-package lockfiles under `packages/*`.
+
+Inside the dev shell, the normal checks are:
 
 ```sh
 npm run check
 npm run lint
 npm run fmt
 npm run fmt:check
+```
+
+For package dependencies, use workspace-aware npm commands:
+
+```sh
+npm install <dep> --workspace=<package-name>
+npm update --workspaces
+npm outdated --workspaces
 ```
 
 Run `npm run check` after TypeScript changes. Run formatting when touching extension code.

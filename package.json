@@ -1,24 +1,31 @@
 {
   "name": "pi-agent-extensions",
   "scripts": {
-    "lint": "oxlint extensions",
-    "fmt": "oxfmt extensions",
-    "fmt:check": "oxfmt extensions --check",
-    "check": "tsc --noEmit"
+    "lint": "oxlint extensions packages/better-diff packages/memory packages/slack packages/term packages/todos",
+    "fmt": "oxfmt extensions packages/better-diff packages/memory packages/slack packages/term packages/todos",
+    "fmt:check": "oxfmt extensions packages/better-diff packages/memory packages/slack packages/term packages/todos --check",
+    "check": "tsc --noEmit && npm run check --workspaces --if-present",
+    "eval:local": "node scripts/local-llm-eval.mjs"
   },
   "version": "0.0.1",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "devDependencies": {
     "@types/turndown": "^5.0.6",
-    "oxfmt": "^0.42.0",
-    "oxlint": "^1.57.0"
+    "oxfmt": "*",
+    "oxlint": "*",
+    "typescript": "*"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "0.66.1",
-    "@mariozechner/pi-coding-agent": "0.66.1",
-    "@sinclair/typebox": "^0.34.48",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "defuddle": "^0.18.1",
     "hysnappy": "^1.1.1",
-    "pi-memory": "^0.3.6",
-    "turndown": "^7.2.2"
+    "linkedom": "^0.18.12",
+    "pi-memory": "^0.3.8",
+    "turndown": "^7.2.2",
+    "typebox": "^1.1.33"
   }
 }

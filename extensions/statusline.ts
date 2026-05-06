@@ -7,6 +7,7 @@ import { getTrackedCwd, onTrackedCwdChange } from "./lib/cwd-state";
 
 interface GitInfo {
   repoName: string | null;
+  repoRoot: string | null;
   branch: string | null;
   isDirty: boolean;
 }
@@ -15,7 +16,7 @@ function readGitInfo(cwd: string): Promise<GitInfo> {
   return new Promise((resolve) => {
     execFile("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 1000 }, (err, root) => {
       if (err || !root.trim()) {
-        resolve({ repoName: null, branch: null, isDirty: false });
+        resolve({ repoName: null, repoRoot: null, branch: null, isDirty: false });
         return;
       }
 
@@ -27,6 +28,7 @@ function readGitInfo(cwd: string): Promise<GitInfo> {
           (err3, status) => {
             resolve({
               repoName: path.basename(root.trim()),
+              repoRoot: root.trim(),
               branch: branch.trim() || null,
               isDirty: err3 ? false : status.trim().length > 0,
             });
@@ -47,7 +49,7 @@ function nowHMS(): string {
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
-    let gitInfo: GitInfo = { repoName: null, branch: null, isDirty: false };
+    let gitInfo: GitInfo = { repoName: null, repoRoot: null, branch: null, isDirty: false };
     let gitCacheAt = 0;
     const GIT_TTL = 3000;
 
@@ -73,7 +75,7 @@ export default function (pi: ExtensionAPI) {
 
       const unsubCwd = onTrackedCwdChange(() => {
         gitCacheAt = 0;
-        gitInfo = { repoName: null, branch: null, isDirty: false };
+        gitInfo = { repoName: null, repoRoot: null, branch: null, isDirty: false };
         tui.requestRender();
       });
 
@@ -100,12 +102,17 @@ export default function (pi: ExtensionAPI) {
             }
           }
 
-          const { repoName, branch, isDirty } = gitInfo;
+          const { repoName, repoRoot, branch, isDirty } = gitInfo;
           const modelId = ctx.model?.id ?? "no model";
+          const cwd = getTrackedCwd();
+          const repoRelativePath = repoRoot ? path.relative(repoRoot, cwd) : "";
+          const cwdLabel = repoName
+            ? repoRelativePath
+              ? path.join(repoName, repoRelativePath)
+              : repoName
+            : path.basename(cwd);
 
-          const dirPart = repoName
-            ? theme.fg("accent", repoName)
-            : theme.fg("dim", path.basename(getTrackedCwd()));
+          const dirPart = repoName ? theme.fg("accent", cwdLabel) : theme.fg("dim", cwdLabel);
 
           const branchPart = branch ? "  " + theme.fg("success", branch) : "";
           const dirtyPart = isDirty ? " " + theme.fg("warning", "*") : "";
