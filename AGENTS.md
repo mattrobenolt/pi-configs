@@ -63,26 +63,26 @@ For Zig, `plugins/zig` is the source of truth. Root `skills/zig` and `skills/tig
 
 ## Commands
 
-Use the dev shell from `flake.nix`. Dependencies are managed with npm workspaces from the repo root. Do not add per-package lockfiles under `packages/*`.
+Use the dev shell from `flake.nix`. Dependencies are managed with pnpm workspaces from the repo root. Do not add per-package lockfiles under `packages/*`.
 
 Inside the dev shell, the normal checks are:
 
 ```sh
-npm run check
-npm run lint
-npm run fmt
-npm run fmt:check
+pnpm check
+pnpm lint
+pnpm fmt
+pnpm fmt:check
 ```
 
-For package dependencies, use workspace-aware npm commands:
+For package dependencies, use workspace-aware pnpm commands:
 
 ```sh
-npm install <dep> --workspace=<package-name>
-npm update --workspaces
-npm outdated --workspaces
+pnpm --filter <package-name> add <dep>
+pnpm -r update
+pnpm -r outdated
 ```
 
-Run `npm run check` after TypeScript changes. Run formatting when touching extension code.
+Run `pnpm check` after TypeScript changes. Run formatting when touching extension code.
 
 ## File hygiene
 

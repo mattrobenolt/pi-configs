@@ -95,29 +95,39 @@ Root-level skills are pi-local. For shareable plugin-owned domains, prefer the p
 
 ## Setup
 
-Uses a Nix flake devshell and npm workspaces. From the repo root:
+Uses a Nix flake devshell and pnpm workspaces. Do not use npm in this repo; `pnpm-lock.yaml` owns the dependency graph.
+
+From the repo root:
 
 ```sh
 direnv allow   # or: nix develop
-npm install
+pnpm install
+```
+
+If `node_modules/` is missing or stale, the setup is still just:
+
+```sh
+pnpm install
 ```
 
 Normal checks:
 
 ```sh
-npm run check
-npm run lint
-npm run fmt
-npm run fmt:check
+pnpm check
+pnpm lint
+pnpm fmt
+pnpm fmt:check
 ```
 
-The root `package-lock.json` owns workspace dependencies. Do not add per-package lockfiles under `packages/*`; run package dependency changes from the root with npm workspace flags:
+Do not add per-package lockfiles under `packages/*`; run package dependency changes from the root with pnpm workspace commands:
 
 ```sh
-npm install <dep> --workspace=<package-name>
-npm update --workspaces
-npm outdated --workspaces
+pnpm --filter <package-name> add <dep>
+pnpm update
+pnpm outdated -r
 ```
+
+Use `pnpm update` to update dependencies across the workspace. Use `pnpm update --latest` only when intentionally moving package manifests past their current semver ranges.
 
 ## Packages
 

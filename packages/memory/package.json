@@ -13,7 +13,7 @@
     "lint": "oxlint index.ts lib"
   },
   "dependencies": {
-    "@mattrobenolt/pi-core": "file:../pi-core",
+    "@mattrobenolt/pi-core": "workspace:*",
     "typebox": "*"
   },
   "pi": {

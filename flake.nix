@@ -22,6 +22,7 @@
               nushell
               zoxide
               jq
+              pnpm
             ];
           };
         };

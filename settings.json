@@ -3,13 +3,15 @@
     "./packages/better-diff",
     "./packages/memory",
     "./packages/slack",
+    "./packages/webfetch",
     "./packages/term",
     "./packages/todos",
     "git:github.com/ocodista/pi-token-bloat",
     "git:github.com/nicobailon/pi-subagents",
     "git:github.com/nicobailon/pi-mcp-adapter",
     "git:github.com/HazAT/pi-ghostty",
-    "git:github.com/championswimmer/pi-cache-graph"
+    "git:github.com/championswimmer/pi-cache-graph",
+    "git:github.com/dbachelder/pi-btw"
   ],
   "lastChangelogVersion": "0.74.0",
   "defaultProvider": "openai-codex",

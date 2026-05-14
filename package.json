@@ -4,29 +4,27 @@
     "lint": "oxlint extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos packages/webfetch",
     "fmt": "oxfmt extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos packages/webfetch",
     "fmt:check": "oxfmt extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos packages/webfetch --check",
-    "check": "tsc --noEmit && npm run check --workspaces --if-present",
+    "check": "tsc --noEmit && pnpm -r --if-present check",
     "eval:local": "node scripts/local-llm-eval.mjs"
   },
   "version": "0.0.1",
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
+  "packageManager": "pnpm@11.1.1",
   "devDependencies": {
-    "@types/turndown": "*",
-    "oxfmt": "*",
-    "oxlint": "*",
-    "typescript": "*",
-    "typescript-language-server": "*"
+    "@types/turndown": "^5.0.6",
+    "oxfmt": "^0.49.0",
+    "oxlint": "^1.64.0",
+    "typescript": "^6.0.3",
+    "typescript-language-server": "^5.2.0"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-ai": "^0.74.0",
     "@earendil-works/pi-coding-agent": "^0.74.0",
-    "@mattrobenolt/pi-core": "file:packages/pi-core",
-    "defuddle": "*",
-    "hysnappy": "*",
-    "linkedom": "*",
-    "turndown": "*",
-    "typebox": "*"
+    "@mattrobenolt/pi-core": "workspace:*",
+    "defuddle": "^0.18.1",
+    "hysnappy": "^1.1.1",
+    "linkedom": "^0.18.12",
+    "turndown": "^7.2.4",
+    "typebox": "^1.1.38"
   }
 }
