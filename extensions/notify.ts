@@ -16,9 +16,15 @@ const focusOut = "\x1b[O";
 const soundPath = "/System/Library/Sounds/Glass.aiff";
 
 let focused: boolean | undefined;
+let enabled = false;
+
+const hasInteractiveTerminal = (): boolean =>
+  process.stdin.isTTY === true && process.stdout.isTTY === true;
 
 const bell = (): void => {
-  process.stdout.write("\x07");
+  if (enabled) {
+    process.stdout.write("\x07");
+  }
 };
 
 const playSound = (): void => {
@@ -52,13 +58,24 @@ const notify = (): void => {
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async () => {
+    enabled = hasInteractiveTerminal();
+
+    if (!enabled) {
+      return;
+    }
+
     process.stdout.write(enableFocusEvents);
     process.stdin.on("data", handleStdin);
   });
 
   pi.on("session_shutdown", async () => {
+    if (!enabled) {
+      return;
+    }
+
     process.stdin.off("data", handleStdin);
     process.stdout.write(disableFocusEvents);
+    enabled = false;
   });
 
   pi.on("agent_end", async () => {
