@@ -1,5 +1,5 @@
 {
-  "name": "pi-slack",
+  "name": "pi-notion",
   "version": "0.0.0",
   "private": true,
   "keywords": [
@@ -15,7 +15,6 @@
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@mattrobenolt/pi-core": "workspace:*",
-    "hysnappy": "*",
     "typebox": "*"
   },
   "pi": {

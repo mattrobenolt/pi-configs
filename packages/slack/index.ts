@@ -2338,7 +2338,7 @@ export async function slackRead(
       text:
         format === "json"
           ? renderJsonDocument({
-              tool: "SlackRead",
+              tool: "slack_read",
               format,
               mode,
               source: target.raw,
@@ -2349,7 +2349,7 @@ export async function slackRead(
             })
           : renderMarkdownDocument(
               {
-                tool: "SlackRead",
+                tool: "slack_read",
                 format,
                 mode,
                 source: target.raw,
@@ -2399,7 +2399,7 @@ export async function slackRead(
     text:
       format === "json"
         ? renderJsonDocument({
-            tool: "SlackRead",
+            tool: "slack_read",
             format,
             mode,
             source: target.raw,
@@ -2410,7 +2410,7 @@ export async function slackRead(
           })
         : renderMarkdownDocument(
             {
-              tool: "SlackRead",
+              tool: "slack_read",
               format,
               mode,
               source: target.raw,
@@ -2479,7 +2479,7 @@ export async function slackSearch(
       text:
         format === "json"
           ? renderJsonDocument({
-              tool: "SlackSearch",
+              tool: "slack_search",
               format,
               mode,
               workspaceUrl,
@@ -2491,7 +2491,7 @@ export async function slackSearch(
             })
           : renderMarkdownDocument(
               {
-                tool: "SlackSearch",
+                tool: "slack_search",
                 format,
                 mode,
                 workspaceUrl,
@@ -2539,7 +2539,7 @@ export async function slackSearch(
     text:
       format === "json"
         ? renderJsonDocument({
-            tool: "SlackSearch",
+            tool: "slack_search",
             format,
             mode,
             workspaceUrl,
@@ -2551,7 +2551,7 @@ export async function slackSearch(
           })
         : renderMarkdownDocument(
             {
-              tool: "SlackSearch",
+              tool: "slack_search",
               format,
               mode,
               workspaceUrl,
@@ -2588,7 +2588,7 @@ export async function slackChannelHistory(
     text:
       format === "json"
         ? renderJsonDocument({
-            tool: "SlackChannelHistory",
+            tool: "slack_channel_history",
             format,
             workspaceUrl: page.workspaceUrl,
             channelId: page.channelId,
@@ -2602,7 +2602,7 @@ export async function slackChannelHistory(
           })
         : renderMarkdownDocument(
             {
-              tool: "SlackChannelHistory",
+              tool: "slack_channel_history",
               format,
               workspaceUrl: page.workspaceUrl,
               channelId: page.channelId,
@@ -2645,7 +2645,7 @@ export async function slackReply(
       text:
         format === "json"
           ? renderJsonDocument({
-              tool: "SlackReply",
+              tool: "slack_reply",
               format,
               dryRun: true,
               workspaceUrl: target.workspaceUrl,
@@ -2694,7 +2694,7 @@ export async function slackReply(
     text:
       format === "json"
         ? renderJsonDocument({
-            tool: "SlackReply",
+            tool: "slack_reply",
             format,
             dryRun: false,
             workspaceUrl: target.workspaceUrl,
@@ -2775,7 +2775,7 @@ async function slackDeleteMessage(
   return {
     text:
       format === "json"
-        ? renderJsonDocument({ tool: "SlackDeleteMessage", ...details })
+        ? renderJsonDocument({ tool: "slack_delete_message", ...details })
         : `Message deleted: ${ts} in ${channelId}`,
     details,
   };
@@ -2819,7 +2819,7 @@ async function slackPost(
     return {
       text:
         format === "json"
-          ? renderJsonDocument({ tool: "SlackPost", ...details, text: input.text })
+          ? renderJsonDocument({ tool: "slack_post", ...details, text: input.text })
           : `[dry run] Would post to #${channelName}\n\n${normalizeText(input.text)}`,
       details,
     };
@@ -2847,7 +2847,7 @@ async function slackPost(
   return {
     text:
       format === "json"
-        ? renderJsonDocument({ tool: "SlackPost", ...details, response })
+        ? renderJsonDocument({ tool: "slack_post", ...details, response })
         : [
             `Message posted to #${channelName}`,
             permalink ?? `${workspaceUrl} · ${postedChannelId} · ${ts ?? "unknown ts"}`,
@@ -2886,7 +2886,7 @@ export async function slackUserLookup(
     text:
       format === "json"
         ? renderJsonDocument({
-            tool: "SlackUserLookup",
+            tool: "slack_user_lookup",
             format,
             query: input.query,
             count: users.length,
@@ -2895,7 +2895,7 @@ export async function slackUserLookup(
           })
         : renderMarkdownDocument(
             {
-              tool: "SlackUserLookup",
+              tool: "slack_user_lookup",
               format,
               query: input.query,
               count: users.length,
@@ -2954,9 +2954,9 @@ async function slackOpenDM(
   return {
     text:
       format === "json"
-        ? renderJsonDocument({ tool: "SlackOpenDM", ...details })
+        ? renderJsonDocument({ tool: "slack_open_dm", ...details })
         : renderMarkdownDocument(
-            { tool: "SlackOpenDM", ...details },
+            { tool: "slack_open_dm", ...details },
             `DM channel with **${displayName}** (${user.id}): \`${channelId}\``,
           ),
     details,
@@ -2966,16 +2966,6 @@ async function slackOpenDM(
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-const STYLE_PROFILE_PATH = path.join(
-  os.homedir(),
-  ".pi",
-  "agent",
-  "skills",
-  "write-like-matt",
-  "references",
-  "style-profile.md",
-);
 
 function calculateTypingDelay(text: string): number {
   const charsPerSec = 5 + Math.random() * 3;
@@ -3097,11 +3087,11 @@ async function generateAndSendReply(
     const messageLines = messages.map((m) => `${m.username}: "${m.text}"`).join("\n");
     const contextSection =
       conv.conversationContext.length > 0
-        ? `\n\nOngoing conversation context from Matt (this remains in effect until changed):\n${conv.conversationContext.map((s) => `- ${s}`).join("\n")}`
+        ? `\n\nOngoing conversation context from the user (this remains in effect until changed):\n${conv.conversationContext.map((s) => `- ${s}`).join("\n")}`
         : "";
     const turnNotesSection =
       turnNotes.length > 0
-        ? `\n\nImmediate guidance for this reply from Matt:\n${turnNotes.map((s) => `- ${s}`).join("\n")}`
+        ? `\n\nImmediate guidance for this reply from the user:\n${turnNotes.map((s) => `- ${s}`).join("\n")}`
         : "";
     const prompt = `${messageLines}${contextSection}${turnNotesSection}`;
 
@@ -3158,7 +3148,7 @@ async function generateAndSendReply(
 
     conv.transcript.push({
       role: "me",
-      username: "matt",
+      username: "me",
       text: replyText,
       ts: String(Date.now() / 1000),
     });
@@ -3209,7 +3199,7 @@ async function generateAndSendReply(
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
-    name: "SlackRead",
+    name: "slack_read",
     label: "Slack Read",
     description: "Read a Slack message or thread.",
     promptSnippet: "Read Slack messages or threads.",
@@ -3221,7 +3211,7 @@ export default function (pi: ExtensionAPI) {
       });
       const result = await slackRead(params, { signal, cwd: ctx.cwd });
       const rendered = await finalizeSlackToolOutput(
-        "SlackRead",
+        "slack_read",
         result,
         params.outputFile,
         ctx.cwd,
@@ -3238,7 +3228,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackSearch",
+    name: "slack_search",
     label: "Slack Search",
     description: "Search Slack messages or threads.",
     promptSnippet: "Search Slack messages or expand results into threads.",
@@ -3250,7 +3240,7 @@ export default function (pi: ExtensionAPI) {
       });
       const result = await slackSearch(params, { signal, cwd: ctx.cwd });
       const rendered = await finalizeSlackToolOutput(
-        "SlackSearch",
+        "slack_search",
         result,
         params.outputFile,
         ctx.cwd,
@@ -3267,7 +3257,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackChannelHistory",
+    name: "slack_channel_history",
     label: "Slack Channel History",
     description: "List channel messages chronologically.",
     promptSnippet: "List Slack channel history and page with oldest=nextOldest.",
@@ -3279,7 +3269,7 @@ export default function (pi: ExtensionAPI) {
       });
       const result = await slackChannelHistory(params, { signal, cwd: ctx.cwd });
       const rendered = await finalizeSlackToolOutput(
-        "SlackChannelHistory",
+        "slack_channel_history",
         result,
         params.outputFile,
         ctx.cwd,
@@ -3296,7 +3286,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackDeleteMessage",
+    name: "slack_delete_message",
     label: "Slack Delete Message",
     description: "Delete one of your Slack messages.",
     promptSnippet: "Delete a Slack message by URL or channel + ts.",
@@ -3308,7 +3298,7 @@ export default function (pi: ExtensionAPI) {
       });
       const result = await slackDeleteMessage(params, { signal, cwd: ctx.cwd });
       const rendered = await finalizeSlackToolOutput(
-        "SlackDeleteMessage",
+        "slack_delete_message",
         result,
         params.outputFile,
         ctx.cwd,
@@ -3322,7 +3312,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackPost",
+    name: "slack_post",
     label: "Slack Post",
     description: "Post a new top-level Slack message to a channel or DM.",
     promptSnippet: "Post a fresh Slack message. Use <@USERID> for mentions.",
@@ -3339,7 +3329,7 @@ export default function (pi: ExtensionAPI) {
       });
       const result = await slackPost(params, { signal, cwd: ctx.cwd });
       const rendered = await finalizeSlackToolOutput(
-        "SlackPost",
+        "slack_post",
         result,
         params.outputFile,
         ctx.cwd,
@@ -3353,7 +3343,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackReply",
+    name: "slack_reply",
     label: "Slack Reply",
     description: "Reply in a Slack thread.",
     promptSnippet: "Reply in a Slack thread. Use <@USERID> for mentions.",
@@ -3370,7 +3360,7 @@ export default function (pi: ExtensionAPI) {
       });
       const result = await slackReply(params, { signal, cwd: ctx.cwd });
       const rendered = await finalizeSlackToolOutput(
-        "SlackReply",
+        "slack_reply",
         result,
         params.outputFile,
         ctx.cwd,
@@ -3387,7 +3377,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackOpenDM",
+    name: "slack_open_dm",
     label: "Slack Open DM",
     description: "Open or find a DM channel with a Slack user.",
     promptSnippet: "Open or find a Slack DM and return the channel ID.",
@@ -3399,7 +3389,7 @@ export default function (pi: ExtensionAPI) {
       });
       const result = await slackOpenDM(params, { signal, cwd: ctx.cwd });
       const rendered = await finalizeSlackToolOutput(
-        "SlackOpenDM",
+        "slack_open_dm",
         result,
         params.outputFile,
         ctx.cwd,
@@ -3416,7 +3406,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackUserLookup",
+    name: "slack_user_lookup",
     label: "Slack User Lookup",
     description: "Look up Slack users.",
     promptSnippet: "Look up Slack users and IDs.",
@@ -3428,7 +3418,7 @@ export default function (pi: ExtensionAPI) {
       });
       const result = await slackUserLookup(params, { signal, cwd: ctx.cwd });
       const rendered = await finalizeSlackToolOutput(
-        "SlackUserLookup",
+        "slack_user_lookup",
         result,
         params.outputFile,
         ctx.cwd,
@@ -3445,7 +3435,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackStartConversation",
+    name: "slack_start_conversation",
     label: "Slack Start Conversation",
     description: "Start a background Slack conversation loop for a channel or DM.",
     promptSnippet: "Start a background Slack conversation loop.",
@@ -3490,19 +3480,12 @@ export default function (pi: ExtensionAPI) {
       const authTestResponse = await slackApiCall("auth.test", {}, { workspaceUrl, signal });
       const myUserId = getString(authTestResponse.user_id) ?? "";
 
-      let systemContext: string;
-      if (params.systemContext) {
-        systemContext = params.systemContext;
-      } else {
-        const styleProfile = await fs.readFile(STYLE_PROFILE_PATH, "utf8");
-        systemContext = [
-          "You are replying to Slack messages on Matt's behalf. Reply in Matt's voice using this style guide:",
-          "",
-          styleProfile.trim(),
-          "",
+      const systemContext =
+        params.systemContext ??
+        [
+          "You are replying to Slack messages on the user's behalf.",
           "Reply with ONLY the message text — no explanation, no preamble, no quotes around it. Just the reply itself.",
         ].join("\n");
-      }
 
       const historyResponse = await slackApiCall(
         "conversations.history",
@@ -3644,7 +3627,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackStopConversation",
+    name: "slack_stop_conversation",
     label: "Slack Stop Conversation",
     description: "Stop an active Slack conversation loop.",
     promptSnippet: "Stop an active Slack conversation loop by channel ID or label.",
@@ -3717,7 +3700,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackConversationSteer",
+    name: "slack_conversation_steer",
     label: "Slack Conversation Steer",
     description: "Add persistent context for an active conversation loop.",
     promptSnippet: "Add persistent context to a Slack conversation loop.",
@@ -3776,7 +3759,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "SlackConversationInterject",
+    name: "slack_conversation_interject",
     label: "Slack Conversation Interject",
     description: "Interrupt an active conversation turn or save context if it is idle.",
     promptSnippet: "Interrupt a Slack conversation reply or save the note as context.",

@@ -1,9 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  truncateHead,
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-} from "@earendil-works/pi-coding-agent";
+import { truncateForModel } from "@mattrobenolt/pi-core/tool-output";
 import { Type, type Static } from "typebox";
 import { execSync } from "node:child_process";
 import crypto from "node:crypto";
@@ -62,7 +58,9 @@ function extractToken(): string {
     const tokenStart = str.indexOf("v0");
     if (tokenStart < 0) throw new Error("Could not find token in decrypted cookie data");
 
-    const raw = str.substring(tokenStart).replace(/[\x00-\x1f]/g, "");
+    const raw = [...str.substring(tokenStart)]
+      .filter((char) => char.charCodeAt(0) >= 0x20)
+      .join("");
     cachedToken = decodeURIComponent(raw);
     return cachedToken;
   } catch (e: any) {
@@ -302,7 +300,6 @@ async function fetchBlockTree(blockId: string, signal?: AbortSignal): Promise<Ma
 async function internalBlocksToMarkdown(
   blockIds: string[],
   blocks: Map<string, any>,
-  signal?: AbortSignal,
   depth = 0,
   indent = "",
 ): Promise<string> {
@@ -339,9 +336,7 @@ async function internalBlocksToMarkdown(
       case "bulleted_list":
         lines.push(`${indent}- ${text}`);
         if (children.length) {
-          lines.push(
-            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "  "),
-          );
+          lines.push(await internalBlocksToMarkdown(children, blocks, depth + 1, indent + "  "));
         }
         break;
 
@@ -349,9 +344,7 @@ async function internalBlocksToMarkdown(
         numIdx++;
         lines.push(`${indent}${numIdx}. ${text}`);
         if (children.length) {
-          lines.push(
-            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "   "),
-          );
+          lines.push(await internalBlocksToMarkdown(children, blocks, depth + 1, indent + "   "));
         }
         break;
 
@@ -359,9 +352,7 @@ async function internalBlocksToMarkdown(
         const checked = block.properties?.checked?.[0]?.[0] === "Yes";
         lines.push(`${indent}- [${checked ? "x" : " "}] ${text}`);
         if (children.length) {
-          lines.push(
-            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent + "  "),
-          );
+          lines.push(await internalBlocksToMarkdown(children, blocks, depth + 1, indent + "  "));
         }
         break;
       }
@@ -369,7 +360,7 @@ async function internalBlocksToMarkdown(
       case "toggle":
         lines.push(`${indent}<details>`, `${indent}<summary>${text}</summary>`, "");
         if (children.length) {
-          lines.push(await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent));
+          lines.push(await internalBlocksToMarkdown(children, blocks, depth + 1, indent));
         }
         lines.push(`${indent}</details>`, "");
         break;
@@ -384,9 +375,7 @@ async function internalBlocksToMarkdown(
       case "quote":
         lines.push(`${indent}> ${text}`);
         if (children.length) {
-          lines.push(
-            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, `${indent}> `),
-          );
+          lines.push(await internalBlocksToMarkdown(children, blocks, depth + 1, `${indent}> `));
         }
         lines.push("");
         break;
@@ -395,9 +384,7 @@ async function internalBlocksToMarkdown(
         const icon = block.format?.page_icon ?? "";
         lines.push(`${indent}> ${icon} ${text}`);
         if (children.length) {
-          lines.push(
-            await internalBlocksToMarkdown(children, blocks, signal, depth + 1, `${indent}> `),
-          );
+          lines.push(await internalBlocksToMarkdown(children, blocks, depth + 1, `${indent}> `));
         }
         lines.push("");
         break;
@@ -450,9 +437,7 @@ async function internalBlocksToMarkdown(
         for (const childId of children) {
           const col = blocks.get(childId);
           if (col?.content?.length) {
-            lines.push(
-              await internalBlocksToMarkdown(col.content, blocks, signal, depth + 1, indent),
-            );
+            lines.push(await internalBlocksToMarkdown(col.content, blocks, depth + 1, indent));
           }
         }
         break;
@@ -483,7 +468,7 @@ async function internalBlocksToMarkdown(
       case "transclusion_container":
       case "transclusion_reference":
         if (children.length) {
-          lines.push(await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent));
+          lines.push(await internalBlocksToMarkdown(children, blocks, depth + 1, indent));
         }
         break;
 
@@ -512,7 +497,7 @@ async function internalBlocksToMarkdown(
       default:
         if (text) lines.push(`${indent}${text}`, "");
         if (children.length) {
-          lines.push(await internalBlocksToMarkdown(children, blocks, signal, depth + 1, indent));
+          lines.push(await internalBlocksToMarkdown(children, blocks, depth + 1, indent));
         }
         break;
     }
@@ -555,7 +540,7 @@ async function readPageInternal(
   await resolveNames(mentions, signal);
 
   const title = internalPlainText(pageBlock?.properties?.title);
-  const markdown = await internalBlocksToMarkdown(childIds, blocks, signal);
+  const markdown = await internalBlocksToMarkdown(childIds, blocks);
 
   return {
     title,
@@ -809,7 +794,7 @@ type NotionSearchInput = Static<typeof NotionSearchParams>;
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
-    name: "NotionRead",
+    name: "notion_read",
     label: "Notion Read",
     description: [
       "Read a Notion page or database by URL or ID.",
@@ -823,12 +808,9 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params: NotionReadInput, signal) {
       const id = parseNotionId(params.url);
       const result = await readPageInternal(id, signal);
-      const truncated = truncateHead(result.markdown, {
-        maxLines: DEFAULT_MAX_LINES,
-        maxBytes: DEFAULT_MAX_BYTES,
-      });
+      const truncated = truncateForModel(result.markdown);
       return {
-        content: [{ type: "text" as const, text: truncated.content }],
+        content: [{ type: "text" as const, text: truncated.text }],
         details: {
           type: result.type,
           title: result.title,
@@ -840,7 +822,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "NotionSearch",
+    name: "notion_search",
     label: "Notion Search",
     description: [
       "Search for pages and databases in Notion by title.",

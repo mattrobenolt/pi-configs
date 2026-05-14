@@ -14,6 +14,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: ^0.74.0
         version: 0.74.0(ws@8.20.1)(zod@4.4.3)
+      '@earendil-works/pi-tui':
+        specifier: ^0.74.0
+        version: 0.74.0
       '@mattrobenolt/pi-core':
         specifier: workspace:*
         version: link:packages/pi-core
@@ -64,6 +67,18 @@ importers:
         specifier: '*'
         version: 1.1.38
 
+  packages/notion:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: ^0.74.0
+        version: 0.74.0(ws@8.20.1)(zod@4.4.3)
+      '@mattrobenolt/pi-core':
+        specifier: workspace:*
+        version: link:../pi-core
+      typebox:
+        specifier: '*'
+        version: 1.1.38
+
   packages/pi-core:
     dependencies:
       '@earendil-works/pi-coding-agent':
@@ -85,6 +100,9 @@ importers:
 
   packages/slack:
     dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: ^0.74.0
+        version: 0.74.0(ws@8.20.1)(zod@4.4.3)
       '@mattrobenolt/pi-core':
         specifier: workspace:*
         version: link:../pi-core

@@ -3,6 +3,7 @@
     "./packages/better-diff",
     "./packages/memory",
     "./packages/slack",
+    "./packages/notion",
     "./packages/webfetch",
     "./packages/term",
     "./packages/todos",
