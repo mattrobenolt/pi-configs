@@ -19,8 +19,6 @@
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               nodejs
-              typescript
-              typescript-language-server
               nushell
               zoxide
               jq

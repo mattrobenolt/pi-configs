@@ -11,9 +11,9 @@
     "git:github.com/HazAT/pi-ghostty",
     "git:github.com/championswimmer/pi-cache-graph"
   ],
-  "lastChangelogVersion": "0.73.0",
-  "defaultProvider": "cloudflare-ai-gateway",
-  "defaultModel": "gpt-oss-120b",
+  "lastChangelogVersion": "0.74.0",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
   "defaultThinkingLevel": "minimal",
   "theme": "dracula",
   "transport": "sse",
@@ -23,8 +23,11 @@
     "keepRecentTokens": 16000
   },
   "enabledModels": [
+    "anthropic/claude-opus-4-7",
+    "anthropic/claude-opus-4-6",
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-haiku-4-5",
     "openai-codex/gpt-5.5",
-    "openai-codex/gpt-5.4",
     "llamacpp/qwen3-8b-balanced",
     "llamacpp/qwen3.5-9b",
     "llamacpp/gemma4-26b-a4b",

@@ -1,11 +1,12 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { atomicWriteUtf8, expandHome, readTail, withFileLock } from "@mattrobenolt/pi-core/files";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 import {
   CustomEditor,
   ModelSelectorComponent,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
@@ -38,17 +39,11 @@ type ModesFile = {
 const DEFAULT_MODE_ORDER = ["default"] as const;
 const CUSTOM_MODE_NAME = "custom" as const;
 
-function expandUserPath(p: string): string {
-  if (p === "~") return os.homedir();
-  if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
-  return p;
-}
-
 function getGlobalAgentDir(): string {
   // Mirror pi-coding-agent's getAgentDir() behavior (best-effort).
   // For the canonical implementation see pi-mono/packages/coding-agent/src/config.ts
   const env = process.env.PI_CODING_AGENT_DIR;
-  if (env) return expandUserPath(env);
+  if (env) return expandHome(env);
   return path.join(os.homedir(), ".pi", "agent");
 }
 
@@ -69,100 +64,12 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-async function ensureDirForFile(filePath: string): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-}
-
 async function getMtimeMs(p: string): Promise<number | null> {
   try {
     const st = await fs.stat(p);
     return st.mtimeMs;
   } catch {
     return null;
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getLockPathForFile(filePath: string): string {
-  // Lock file next to the json so it works across processes.
-  return `${filePath}.lock`;
-}
-
-async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-  const lockPath = getLockPathForFile(filePath);
-  await ensureDirForFile(lockPath);
-
-  const start = Date.now();
-  while (true) {
-    try {
-      const handle = await fs.open(lockPath, "wx");
-      try {
-        // Best-effort metadata for debugging stale locks.
-        await handle.writeFile(
-          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }) + "\n",
-          "utf8",
-        );
-      } catch {
-        // ignore
-      }
-
-      try {
-        return await fn();
-      } finally {
-        await handle.close().catch(() => {});
-        await fs.unlink(lockPath).catch(() => {});
-      }
-    } catch (err: any) {
-      if (err?.code !== "EEXIST") throw err;
-
-      // If the lock looks stale (crash), break it.
-      try {
-        const st = await fs.stat(lockPath);
-        if (Date.now() - st.mtimeMs > 30_000) {
-          await fs.unlink(lockPath);
-          continue;
-        }
-      } catch {
-        // ignore
-      }
-
-      if (Date.now() - start > 5_000) {
-        // Don't hang the UI forever.
-        throw new Error(`Timed out waiting for lock: ${lockPath}`);
-      }
-      await sleep(40 + Math.random() * 80);
-    }
-  }
-}
-
-async function atomicWriteUtf8(filePath: string, content: string): Promise<void> {
-  await ensureDirForFile(filePath);
-
-  const dir = path.dirname(filePath);
-  const base = path.basename(filePath);
-  const tmpPath = path.join(
-    dir,
-    `.${base}.tmp.${process.pid}.${Math.random().toString(16).slice(2)}`,
-  );
-
-  await fs.writeFile(tmpPath, content, "utf8");
-
-  try {
-    // POSIX: atomic replace.
-    await fs.rename(tmpPath, filePath);
-  } catch (err: any) {
-    // Windows: rename can't overwrite.
-    if (err?.code === "EEXIST" || err?.code === "EPERM") {
-      await fs.unlink(filePath).catch(() => {});
-      await fs.rename(tmpPath, filePath);
-    } else {
-      // best-effort cleanup
-      await fs.unlink(tmpPath).catch(() => {});
-      throw err;
-    }
   }
 }
 
@@ -1097,34 +1004,6 @@ function collectUserPromptsFromEntries(entries: Array<any>): PromptEntry[] {
 function getSessionDirForCwd(cwd: string): string {
   const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
   return path.join(getGlobalAgentDir(), "sessions", safePath);
-}
-
-async function readTail(filePath: string, maxBytes = 256 * 1024): Promise<string> {
-  let fileHandle: fs.FileHandle | undefined;
-  try {
-    const stats = await fs.stat(filePath);
-    const size = stats.size;
-    const start = Math.max(0, size - maxBytes);
-    const length = size - start;
-    if (length <= 0) return "";
-
-    const buffer = Buffer.alloc(length);
-    fileHandle = await fs.open(filePath, "r");
-    const { bytesRead } = await fileHandle.read(buffer, 0, length, start);
-    if (bytesRead === 0) return "";
-    let chunk = buffer.subarray(0, bytesRead).toString("utf8");
-    if (start > 0) {
-      const firstNewline = chunk.indexOf("\n");
-      if (firstNewline !== -1) {
-        chunk = chunk.slice(firstNewline + 1);
-      }
-    }
-    return chunk;
-  } catch {
-    return "";
-  } finally {
-    await fileHandle?.close();
-  }
 }
 
 async function loadPromptHistoryForCwd(

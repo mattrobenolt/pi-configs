@@ -13,14 +13,9 @@
     "lint": "oxlint index.ts"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.70.2",
-    "hysnappy": "^1.1.1",
-    "typebox": "^1.1.33"
-  },
-  "devDependencies": {
-    "oxfmt": "^0.46.0",
-    "oxlint": "^1.57.0",
-    "typescript": "^6.0.3"
+    "@mattrobenolt/pi-core": "file:../pi-core",
+    "hysnappy": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": [

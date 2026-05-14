@@ -29,11 +29,15 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { StringEnum } from "@mariozechner/pi-ai";
-import { type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { injectEphemeralCustomContextMessage } from "@mattrobenolt/pi-core/context";
+import {
+  buildPreview,
+  formatPreviewBlock as formatCorePreviewBlock,
+  type TruncateMode,
+} from "@mattrobenolt/pi-core/preview";
 import { Type } from "typebox";
-import { getTrackedCwd, onTrackedCwdChange } from "./lib/cwd-state";
 
 const DEFAULT_MEMORY_DIR =
   process.env.PI_MEMORY_DIR ?? path.join(process.env.HOME ?? "~", ".pi", "agent", "memory");
@@ -273,151 +277,16 @@ export async function indexSession(jsonlPath: string): Promise<boolean> {
 const RESPONSE_PREVIEW_MAX_CHARS = 4_000;
 const RESPONSE_PREVIEW_MAX_LINES = 120;
 
-const CONTEXT_LONG_TERM_MAX_CHARS = 4_000;
-const CONTEXT_LONG_TERM_MAX_LINES = 150;
-const CONTEXT_PROJECT_MAX_CHARS = 4_000;
-const CONTEXT_PROJECT_MAX_LINES = 150;
-const CONTEXT_SELF_MAX_CHARS = 2_000;
-const CONTEXT_SELF_MAX_LINES = 80;
-const CONTEXT_USER_MAX_CHARS = 2_000;
-const CONTEXT_USER_MAX_LINES = 80;
-const CONTEXT_SCRATCHPAD_MAX_CHARS = 2_000;
-const CONTEXT_SCRATCHPAD_MAX_LINES = 120;
-const CONTEXT_DAILY_MAX_CHARS = 3_000;
-const CONTEXT_DAILY_MAX_LINES = 120;
 const CONTEXT_SEARCH_MAX_CHARS = 2_500;
 const CONTEXT_SEARCH_MAX_LINES = 80;
 const CONTEXT_MAX_CHARS = 20_000;
 
-type TruncateMode = "start" | "end" | "middle";
-
-interface PreviewResult {
-  preview: string;
-  truncated: boolean;
-  totalLines: number;
-  totalChars: number;
-  previewLines: number;
-  previewChars: number;
-}
-
-function truncateLines(lines: string[], maxLines: number, mode: TruncateMode) {
-  if (maxLines <= 0 || lines.length <= maxLines) {
-    return { lines, truncated: false };
-  }
-
-  if (mode === "end") {
-    return { lines: lines.slice(-maxLines), truncated: true };
-  }
-
-  if (mode === "middle" && maxLines > 1) {
-    const marker = "... (truncated) ...";
-    const keep = maxLines - 1;
-    const headCount = Math.ceil(keep / 2);
-    const tailCount = Math.floor(keep / 2);
-    const head = lines.slice(0, headCount);
-    const tail = tailCount > 0 ? lines.slice(-tailCount) : [];
-    return { lines: [...head, marker, ...tail], truncated: true };
-  }
-
-  return { lines: lines.slice(0, maxLines), truncated: true };
-}
-
-function truncateText(text: string, maxChars: number, mode: TruncateMode) {
-  if (maxChars <= 0 || text.length <= maxChars) {
-    return { text, truncated: false };
-  }
-
-  if (mode === "end") {
-    return { text: text.slice(-maxChars), truncated: true };
-  }
-
-  if (mode === "middle" && maxChars > 10) {
-    const marker = "... (truncated) ...";
-    const keep = maxChars - marker.length;
-    if (keep > 0) {
-      const headCount = Math.ceil(keep / 2);
-      const tailCount = Math.floor(keep / 2);
-      return {
-        text: text.slice(0, headCount) + marker + text.slice(text.length - tailCount),
-        truncated: true,
-      };
-    }
-  }
-
-  return { text: text.slice(0, maxChars), truncated: true };
-}
-
-function buildPreview(
-  content: string,
-  options: { maxLines: number; maxChars: number; mode: TruncateMode },
-): PreviewResult {
-  const normalized = content.trim();
-  if (!normalized) {
-    return {
-      preview: "",
-      truncated: false,
-      totalLines: 0,
-      totalChars: 0,
-      previewLines: 0,
-      previewChars: 0,
-    };
-  }
-
-  const lines = normalized.split("\n");
-  const totalLines = lines.length;
-  const totalChars = normalized.length;
-
-  const lineResult = truncateLines(lines, options.maxLines, options.mode);
-  const text = lineResult.lines.join("\n");
-  const charResult = truncateText(text, options.maxChars, options.mode);
-  const preview = charResult.text;
-
-  const previewLines = preview ? preview.split("\n").length : 0;
-  const previewChars = preview.length;
-
-  return {
-    preview,
-    truncated: lineResult.truncated || charResult.truncated,
-    totalLines,
-    totalChars,
-    previewLines,
-    previewChars,
-  };
-}
-
 function formatPreviewBlock(label: string, content: string, mode: TruncateMode) {
-  const result = buildPreview(content, {
+  return formatCorePreviewBlock(label, content, {
     maxLines: RESPONSE_PREVIEW_MAX_LINES,
     maxChars: RESPONSE_PREVIEW_MAX_CHARS,
     mode,
   });
-
-  if (!result.preview) {
-    return `${label}: empty.`;
-  }
-
-  const meta = `${label} (${result.totalLines} lines, ${result.totalChars} chars)`;
-  const note = result.truncated
-    ? `\n[preview truncated: showing ${result.previewLines}/${result.totalLines} lines, ${result.previewChars}/${result.totalChars} chars]`
-    : "";
-  return `${meta}\n\n${result.preview}${note}`;
-}
-
-function formatContextSection(
-  label: string,
-  content: string,
-  mode: TruncateMode,
-  maxLines: number,
-  maxChars: number,
-) {
-  const result = buildPreview(content, { maxLines, maxChars, mode });
-  if (!result.preview) {
-    return "";
-  }
-  const note = result.truncated
-    ? `\n\n[truncated: showing ${result.previewLines}/${result.totalLines} lines, ${result.previewChars}/${result.totalChars} chars]`
-    : "";
-  return `${label}\n\n${result.preview}${note}`;
 }
 
 function uniqStrings(values: string[]): string[] {
@@ -454,47 +323,6 @@ function updateMemoryWidget() {
     `🧠 ${summarizeMemoryInjection(lastMemoryInjection)}`,
     `   ${transport} · ${files}`,
   ]);
-}
-
-function getMessageTimestamp(message: AgentMessage): number {
-  const timestamp = (message as { timestamp?: number | string }).timestamp;
-  if (typeof timestamp === "number") return timestamp;
-  if (typeof timestamp === "string") {
-    const parsed = Date.parse(timestamp);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return Date.now();
-}
-
-function injectEphemeralContextMessage(
-  messages: AgentMessage[],
-  customType: string,
-  content: string,
-): AgentMessage[] {
-  const nextMessages = messages.filter(
-    (message) => !(message.role === "custom" && message.customType === customType),
-  );
-
-  let insertAt = nextMessages.length;
-  for (let i = nextMessages.length - 1; i >= 0; i--) {
-    if (nextMessages[i].role === "user") {
-      insertAt = i;
-      break;
-    }
-  }
-
-  const timestamp =
-    insertAt < nextMessages.length ? getMessageTimestamp(nextMessages[insertAt]) : Date.now();
-
-  nextMessages.splice(insertAt, 0, {
-    role: "custom",
-    customType,
-    content,
-    display: false,
-    timestamp,
-  });
-
-  return nextMessages;
 }
 
 function formatLastMemoryInjection(
@@ -635,7 +463,7 @@ interface LastMemoryInjection {
 let qmdAvailable = false;
 let updateTimer: ReturnType<typeof setTimeout> | null = null;
 let projectKeyCache = new Map<string, string | null>();
-let unsubscribeTrackedCwd: (() => void) | null = null;
+let unsubscribeCwdChanged: (() => void) | null = null;
 let qmdDaemonHealthy: boolean | null = null;
 let qmdDaemonEnsurePromise: Promise<boolean> | null = null;
 let qmdDaemonRetryAfter = 0;
@@ -656,7 +484,7 @@ export function normalizeGitRemote(url: string): string | null {
 }
 
 /** Get the git root for the given working directory, or null if not in a repo. */
-export function getGitRoot(cwd = getTrackedCwd()): Promise<string | null> {
+export function getGitRoot(cwd = process.cwd()): Promise<string | null> {
   return new Promise((resolve) => {
     execFileFn(
       "git",
@@ -672,7 +500,7 @@ export function getGitRoot(cwd = getTrackedCwd()): Promise<string | null> {
 /** Resolve a project key from a cwd + git root. Tries remote first, falls back to path/. */
 export function resolveProjectKey(
   gitRoot: string | null,
-  cwd = getTrackedCwd(),
+  cwd = process.cwd(),
 ): Promise<string | null> {
   if (!gitRoot) {
     const rel = cwd.replace(/^\//, "");
@@ -701,7 +529,7 @@ export function resolveProjectKey(
 }
 
 /** Get the current project key for the tracked cwd. */
-export async function getProjectKey(cwd = getTrackedCwd()): Promise<string | null> {
+export async function getProjectKey(cwd = process.cwd()): Promise<string | null> {
   const gitRoot = await getGitRoot(cwd);
   if (!gitRoot) {
     const cacheKey = `cwd:${cwd}`;
@@ -1296,8 +1124,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     // Reset project key cache so the first prompt re-detects from the current CWD.
     projectKeyCache = new Map();
-    unsubscribeTrackedCwd?.();
-    unsubscribeTrackedCwd = onTrackedCwdChange(() => {
+    unsubscribeCwdChanged?.();
+    unsubscribeCwdChanged = pi.events.on("local:cwd_changed", () => {
       projectKeyCache = new Map();
     });
 
@@ -1403,7 +1231,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("context", async (event) => {
     if (!lastMemoryInjection?.memoryContext) return;
     return {
-      messages: injectEphemeralContextMessage(
+      messages: injectEphemeralCustomContextMessage(
         event.messages,
         "memory-context",
         lastMemoryInjection.memoryContext,

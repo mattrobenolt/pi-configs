@@ -1,14 +1,12 @@
+import { truncateForModel, writeOptionalOutputFile } from "@mattrobenolt/pi-core/tool-output";
 import {
   createAgentSession,
   createExtensionRuntime,
   SessionManager,
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  truncateHead,
   type ExtensionAPI,
   type ExtensionContext,
   type ResourceLoader,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { execFileSync } from "node:child_process";
 import { createDecipheriv, pbkdf2Sync } from "node:crypto";
@@ -460,17 +458,6 @@ function validateDate(value: string): string {
   return trimmed;
 }
 
-function truncateForModel(text: string) {
-  const truncated = truncateHead(text, {
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
-  return {
-    text: truncated.content,
-    truncated: truncated.truncated,
-  };
-}
-
 function normalizeText(text: string): string {
   return text.replace(/\r\n/g, "\n").split("\u0000").join("").trim();
 }
@@ -481,32 +468,19 @@ function clipText(text: string, maxChars: number): string {
   return `${normalized.slice(0, maxChars - 1).trimEnd()}…`;
 }
 
-function getOutputFilePath(outputFile: unknown, cwd?: string): string | undefined {
-  const value = getString(outputFile)?.trim();
-  if (!value) return undefined;
-  return path.resolve(cwd ?? process.cwd(), value);
-}
-
-async function writeOutputFile(outputFilePath: string, text: string): Promise<void> {
-  await fs.mkdir(path.dirname(outputFilePath), { recursive: true });
-  await fs.writeFile(outputFilePath, text, "utf8");
-}
-
 async function finalizeSlackToolOutput(
   tool: string,
   result: { text: string; details: Record<string, unknown> },
   outputFile: unknown,
   cwd?: string,
 ): Promise<SlackRenderedOutput> {
-  const outputFilePath = getOutputFilePath(outputFile, cwd);
+  const outputFilePath = await writeOptionalOutputFile(outputFile, result.text, cwd);
   if (!outputFilePath) {
     return {
       text: result.text,
       details: result.details,
     };
   }
-
-  await writeOutputFile(outputFilePath, result.text);
   return {
     text: `${tool} output written to ${outputFilePath}`,
     outputFile: outputFilePath,
@@ -3135,7 +3109,7 @@ async function generateAndSendReply(
       sessionManager: SessionManager.inMemory(),
       model: conv.model,
       modelRegistry: conv.modelRegistry as
-        | import("@mariozechner/pi-coding-agent").ModelRegistry
+        | import("@earendil-works/pi-coding-agent").ModelRegistry
         | undefined,
       thinkingLevel: "off",
       tools: [],

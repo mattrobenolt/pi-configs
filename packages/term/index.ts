@@ -1,8 +1,8 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@mariozechner/pi-coding-agent";
-import { StringEnum } from "@mariozechner/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
-import { Text } from "@mariozechner/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -816,6 +816,8 @@ export default function (pi: ExtensionAPI) {
           geometry.width,
           "--height",
           geometry.height,
+          "--borderless",
+          "true",
         ];
         if (cwd) args.push("--cwd", cwd);
         if (params.closeOnExit) args.push("--close-on-exit");

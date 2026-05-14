@@ -33,8 +33,7 @@ Extensions are loaded automatically from the `extensions/` directory on session 
 | `btw.ts`               | `/btw` — floating side-chat overlay for tangential questions without polluting the main session                                                                 |
 | `compaction-model.ts`  | Uses a local llamacpp model for compaction when the active model is local                                                                                       |
 | `cost.ts`              | `/cost [days]` — token usage summary broken down by date, project, and model                                                                                    |
-| `cwd.ts`               | `/cd` command plus CWD-aware path handling for bash/read/write/edit/grep/find/ls, with zoxide support                                                           |
-| `direnv.ts`            | Loads direnv environments for the current working directory and reports blocked/error status in the footer                                                       |
+| `devshell.ts`          | `/cd` and `/direnv`; wraps shell commands with direnv, rewrites via rtk, and resolves file tools relative to the current cwd                                     |
 | `execute-command.ts`   | `execute_command` tool — lets the agent queue a slash command or message to fire after its current turn ends                                                    |
 | `notion.ts`            | `NotionRead` and `NotionSearch` tools — read/search Notion using `NOTION_TOKEN` or the local macOS Notion app token                                             |
 | `notify.ts`            | Sends a native desktop notification (OSC 777) when the agent finishes a turn — requires Ghostty with `desktop-notifications = true`                             |
@@ -126,7 +125,7 @@ Local workspaces:
 
 - `./packages/better-diff` — syntax-highlighted edit/write diff renderer
 - `./packages/memory` — five-target memory system with qmd-backed search
-- `./packages/pi-subagents` — local fork/staging copy of the subagent package
+- `./packages/pi-core` — shared primitives used by local pi extensions and packages
 - `./packages/slack` — native Slack tools and background conversation loop
 - `./packages/term` — named terminal workspace backed by zellij
 - `./packages/todos` — file-backed todo manager and selector
@@ -140,8 +139,11 @@ Loaded via `settings.json`:
 - `./packages/todos`
 - `git:github.com/ocodista/pi-token-bloat`
 - `git:github.com/nicobailon/pi-subagents`
+- `git:github.com/nicobailon/pi-mcp-adapter`
+- `git:github.com/HazAT/pi-ghostty`
+- `git:github.com/championswimmer/pi-cache-graph`
 
-Use `pi config` or edit `settings.json` to re-enable the Slack package resources when you actually want them.
+`pi-core` is a workspace dependency, not a pi-loaded package. Use `pi config` or edit `settings.json` to re-enable the Slack package resources when you actually want them.
 
 ## Plugins
 

@@ -1,9 +1,8 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import * as path from "node:path";
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { getTrackedCwd, onTrackedCwdChange } from "./lib/cwd-state";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 interface GitInfo {
   repoName: string | null;
@@ -47,11 +46,18 @@ function nowHMS(): string {
   return new Date().toTimeString().slice(0, 8);
 }
 
+const EMPTY_GIT_INFO: GitInfo = { repoName: null, repoRoot: null, branch: null, isDirty: false };
+
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
-    let gitInfo: GitInfo = { repoName: null, repoRoot: null, branch: null, isDirty: false };
+    let gitInfo: GitInfo = EMPTY_GIT_INFO;
     let gitCacheAt = 0;
     const GIT_TTL = 3000;
+
+    function resetGitInfo(): void {
+      gitCacheAt = 0;
+      gitInfo = EMPTY_GIT_INFO;
+    }
 
     ctx.ui.setFooter((tui, theme, footerData) => {
       const clockTimer = setInterval(() => tui.requestRender(), 1000);
@@ -61,9 +67,9 @@ export default function (pi: ExtensionAPI) {
         if (now - gitCacheAt <= GIT_TTL) return;
 
         gitCacheAt = now;
-        const cwd = getTrackedCwd();
+        const cwd = process.cwd();
         readGitInfo(cwd).then((info) => {
-          if (cwd !== getTrackedCwd()) {
+          if (cwd !== process.cwd()) {
             gitCacheAt = 0;
             return;
           }
@@ -73,9 +79,8 @@ export default function (pi: ExtensionAPI) {
         });
       }
 
-      const unsubCwd = onTrackedCwdChange(() => {
-        gitCacheAt = 0;
-        gitInfo = { repoName: null, repoRoot: null, branch: null, isDirty: false };
+      const unsubCwd = pi.events.on("local:cwd_changed", () => {
+        resetGitInfo();
         tui.requestRender();
       });
 
@@ -104,7 +109,7 @@ export default function (pi: ExtensionAPI) {
 
           const { repoName, repoRoot, branch, isDirty } = gitInfo;
           const modelId = ctx.model?.id ?? "no model";
-          const cwd = getTrackedCwd();
+          const cwd = process.cwd();
           const repoRelativePath = repoRoot ? path.relative(repoRoot, cwd) : "";
           const cwdLabel = repoName
             ? repoRelativePath

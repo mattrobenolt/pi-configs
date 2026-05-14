@@ -1,14 +1,8 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  formatSize,
-  truncateHead,
-} from "@mariozechner/pi-coding-agent";
-import { StringEnum } from "@mariozechner/pi-ai";
+import { truncateForModelWithTempFile } from "@mattrobenolt/pi-core/tool-output";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
-import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import TurndownService from "turndown";
 import Defuddle from "defuddle/full";
@@ -22,7 +16,6 @@ const DEFUDDLE_OPTS = {
   removeSmallImages: true,
   standardize: true,
 } as const;
-
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 const DEFAULT_WEBFETCH_TIMEOUT_SECONDS = 30;
@@ -216,7 +209,7 @@ export default function (pi: ExtensionAPI) {
           const text = gh.lineRange
             ? extractLines(content, gh.lineRange.start, gh.lineRange.end)
             : content;
-          const truncated = await truncateForModel(text, "webfetch");
+          const truncated = await truncateForModelWithTempFile(text, "webfetch");
           return {
             content: [{ type: "text", text: truncated.text }],
             details: { url, rawUrl, truncation: truncated.details } as Record<string, unknown>,
@@ -250,7 +243,7 @@ export default function (pi: ExtensionAPI) {
           const result = await pi.exec("gh", ["api", `repos/${gh.owner}/${gh.repo}/readme`]);
           const readme = JSON.parse(result.stdout) as { content: string; name: string };
           const content = Buffer.from(readme.content, "base64").toString("utf-8");
-          const truncated = await truncateForModel(content, "webfetch");
+          const truncated = await truncateForModelWithTempFile(content, "webfetch");
           return {
             content: [{ type: "text", text: truncated.text }],
             details: { url, file: readme.name, truncation: truncated.details } as Record<
@@ -315,7 +308,7 @@ export default function (pi: ExtensionAPI) {
 
       const raw = new TextDecoder().decode(arrayBuffer);
       const transformed = await transformContent(raw, contentType, format);
-      const truncated = await truncateForModel(transformed, "webfetch");
+      const truncated = await truncateForModelWithTempFile(transformed, "webfetch");
 
       return {
         content: [{ type: "text", text: truncated.text }],
@@ -384,7 +377,7 @@ export default function (pi: ExtensionAPI) {
       const responseText = await response.text();
       const parsedText = parseWebSearchResponse(responseText);
       const output = parsedText || "No search results found. Please try a different query.";
-      const truncated = await truncateForModel(output, "websearch");
+      const truncated = await truncateForModelWithTempFile(output, "websearch");
 
       return {
         content: [{ type: "text", text: truncated.text }],
@@ -446,10 +439,10 @@ async function transformContent(
     if (format === "text") return extractTextFromHTML(raw);
     // Use Defuddle to extract main content and convert to Markdown
     // @ts-ignore // defuddle's type definitions aren't compatible with our TS config
-const defuddle = new Defuddle(DEFUDDLE_OPTS);
+    const defuddle = new Defuddle(DEFUDDLE_OPTS);
     // Defuddle API may be async; assume parse method returns { content }
     // @ts-ignore – defuddle's API is untyped in this context
-const result = await (defuddle.parse ? defuddle.parse(raw) : defuddle.run(raw));
+    const result = await (defuddle.parse ? defuddle.parse(raw) : defuddle.run(raw));
     if (result && typeof result.content === "string") {
       return result.content;
     }
@@ -578,37 +571,4 @@ function isAbortError(error: unknown): boolean {
     error instanceof Error &&
     (error.name === "AbortError" || error.message.toLowerCase().includes("abort"))
   );
-}
-
-async function truncateForModel(text: string, prefix: string) {
-  const truncation = truncateHead(text, {
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
-  if (!truncation.truncated) return { text: truncation.content, details: { truncated: false } };
-
-  let tempFile: string | undefined;
-  try {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-web-tools-"));
-    const filePath = path.join(dir, `${prefix}-${Date.now()}.txt`);
-    await fs.writeFile(filePath, text, "utf8");
-    tempFile = filePath;
-  } catch {
-    tempFile = undefined;
-  }
-
-  let note = `\n\n[Output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
-  note += tempFile ? ` Full output saved to: ${tempFile}]` : " Full output could not be saved.]";
-
-  return {
-    text: truncation.content + note,
-    details: {
-      truncated: true,
-      outputLines: truncation.outputLines,
-      totalLines: truncation.totalLines,
-      outputBytes: truncation.outputBytes,
-      totalBytes: truncation.totalBytes,
-      tempFile,
-    },
-  };
 }

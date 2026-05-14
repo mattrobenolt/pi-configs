@@ -1,43 +1,12 @@
-import type { ContextEvent, ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import {
+  getMessageTimestamp,
+  injectEphemeralUserContextMessage,
+} from "@mattrobenolt/pi-core/context";
+import type { ContextEvent, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type AgentMessage = ContextEvent["messages"][number];
 
 const TEMPORAL_CONTEXT_PREFIX = "Time context:";
-
-function getMessageTimestamp(message: AgentMessage): number {
-  const timestamp = (message as { timestamp?: number | string }).timestamp;
-  if (typeof timestamp === "number") return timestamp;
-  if (typeof timestamp === "string") {
-    const parsed = Date.parse(timestamp);
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return Date.now();
-}
-
-function injectEphemeralContextMessage(messages: AgentMessage[], content: string): AgentMessage[] {
-  const nextMessages = messages.filter(
-    (message) => !(message.role === "user" && message.content === content),
-  );
-
-  let insertAt = nextMessages.length;
-  for (let i = nextMessages.length - 1; i >= 0; i--) {
-    if (nextMessages[i].role === "user") {
-      insertAt = i;
-      break;
-    }
-  }
-
-  const timestamp =
-    insertAt < nextMessages.length ? getMessageTimestamp(nextMessages[insertAt]) : Date.now();
-
-  nextMessages.splice(insertAt, 0, {
-    role: "user",
-    content,
-    timestamp,
-  });
-
-  return nextMessages;
-}
 
 function formatIsoWithOffset(date: Date): string {
   const year = date.getFullYear();
@@ -102,7 +71,7 @@ export default function temporalContextExtension(pi: ExtensionAPI) {
     if (!temporalBlock) return;
 
     return {
-      messages: injectEphemeralContextMessage(event.messages, temporalBlock),
+      messages: injectEphemeralUserContextMessage(event.messages, temporalBlock),
     };
   });
 }

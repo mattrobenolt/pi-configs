@@ -13,16 +13,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@pierre/diffs": "^1.1.0"
-  },
-  "devDependencies": {
-    "oxfmt": "^0.46.0",
-    "oxlint": "^1.57.0",
-    "typescript": "^6.0.3"
-  },
-  "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@pierre/diffs": "*"
   },
   "pi": {
     "extensions": [

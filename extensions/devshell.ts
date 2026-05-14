@@ -1,11 +1,11 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
+import { expandHome } from "@mattrobenolt/pi-core/files";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { exec } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { watch, type FSWatcher } from "node:fs";
 import * as path from "node:path";
-import { setTrackedCwd } from "./lib/cwd-state";
 
 type DirenvValue = string | null;
 type DirenvStatus = "on" | "blocked" | "error" | "off";
@@ -19,14 +19,6 @@ const WATCH_TARGETS = [
   "devshell.toml",
   ".direnv",
 ];
-
-function expandHome(input: string): string {
-  const home = process.env.HOME ?? process.env.USERPROFILE;
-  if (!home) return input;
-  if (input === "~") return home;
-  if (input.startsWith("~/")) return path.join(home, input.slice(2));
-  return input;
-}
 
 function formatHomePath(cwd: string): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
@@ -152,9 +144,9 @@ function resolveDirectoryTarget(input: string, cwd: string): string | null {
   }
 }
 
-function changeDirectory(cwd: string): void {
+function changeDirectory(pi: ExtensionAPI, cwd: string): void {
   process.chdir(cwd);
-  setTrackedCwd(process.cwd());
+  pi.events.emit("local:cwd_changed", process.cwd());
 }
 
 function parseStatus(error: Error | null, stderr: string): DirenvStatus | null {
@@ -270,7 +262,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     latestCtx = ctx;
-    setTrackedCwd(process.cwd());
+    pi.events.emit("local:cwd_changed", process.cwd());
     reloadForCwd(process.cwd(), ctx);
   });
 
@@ -295,7 +287,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      changeDirectory(nextCwd);
+      changeDirectory(pi, nextCwd);
       reloadForCwd(process.cwd(), ctx);
       ctx.ui.notify(`cwd → ${formatHomePath(process.cwd())}`, "info");
     },

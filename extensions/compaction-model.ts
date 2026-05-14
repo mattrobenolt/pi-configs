@@ -1,6 +1,6 @@
-import { complete } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { convertToLlm, serializeConversation } from "@mariozechner/pi-coding-agent";
+import { complete } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
 
 const LOCAL_COMPACTION_MODEL = { provider: "llamacpp", id: "gemma4-26b-a4b" } as const;
 const SUMMARY_MAX_TOKENS = 4096;

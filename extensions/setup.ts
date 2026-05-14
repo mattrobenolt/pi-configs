@@ -1,5 +1,5 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@mariozechner/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
 
 // Built-in pi tools that are inactive by default. Tools registered by extensions
 // (e.g. webfetch, websearch, memory) are always active and don't need to be listed here.
