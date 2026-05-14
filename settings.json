@@ -25,11 +25,11 @@
     "keepRecentTokens": 16000
   },
   "enabledModels": [
-    "anthropic/claude-opus-4-7",
     "anthropic/claude-opus-4-6",
     "anthropic/claude-sonnet-4-6",
     "anthropic/claude-haiku-4-5",
     "openai-codex/gpt-5.5",
+    "openai-codex/gpt-5.4-mini",
     "llamacpp/qwen3-8b-balanced",
     "llamacpp/qwen3.5-9b",
     "llamacpp/gemma4-26b-a4b",

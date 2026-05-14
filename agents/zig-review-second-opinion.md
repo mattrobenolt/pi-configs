@@ -1,7 +1,7 @@
 ---
 description: Cross-model second opinion on an aggregated Zig code review
 tools: bash, read, grep, find
-model: openai-codex/gpt-5.4
+model: openai-codex/gpt-5.5
 thinking: medium
 max_turns: 15
 ---
