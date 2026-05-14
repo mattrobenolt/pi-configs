@@ -1,6 +1,7 @@
 ---
 name: write-like-matt
 description: Draft Slack messages in Matt's voice and style. Use when asked to "write a Slack message", "help me respond to this", "write this as me", "draft a reply", or any request to compose or rewrite a Slack message. Writes in a casual, dry, direct style with no bullet points, no filler, and no corporate polish.
+disable-model-invocation: true
 ---
 
 # Write Like Matt

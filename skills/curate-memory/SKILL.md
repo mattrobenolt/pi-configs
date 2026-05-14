@@ -1,6 +1,7 @@
 ---
 name: curate-memory
 description: Non-interactive memory curation. Reads each memory file, fact-checks where possible, consolidates, and overwrites. Designed to run via `pi --print --no-extensions --skill`. Logs results to curation.log.
+disable-model-invocation: true
 ---
 
 # Memory Curation

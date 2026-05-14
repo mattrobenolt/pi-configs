@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { keyText } from "@earendil-works/pi-coding-agent";
 import {
   fuzzyFilter,
@@ -14,6 +14,8 @@ import path from "node:path";
 
 const ENTRY_TYPE = "tools-config";
 const TOOLS_CONFIG_VERSION = 1;
+const SUMMARY_WIDGET_KEY = "tools-summary";
+const SUMMARY_VISIBLE_MS = 10_000;
 
 interface ToolsState {
   enabledTools: string[];
@@ -53,19 +55,23 @@ function toolSearchText(tool: ToolInfo): string {
 
 function summarizeTools(allTools: ToolInfo[], enabledTools: Set<string>): string {
   const enabled = sortedNames(enabledTools);
-  const disabled = sortedNames(
-    allTools.map((tool) => tool.name).filter((name) => !enabledTools.has(name)),
+  return [`Tools: ${enabled.length}/${allTools.length} enabled`, `Enabled: ${enabled.join(", ") || "none"}`].join(
+    "\n",
   );
+}
 
-  const lines = [
-    `Tools: ${enabled.length}/${allTools.length} enabled`,
-    `Enabled: ${enabled.join(", ") || "none"}`,
+function renderToolsSummary(
+  allTools: ToolInfo[],
+  enabledTools: Set<string>,
+  theme: Theme,
+): string[] {
+  const enabled = sortedNames(enabledTools);
+  return [
+    theme.fg("mdHeading", "[Tools]"),
+    `  ${theme.fg("accent", "Enabled")} ${theme.fg("dim", `${enabled.length}/${allTools.length} tools`)}`,
+    theme.fg("dim", `  ${enabled.join(", ") || "none"}`),
+    "\u00a0",
   ];
-  if (disabled.length > 0) {
-    lines.push(`Disabled: ${disabled.join(", ")}`);
-  }
-
-  return lines.join("\n");
 }
 
 function validToolNames(allTools: ToolInfo[]): Set<string> {
@@ -157,6 +163,7 @@ function disableTools(enabled: Set<string>, names: Iterable<string>): Set<string
 export default function toolsExtension(pi: ExtensionAPI) {
   let allTools: ToolInfo[] = [];
   let enabledTools = new Set<string>();
+  let summaryTimer: ReturnType<typeof setTimeout> | undefined;
 
   function refreshTools(): void {
     allTools = [...pi.getAllTools()].sort((a, b) => a.name.localeCompare(b.name));
@@ -185,6 +192,23 @@ export default function toolsExtension(pi: ExtensionAPI) {
     enabledTools =
       restoreFromBranch(ctx, allTools) ?? loadToolsConfig(allTools) ?? new Set(pi.getActiveTools());
     applyTools(ctx);
+  }
+
+  function clearSummary(ctx: ExtensionContext): void {
+    if (summaryTimer) clearTimeout(summaryTimer);
+    summaryTimer = undefined;
+    ctx.ui.setWidget(SUMMARY_WIDGET_KEY, undefined);
+  }
+
+  function showSummary(ctx: ExtensionContext): void {
+    if (summaryTimer) clearTimeout(summaryTimer);
+    ctx.ui.setWidget(SUMMARY_WIDGET_KEY, renderToolsSummary(allTools, enabledTools, ctx.ui.theme), {
+      placement: "aboveEditor",
+    });
+    summaryTimer = setTimeout(() => {
+      ctx.ui.setWidget(SUMMARY_WIDGET_KEY, undefined);
+      summaryTimer = undefined;
+    }, SUMMARY_VISIBLE_MS);
   }
 
   function setTools(names: Iterable<string>, ctx?: ExtensionContext): string {
@@ -435,13 +459,19 @@ export default function toolsExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     restoreTools(ctx);
-    ctx.ui.notify(summarizeTools(allTools, enabledTools), "info");
+    if (event.reason === "startup" || event.reason === "reload") {
+      showSummary(ctx);
+    }
   });
 
   pi.on("session_tree", async (_event, ctx) => {
     restoreTools(ctx);
-    ctx.ui.notify(summarizeTools(allTools, enabledTools), "info");
+    showSummary(ctx);
+  });
+
+  pi.on("session_shutdown", async (_event, ctx) => {
+    clearSummary(ctx);
   });
 }

@@ -5,6 +5,7 @@ description: >
   Runs 7 parallel specialized agents (each on a different model), then a cross-family
   second-opinion agent on the aggregated result. Always operates on the full branch diff
   against main. Report-only: never makes changes.
+disable-model-invocation: true
 ---
 
 # Zig Review

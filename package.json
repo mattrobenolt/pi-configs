@@ -1,9 +1,9 @@
 {
   "name": "pi-agent-extensions",
   "scripts": {
-    "lint": "oxlint extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos",
-    "fmt": "oxfmt extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos",
-    "fmt:check": "oxfmt extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos --check",
+    "lint": "oxlint extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos packages/webfetch",
+    "fmt": "oxfmt extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos packages/webfetch",
+    "fmt:check": "oxfmt extensions packages/better-diff packages/memory packages/pi-core packages/slack packages/term packages/todos packages/webfetch --check",
     "check": "tsc --noEmit && npm run check --workspaces --if-present",
     "eval:local": "node scripts/local-llm-eval.mjs"
   },
@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
     "@mattrobenolt/pi-core": "file:packages/pi-core",
     "defuddle": "*",
     "hysnappy": "*",

@@ -1,6 +1,7 @@
 ---
 name: nushell
 description: "Write and edit Nushell (.nu) scripts as a replacement for non-trivial bash scripts. Use when the task involves writing a shell script with logic, data manipulation, structured output, or anything beyond a few simple command invocations. Nushell is the preferred scripting language for complex automation; bash is fine for trivial one-liners and shellHooks. Triggers on: .nu files, requests to 'write a script', or when a bash script is getting complex. Also applies when adding nushell to a nix devshell."
+disable-model-invocation: true
 ---
 
 # Nushell Scripting

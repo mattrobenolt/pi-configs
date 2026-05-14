@@ -1,0 +1,31 @@
+{
+  "name": "webfetch",
+  "version": "0.0.0",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "fmt": "oxfmt index.ts",
+    "fmt:check": "oxfmt index.ts --check",
+    "lint": "oxlint index.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@mattrobenolt/pi-core": "file:../pi-core",
+    "defuddle": "*",
+    "turndown": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/turndown": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
