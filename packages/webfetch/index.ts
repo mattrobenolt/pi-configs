@@ -1,20 +1,13 @@
 import { truncateForModelWithTempFile } from "@mattrobenolt/pi-core/tool-output";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import TurndownService from "turndown";
-import Defuddle from "defuddle/full";
-// Default Defuddle options – always applied to minimise token usage.
-const DEFUDDLE_OPTS = {
-  markdown: true,
-  removeExactSelectors: true,
-  removePartialSelectors: true,
-  removeHiddenElements: true,
-  removeLowScoring: true,
-  removeSmallImages: true,
-  standardize: true,
-} as const;
+import { loadWebfetchConfig } from "./config.ts";
+import { transformContent, validateAndNormalizeUrl } from "./core.ts";
+import { narrowMarkdown } from "./narrow.ts";
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 const DEFAULT_WEBFETCH_TIMEOUT_SECONDS = 30;
@@ -28,9 +21,9 @@ const WEBSEARCH_ENDPOINT = "/mcp";
 const WEBFETCH_PARAMS = Type.Object({
   url: Type.String({ description: "The URL to fetch content from" }),
   format: Type.Optional(
-    StringEnum(["text", "markdown", "html"] as const, {
+    StringEnum(["markdown", "raw"] as const, {
       description:
-        'The format to return content in ("text", "markdown", or "html"). Default: "markdown".',
+        'The format to return content in. "markdown" is the default. Use "raw" only when you need the original response body (HTML, JSON, or plain text).',
       default: "markdown",
     }),
   ),
@@ -41,7 +34,15 @@ const WEBFETCH_PARAMS = Type.Object({
       maximum: MAX_WEBFETCH_TIMEOUT_SECONDS,
     }),
   ),
-  // (Defuddle options are now hard‑coded below – no longer exposed via the tool params)
+  objective: Type.Optional(
+    Type.String({
+      description:
+        "Narrow the extracted markdown to content relevant to this objective. " +
+        "The full page is fetched and converted to markdown first, then a local LLM pass " +
+        "filters to only the relevant sections. Only applies when format=markdown. " +
+        "Increases latency. Falls back to full markdown if the model is unavailable.",
+    }),
+  ),
 });
 
 type WebFetchParams = Static<typeof WEBFETCH_PARAMS>;
@@ -79,30 +80,34 @@ const WEBSEARCH_PARAMS = Type.Object({
 
 type WebSearchParams = Static<typeof WEBSEARCH_PARAMS>;
 
-const WEBFETCH_DESCRIPTION = `- Fetches content from a specified URL
-- Handles GitHub URLs intelligently: blob URLs return raw file content, tree URLs return directory listings, repo URLs return the README
-- For other URLs, fetches and returns content as markdown by default
-- Returns images as tool result image attachments
-- Use this tool when you need to retrieve and analyze web content
+const WEBFETCH_DESCRIPTION = `Fetch a specific URL and return agent-readable content.
 
-Usage notes:
-  - The URL must be a valid fully-qualified http:// or https:// URL
-  - Format options: "markdown" (default), "text", or "html"
-  - timeout is in seconds (default: 30, max: 120)
-  - Response size limit: 5MB
-  - Tool output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} lines to protect context`;
+Use webfetch when the user gives a URL to inspect, quote, summarize, debug, or use as context. Prefer format="markdown" unless the task specifically needs the original response body.
 
-const WEBSEARCH_DESCRIPTION = `- Search the web using Exa AI (mcp.exa.ai)
-- Provides up-to-date information for recent and live topics
-- Supports result count, crawl strategy, and search depth controls
-- Use this tool for information beyond the model knowledge cutoff
+Arguments:
+- url: required fully-qualified http:// or https:// URL.
+- format: "markdown" (default) or "raw". Use raw only for original HTML, JSON, or plain text.
+- timeout: request timeout in seconds, default ${DEFAULT_WEBFETCH_TIMEOUT_SECONDS}, max ${MAX_WEBFETCH_TIMEOUT_SECONDS}.
+- objective: optional focus query for markdown output. Use this when only part of a long page is relevant, e.g. "authentication options", "POST request example", or "pricing limits". The page is fetched normally, then narrowed to objective-relevant markdown. Ignore objective for format="raw".
 
-Usage notes:
-  - livecrawl: "fallback" (default) or "preferred"
-  - type: "auto" (default), "fast", or "deep"
-  - numResults default: ${DEFAULT_WEBSEARCH_RESULTS}
-  - The current year is ${new Date().getFullYear()}; include it in recent-news style queries
-  - Tool output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} lines to protect context`;
+Behavior:
+- GitHub blob URLs return raw file content; tree URLs return directory listings; repo URLs return README content.
+- Image URLs return an image attachment.
+- Non-GitHub web pages return markdown by default, with best-effort cleanup and truncation.
+- Responses over 5MB are rejected. Output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} lines when needed.`;
+
+const WEBSEARCH_DESCRIPTION = `Search the web for current or unknown information and return a consolidated result snippet.
+
+Use websearch for open-ended questions, recent information, discovery, or when the user asks about something outside the model's knowledge. If the user provides a specific URL, use webfetch instead.
+
+Arguments:
+- query: search query. Include the current year (${new Date().getFullYear()}) for recent/news/current-event queries when useful.
+- numResults: number of results, default ${DEFAULT_WEBSEARCH_RESULTS}.
+- livecrawl: "fallback" (default) or "preferred". Use "preferred" when freshness matters more than speed.
+- type: "auto" (default), "fast", or "deep". Use "deep" for complex research, "fast" for quick lookup.
+- contextMaxCharacters: optional result context size limit.
+
+Output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} lines when needed.`;
 
 // --- GitHub URL handling ---
 
@@ -181,6 +186,12 @@ function formatBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
+function summarizeText(text: string, maxLen = 160): string {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\n/g, "\\n");
+  if (normalized.length <= maxLen) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLen - 3))}...`;
+}
+
 // --- Main extension ---
 
 export default function (pi: ExtensionAPI) {
@@ -188,14 +199,28 @@ export default function (pi: ExtensionAPI) {
     name: "webfetch",
     label: "Web Fetch",
     description: WEBFETCH_DESCRIPTION,
-    promptSnippet:
-      "Fetch URL content as markdown/text/html and return images as image attachments.",
+    promptSnippet: "Fetch URL content as markdown/raw text and return images as image attachments.",
     promptGuidelines: [
       "Use webfetch when the user provides a specific URL to inspect.",
-      "Prefer format=markdown for readable page extraction unless raw HTML is required.",
+      "Prefer format=markdown for readable page extraction unless the original response body is required.",
     ],
     parameters: WEBFETCH_PARAMS,
-    async execute(_toolCallId, params: WebFetchParams, signal) {
+    renderCall(args, theme) {
+      const params = args as Partial<WebFetchParams>;
+      let text = theme.fg("toolTitle", theme.bold("webfetch "));
+      if (typeof params.url === "string" && params.url.trim()) {
+        text += theme.fg("accent", summarizeText(params.url.trim(), 90));
+      } else {
+        text += theme.fg("muted", "url?");
+      }
+      const format = typeof params.format === "string" ? params.format : "markdown";
+      if (format !== "markdown") text += " " + theme.fg("muted", format);
+      if (typeof params.objective === "string" && params.objective.trim()) {
+        text += " " + theme.fg("dim", JSON.stringify(summarizeText(params.objective.trim(), 80)));
+      }
+      return new Text(text, 0, 0);
+    },
+    async execute(_toolCallId, params: WebFetchParams, signal, _onUpdate, ctx: ExtensionContext) {
       const { url } = params;
 
       // GitHub-aware handling
@@ -306,8 +331,26 @@ export default function (pi: ExtensionAPI) {
       }
 
       const raw = new TextDecoder().decode(arrayBuffer);
-      const transformed = await transformContent(raw, contentType, format);
-      const truncated = await truncateForModelWithTempFile(transformed, "webfetch");
+      const transformed = await transformContent(raw, contentType, format, normalizedUrl);
+
+      // Optional: LLM-based objective narrowing. Best-effort — falls back to full markdown.
+      const { objective } = params;
+      let finalContent = transformed;
+      let narrowed = false;
+      let narrowingModel: string | undefined;
+      let narrowingDiagnostics: Record<string, unknown> | undefined;
+      if (objective && format === "markdown") {
+        const config = await loadWebfetchConfig(ctx.cwd);
+        const result = await narrowMarkdown(transformed, objective, ctx, signal, {
+          model: config.objectiveModel,
+        });
+        finalContent = result.content;
+        narrowed = result.narrowed;
+        narrowingModel = result.model ? `${result.model.provider}/${result.model.id}` : undefined;
+        narrowingDiagnostics = result.diagnostics;
+      }
+
+      const truncated = await truncateForModelWithTempFile(finalContent, "webfetch");
 
       return {
         content: [{ type: "text", text: truncated.text }],
@@ -316,6 +359,9 @@ export default function (pi: ExtensionAPI) {
           format,
           contentType,
           bytes: arrayBuffer.byteLength,
+          narrowed,
+          narrowingModel,
+          narrowingDiagnostics,
           truncation: truncated.details,
         },
       };
@@ -332,6 +378,22 @@ export default function (pi: ExtensionAPI) {
       "Add the current year to news and current-events queries when useful.",
     ],
     parameters: WEBSEARCH_PARAMS,
+    renderCall(args, theme) {
+      const params = args as Partial<WebSearchParams>;
+      let text = theme.fg("toolTitle", theme.bold("websearch "));
+      if (typeof params.query === "string" && params.query.trim()) {
+        text += theme.fg("accent", JSON.stringify(summarizeText(params.query.trim(), 100)));
+      } else {
+        text += theme.fg("muted", "query?");
+      }
+      if (typeof params.type === "string" && params.type !== "auto") {
+        text += " " + theme.fg("muted", params.type);
+      }
+      if (typeof params.numResults === "number") {
+        text += " " + theme.fg("dim", `${params.numResults} results`);
+      }
+      return new Text(text, 0, 0);
+    },
     async execute(_toolCallId, params: WebSearchParams, signal) {
       const { signal: requestSignal, cleanup } = mergeAbortSignals(signal, WEBSEARCH_TIMEOUT_MS);
       const payload = {
@@ -393,19 +455,15 @@ export default function (pi: ExtensionAPI) {
   });
 }
 
-function buildWebFetchHeaders(format: "text" | "markdown" | "html") {
+function buildWebFetchHeaders(format: "markdown" | "raw") {
   let accept = "*/*";
   switch (format) {
     case "markdown":
       accept =
         "text/markdown;q=1.0, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1";
       break;
-    case "text":
-      accept = "text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1";
-      break;
-    case "html":
-      accept =
-        "text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1";
+    case "raw":
+      accept = "*/*";
       break;
   }
   return {
@@ -414,89 +472,6 @@ function buildWebFetchHeaders(format: "text" | "markdown" | "html") {
     Accept: accept,
     "Accept-Language": "en-US,en;q=0.9",
   };
-}
-
-function validateAndNormalizeUrl(value: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("Invalid URL");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-    throw new Error("URL must start with http:// or https://");
-  return parsed.toString();
-}
-
-async function transformContent(
-  raw: string,
-  contentType: string,
-  format: "text" | "markdown" | "html",
-): Promise<string> {
-  if (format === "html") return raw;
-  if (contentType.toLowerCase().includes("text/html")) {
-    if (format === "text") return extractTextFromHTML(raw);
-    // Use Defuddle to extract main content and convert to Markdown
-    // @ts-ignore // defuddle's type definitions aren't compatible with our TS config
-    const defuddle = new Defuddle(DEFUDDLE_OPTS);
-    // Defuddle API may be async; assume parse method returns { content }
-    // @ts-ignore – defuddle's API is untyped in this context
-    const result = await (defuddle.parse ? defuddle.parse(raw) : defuddle.run(raw));
-    if (result && typeof result.content === "string") {
-      return result.content;
-    }
-    // If Defuddle didn't return content for any reason, fall back to Turndown conversion
-    return convertHTMLToMarkdown(raw);
-  }
-  return raw;
-}
-
-function convertHTMLToMarkdown(html: string): string {
-  const turndown = new TurndownService({
-    headingStyle: "atx",
-    hr: "---",
-    bulletListMarker: "-",
-    codeBlockStyle: "fenced",
-    emDelimiter: "*",
-  });
-  turndown.remove(["script", "style", "meta", "link"]);
-  return turndown.turndown(html);
-}
-
-function extractTextFromHTML(html: string): string {
-  const withoutHidden = html
-    .replace(/<(script|style|noscript|iframe|object|embed)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<(br|hr)\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|h[1-6]|li|tr|section|article|header|footer)>/gi, "\n");
-  const withoutTags = withoutHidden.replace(/<[^>]+>/g, " ");
-  const decoded = decodeHtmlEntities(withoutTags);
-  return decoded
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .join("\n");
-}
-
-function decodeHtmlEntities(input: string): string {
-  const named: Record<string, string> = {
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-    nbsp: " ",
-  };
-  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, entity: string) => {
-    if (entity.startsWith("#x") || entity.startsWith("#X")) {
-      const code = Number.parseInt(entity.slice(2), 16);
-      return Number.isNaN(code) ? match : String.fromCodePoint(code);
-    }
-    if (entity.startsWith("#")) {
-      const code = Number.parseInt(entity.slice(1), 10);
-      return Number.isNaN(code) ? match : String.fromCodePoint(code);
-    }
-    return named[entity] ?? match;
-  });
 }
 
 function parseWebSearchResponse(text: string): string | null {

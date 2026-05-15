@@ -1,0 +1,122 @@
+[
+  {
+    "id": "example",
+    "url": "https://example.com",
+    "category": "simple",
+    "expected_contains": ["Example Domain"],
+    "expected_absent_noise": ["Cookie", "Subscribe"],
+    "objective": "What is this domain used for?"
+  },
+  {
+    "id": "mdn-fetch",
+    "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch",
+    "category": "api-docs",
+    "expected_contains": ["fetch()", "Request", "Response"],
+    "expected_absent_noise": ["Log in"],
+    "objective": "How do you make a POST request with fetch?"
+  },
+  {
+    "id": "tailwind-padding",
+    "url": "https://tailwindcss.com/docs/padding",
+    "category": "code-docs",
+    "expected_contains": ["padding", "p-<number>"],
+    "expected_absent_noise": ["Quick search"],
+    "objective": "Which utility classes control horizontal padding?"
+  },
+  {
+    "id": "cloudflare-workers",
+    "url": "https://www.cloudflare.com/developer-platform/products/workers/",
+    "category": "marketing-docs",
+    "expected_contains": ["Workers", "serverless"],
+    "expected_absent_noise": ["Cookie"],
+    "objective": "What are the key technical benefits of Cloudflare Workers?"
+  },
+  {
+    "id": "node-fs",
+    "url": "https://nodejs.org/api/fs.html",
+    "category": "api-docs",
+    "expected_contains": ["fs.readFile", "fs.writeFile"],
+    "expected_absent_noise": [],
+    "objective": "How do fs.readFile and fs.writeFile work?"
+  },
+  {
+    "id": "vite-guide",
+    "url": "https://vite.dev/guide/",
+    "category": "vitepress",
+    "expected_contains": ["Vite", "create-vite"],
+    "expected_absent_noise": ["Sponsor"],
+    "objective": "How do you create a new Vite project?"
+  },
+  {
+    "id": "react-usememo",
+    "url": "https://react.dev/reference/react/useMemo",
+    "category": "docs-generator",
+    "expected_contains": ["useMemo", "dependencies"],
+    "expected_absent_noise": [],
+    "objective": "When should useMemo be used and what are its parameters?"
+  },
+  {
+    "id": "python-asyncio",
+    "url": "https://docs.python.org/3/library/asyncio.html",
+    "category": "sphinx",
+    "expected_contains": ["asyncio", "coroutines"],
+    "expected_absent_noise": [],
+    "objective": "What are asyncio coroutines and tasks?"
+  },
+  {
+    "id": "kubernetes-pods",
+    "url": "https://kubernetes.io/docs/concepts/workloads/pods/",
+    "category": "docs-generator",
+    "expected_contains": ["Pods", "containers"],
+    "expected_absent_noise": [],
+    "objective": "What is a Kubernetes Pod?"
+  },
+  {
+    "id": "hono-routing",
+    "url": "https://hono.dev/docs/api/routing",
+    "category": "docs-generator",
+    "expected_contains": ["app.get", "HTTP method"],
+    "expected_absent_noise": [],
+    "objective": "How do you define routes in Hono?"
+  },
+  {
+    "id": "plain-text",
+    "url": "https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore",
+    "category": "plain-text",
+    "expected_contains": ["node_modules", "npm-debug.log"],
+    "expected_absent_noise": ["<html", "Cookie"],
+    "objective": "What Node-related files are ignored?"
+  },
+  {
+    "id": "wikipedia-http",
+    "url": "https://en.wikipedia.org/wiki/HTTP",
+    "category": "article",
+    "expected_contains": ["HTTP", "protocol"],
+    "expected_absent_noise": ["Donate"],
+    "objective": "What is HTTP and what layer does it operate on?"
+  },
+  {
+    "id": "stripe-docs",
+    "url": "https://docs.stripe.com/api/charges/create",
+    "category": "api-docs",
+    "expected_contains": ["charges", "amount", "currency"],
+    "expected_absent_noise": [],
+    "objective": "What parameters are required to create a charge?"
+  },
+  {
+    "id": "nextjs-routing",
+    "url": "https://nextjs.org/docs/app/building-your-application/routing",
+    "category": "docs-generator",
+    "expected_contains": ["routing", "pages", "layout"],
+    "expected_absent_noise": [],
+    "objective": "How does file-system routing work in Next.js?"
+  },
+  {
+    "id": "typescript-handbook",
+    "url": "https://www.typescriptlang.org/docs/handbook/2/types-from-types.html",
+    "category": "docs-generator",
+    "expected_contains": ["TypeScript", "type"],
+    "expected_absent_noise": [],
+    "objective": "What are mapped types in TypeScript?"
+  }
+]

@@ -8,9 +8,11 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
-    "fmt": "oxfmt index.ts",
-    "fmt:check": "oxfmt index.ts --check",
-    "lint": "oxlint index.ts"
+    "test": "node --experimental-strip-types --test index.test.ts",
+    "eval": "node --experimental-strip-types eval.ts",
+    "fmt": "oxfmt index.ts core.ts config.ts narrow.ts index.test.ts eval.ts",
+    "fmt:check": "oxfmt index.ts core.ts config.ts narrow.ts index.test.ts eval.ts --check",
+    "lint": "oxlint index.ts core.ts config.ts narrow.ts index.test.ts eval.ts"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "*",
@@ -21,6 +23,7 @@
     "typebox": "*"
   },
   "devDependencies": {
+    "@types/node": "*",
     "@types/turndown": "*"
   },
   "pi": {
