@@ -29,19 +29,17 @@ Extensions are loaded automatically from the `extensions/` directory on session 
 
 | Extension              | What it does                                                                                                                                                    |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `answer.ts`            | `/answer` command and `Ctrl+.` shortcut — presents an interactive TUI for answering questions extracted from the last assistant message                         |
-| `btw.ts`               | `/btw` — floating side-chat overlay for tangential questions without polluting the main session                                                                 |
 | `compaction-model.ts`  | Uses a local llamacpp model for compaction when the active model is local                                                                                       |
 | `cost.ts`              | `/cost [days]` — token usage summary broken down by date, project, and model                                                                                    |
 | `devshell.ts`          | `/cd` and `/direnv`; wraps shell commands with direnv, rewrites via rtk, and resolves file tools relative to the current cwd                                     |
 | `execute-command.ts`   | `execute_command` tool — lets the agent queue a slash command or message to fire after its current turn ends                                                    |
-| `notion.ts`            | `NotionRead` and `NotionSearch` tools — read/search Notion using `NOTION_TOKEN` or the local macOS Notion app token                                             |
 | `notify.ts`            | Sends a native desktop notification (OSC 777) when the agent finishes a turn — requires Ghostty with `desktop-notifications = true`                             |
 | `prompt-editor.ts`     | Named "modes" for model + thinking combinations — cycle with `Ctrl+Space`, pick with `/mode` or `Ctrl+Shift+M`                                                 |
+| `provider-params.ts`   | Injects per-model provider params (e.g. temperature) before requests via `before_provider_request` hook; reads from `provider-params.json`                      |
 | `setup.ts`             | Session defaults: activates `grep`, `find`, `ls`; auto-expands tool outputs; registers `get_system_prompt`, `get_tools`, `get_last_payload` introspection tools |
 | `statusline.ts`        | Footer showing repo/directory, branch, dirty state, current time, extension statuses, model, thinking level, and token usage                                    |
 | `temporal-context.ts`  | Injects hidden temporal context only after long pauses, currently gaps of 30+ minutes between user/assistant messages                                           |
-| `webfetch.ts`          | `webfetch` and `websearch` tools — GitHub-URL-aware fetching and Exa-powered web search                                                                         |
+| `tools.ts`             | `/tools` command and status widget — interactive TUI for enabling/disabling tools per session                                                                   |
 | `whimsical.ts`         | Animated loading messages with shimmer effect. Purely cosmetic.                                                                                                 |
 
 ## Agents
@@ -83,7 +81,6 @@ Root-level skills are pi-local. For shareable plugin-owned domains, prefer the p
 | `learn-codebase`  | Discover project conventions and surface security concerns               |
 | `nix-devshell`    | Work within Nix flake-based devShells                                    |
 | `nushell`         | Write and edit Nushell scripts                                           |
-| `pi-update`       | Update the local pi coding agent packages                                |
 | `self-improve`    | Meta-skill for improving agent behavior and configuration                |
 | `session-reader`  | Read and analyze pi session JSONL files                                  |
 | `simplify`        | Find simplification opportunities in code                                |
@@ -135,25 +132,30 @@ Local workspaces:
 
 - `./packages/better-diff` — syntax-highlighted edit/write diff renderer
 - `./packages/memory` — five-target memory system with qmd-backed search
+- `./packages/notion` — `notion_read` and `notion_search` tools via NOTION_TOKEN or macOS app token
 - `./packages/pi-core` — shared primitives used by local pi extensions and packages
 - `./packages/slack` — native Slack tools and background conversation loop
 - `./packages/term` — named terminal workspace backed by zellij
 - `./packages/todos` — file-backed todo manager and selector
+- `./packages/webfetch` — `webfetch` and `websearch` tools; GitHub-URL-aware fetching and Exa-powered search
 
 Loaded via `settings.json`:
 
 - `./packages/better-diff`
 - `./packages/memory`
-- `./packages/slack` with `extensions: []`, so the package is installed but its extension resources are filtered out by default
+- `./packages/notion`
+- `./packages/slack`
 - `./packages/term`
 - `./packages/todos`
+- `./packages/webfetch`
 - `git:github.com/ocodista/pi-token-bloat`
 - `git:github.com/nicobailon/pi-subagents`
 - `git:github.com/nicobailon/pi-mcp-adapter`
 - `git:github.com/HazAT/pi-ghostty`
 - `git:github.com/championswimmer/pi-cache-graph`
+- `git:github.com/dbachelder/pi-btw` — `/btw` floating side-chat overlay
 
-`pi-core` is a workspace dependency, not a pi-loaded package. Use `pi config` or edit `settings.json` to re-enable the Slack package resources when you actually want them.
+`pi-core` is a workspace dependency, not a pi-loaded package.
 
 ## Plugins
 

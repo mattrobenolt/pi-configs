@@ -117,7 +117,7 @@ Combine the aggregated primary report with the second opinion into the final out
 
 ---
 
-## Second Opinion (GPT-5.4)
+## Second Opinion (GPT-5.5)
 
 ### Challenged Findings
 [...]

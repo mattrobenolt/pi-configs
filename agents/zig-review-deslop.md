@@ -1,6 +1,6 @@
 ---
 description: AI-generated comment slop detector for Zig code
-tools: bash, read, grep, find
+tools: bash, read, grep, find, websearch, webfetch
 model: openai-codex/gpt-5.4-mini
 thinking: off
 max_turns: 10

@@ -1,6 +1,6 @@
 ---
 description: Test coverage gap reviewer for Zig code
-tools: bash, read, grep, find
+tools: bash, read, grep, find, websearch, webfetch
 model: anthropic/claude-haiku-4-5
 thinking: off
 max_turns: 10

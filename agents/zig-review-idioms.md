@@ -1,6 +1,6 @@
 ---
 description: Zig 0.15 idiom correctness reviewer
-tools: bash, read, grep, find
+tools: bash, read, grep, find, websearch, webfetch
 model: anthropic/claude-opus-4-6
 thinking: medium
 max_turns: 15

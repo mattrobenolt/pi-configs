@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Nushell (nu) replaces non-trivial bash scripts. Use bash for trivial glue (`shellHook`, one-liners); use nu when a script needs logic, data processing, or grows past ~10 lines.
 
-**Current version: 0.111.0** (pre-1.0; breaking changes happen between releases — verify syntax against the book if something seems off).
+**Current version: 0.112.2** (pre-1.0; breaking changes happen between releases — verify syntax against the book if something seems off).
 
 ## Nix DevShell Integration
 
@@ -49,7 +49,7 @@ Run: `nu script.nu build --release`
 
 ## Tooling Caveats
 
-With `nu 0.111.0` and `nufmt 0.1.0`, formatter/parser tooling can emit spurious
+With `nu 0.112.2` and `nufmt 0.1.0`, formatter/parser tooling can emit spurious
 `compile_block_with_id called with parse errors` messages for valid module-based
 scripts.
 
