@@ -1,6 +1,6 @@
 import { expandHome } from "@mattrobenolt/pi-core/files";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { isBashToolResult, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { exec } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -216,6 +216,15 @@ function wrapForCwdAndDirenv(command: string, cwd: string): string {
   return `direnv exec ${shellQuote(cwd)} bash -lc ${shellQuote(command)}`;
 }
 
+function stripLeadingDirenvLogs(text: string): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+
+  let idx = 0;
+  while (idx < lines.length && lines[idx].startsWith("direnv: ")) idx += 1;
+  while (idx < lines.length && lines[idx] === "") idx += 1;
+  return lines.slice(idx).join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
   let latestCtx: ExtensionContext | null = null;
   let watchers: FSWatcher[] = [];
@@ -300,6 +309,17 @@ export default function (pi: ExtensionAPI) {
       reloadForCwd(process.cwd(), ctx);
       ctx.ui.notify("direnv reloaded", "info");
     },
+  });
+
+  pi.on("tool_result", (event) => {
+    if (!isBashToolResult(event)) return;
+
+    const content = event.content.map((block) => {
+      if (block.type !== "text") return block;
+      return { ...block, text: stripLeadingDirenvLogs(block.text) };
+    });
+
+    return { content };
   });
 
   pi.on("tool_call", async (event) => {

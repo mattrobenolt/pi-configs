@@ -521,14 +521,9 @@ function summarizeText(text: string, maxLen = 160): string {
 
 function stripLeadingBoilerplate(text: string): string {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const boilerplate = new Set([
-    "direnv: loading ~/.pi/agent/.envrc",
-    "direnv: using flake",
-    "direnv: nix-direnv: Using cached dev shell",
-  ]);
 
   let idx = 0;
-  while (idx < lines.length && boilerplate.has(lines[idx])) idx += 1;
+  while (idx < lines.length && lines[idx].startsWith("direnv: ")) idx += 1;
   while (idx < lines.length && lines[idx] === "") idx += 1;
   return lines.slice(idx).join("\n");
 }
