@@ -1,13 +1,10 @@
 /**
- * webfetch extraction A/B harness.
+ * webfetch extraction eval harness.
  *
  * Usage:
  *   node --experimental-strip-types eval.ts [--corpus path/to/corpus.json] [--out path/to/output-dir]
  *
- * Variants run:
- *   webfetch-current   — uses packages/webfetch/core.ts helpers (transformContent)
- *   curlmd-general     — uses /tmp/curl-md-core src/md create() with profiles, no site rules
- *                        (skipped if /tmp/curl-md-core is not present)
+ * Runs packages/webfetch/core.ts helpers (transformContent) against a small corpus.
  *
  * Outputs per run into --out (default: /tmp/webfetch-ab-<timestamp>):
  *   corpus.json
@@ -18,7 +15,7 @@
  *   artifacts/<case-id>/<variant>.json
  */
 
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { parseArgs } from "node:util";
@@ -55,7 +52,7 @@ type Case = {
   notes?: string;
 };
 
-type Variant = "webfetch-current" | "curlmd-general";
+type Variant = "webfetch-current";
 
 type StructureMetrics = {
   headings: number;
@@ -154,55 +151,13 @@ async function runWebfetchCurrent(
 }
 
 // ---------------------------------------------------------------------------
-// Variant: curlmd-general (optional, scratch only)
-// ---------------------------------------------------------------------------
-
-async function curlmdAvailable(): Promise<boolean> {
-  try {
-    await stat("/tmp/curl-md-core/src/md/mod.ts");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function runCurlmdGeneral(
-  c: Case,
-): Promise<{ content: string; meta: Record<string, unknown>; sourceBytes: number }> {
-  // Dynamic import so the harness still runs when /tmp/curl-md-core is absent.
-  const [{ create }, profiles, transports] = await Promise.all([
-    import("/tmp/curl-md-core/src/md/mod.ts"),
-    import("/tmp/curl-md-core/src/md/profiles.ts"),
-    import("/tmp/curl-md-core/src/md/transports.ts"),
-  ]);
-
-  const md = create({
-    profiles,
-    headers: FETCH_HEADERS,
-    transport: transports.fetch(),
-  });
-
-  const result = await md.fetch(c.url);
-  if (!result.ok)
-    throw new Error(`curlmd ${result.status}${result.error ? ` ${result.error}` : ""}`);
-  const content = result.content;
-  const sourceBytes = Buffer.byteLength(content, "utf8");
-  return {
-    content,
-    meta: { ...result.meta, ...result.extras },
-    sourceBytes,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Run a single variant for a single case (never throws)
 // ---------------------------------------------------------------------------
 
 async function runVariant(variant: Variant, c: Case): Promise<VariantResult & { content: string }> {
   const started = performance.now();
   try {
-    const { content, meta, sourceBytes } =
-      variant === "webfetch-current" ? await runWebfetchCurrent(c) : await runCurlmdGeneral(c);
+    const { content, meta, sourceBytes } = await runWebfetchCurrent(c);
 
     const elapsed_ms = Math.round(performance.now() - started);
     const { contains_missing, noise_present } = checkExpectations(content, c);
@@ -254,7 +209,7 @@ function buildReport(
   outDir: string,
 ): string {
   const lines: string[] = [
-    "# webfetch extraction A/B report",
+    "# webfetch extraction eval report",
     "",
     `Output: \`${outDir}\``,
     `Run: ${new Date().toISOString()}`,
@@ -341,16 +296,7 @@ function buildCsv(rows: VariantResult[]): string {
 // ---------------------------------------------------------------------------
 
 const corpus: Case[] = JSON.parse(await readFile(corpusPath, "utf8"));
-const hasCurlmd = await curlmdAvailable();
-const variants: Variant[] = hasCurlmd
-  ? ["webfetch-current", "curlmd-general"]
-  : ["webfetch-current"];
-
-if (!hasCurlmd) {
-  console.error(
-    "ℹ  /tmp/curl-md-core not found — running webfetch-current only. Clone curl.md to /tmp/curl-md-core and run again to compare.",
-  );
-}
+const variants: Variant[] = ["webfetch-current"];
 
 await mkdir(outDir, { recursive: true });
 await writeFile(path.join(outDir, "corpus.json"), JSON.stringify(corpus, null, 2));
