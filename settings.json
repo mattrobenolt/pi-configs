@@ -59,5 +59,8 @@
   "followUpMode": "all",
   "terminal": {
     "showTerminalProgress": true
+  },
+  "webfetch": {
+    "objectiveModel": "openai-codex/gpt-5.4-mini"
   }
 }

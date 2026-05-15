@@ -15,7 +15,7 @@ const focusIn = "\x1b[I";
 const focusOut = "\x1b[O";
 const soundPath = "/System/Library/Sounds/Glass.aiff";
 
-let focused: boolean | undefined;
+let focused = true;
 let enabled = false;
 
 const hasInteractiveTerminal = (): boolean =>
