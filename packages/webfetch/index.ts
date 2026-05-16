@@ -243,7 +243,14 @@ export default function (pi: ExtensionAPI) {
         if (gh.type === "tree") {
           const endpoint = `repos/${gh.owner}/${gh.repo}/contents/${gh.path}?ref=${gh.branch}`;
           const result = await pi.exec("gh", ["api", endpoint]);
-          const items = JSON.parse(result.stdout) as Array<{
+          const parsed = JSON.parse(result.stdout) as unknown;
+          if (!Array.isArray(parsed)) {
+            const msg = typeof (parsed as Record<string, unknown>).message === "string"
+              ? (parsed as Record<string, unknown>).message as string
+              : "unknown error";
+            throw new Error(`GitHub API error for ${gh.owner}/${gh.repo}: ${msg}`);
+          }
+          const items = parsed as Array<{
             name: string;
             type: string;
             size?: number;
@@ -265,7 +272,11 @@ export default function (pi: ExtensionAPI) {
 
         if (gh.type === "repo") {
           const result = await pi.exec("gh", ["api", `repos/${gh.owner}/${gh.repo}/readme`]);
-          const readme = JSON.parse(result.stdout) as { content: string; name: string };
+          const readme = JSON.parse(result.stdout) as { content?: string; name?: string; message?: string };
+          if (typeof readme.content !== "string") {
+            const msg = typeof readme.message === "string" ? readme.message : "unknown error";
+            throw new Error(`GitHub API error for ${gh.owner}/${gh.repo}: ${msg}`);
+          }
           const content = Buffer.from(readme.content, "base64").toString("utf-8");
           const truncated = await truncateForModelWithTempFile(content, "webfetch");
           return {
