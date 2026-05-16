@@ -1,9 +1,9 @@
 {
   "name": "pi-agent-extensions",
   "scripts": {
-    "lint": "oxlint extensions packages/better-diff packages/memory packages/notion packages/pi-core packages/slack packages/term packages/todos packages/webfetch",
-    "fmt": "oxfmt extensions packages/better-diff packages/memory packages/notion packages/pi-core packages/slack packages/term packages/todos packages/webfetch",
-    "fmt:check": "oxfmt extensions packages/better-diff packages/memory packages/notion packages/pi-core packages/slack packages/term packages/todos packages/webfetch --check",
+    "lint": "oxlint extensions packages/better-diff packages/memory packages/notion packages/pi-core packages/profile packages/slack packages/term packages/todos packages/webfetch",
+    "fmt": "oxfmt extensions packages/better-diff packages/memory packages/notion packages/pi-core packages/profile packages/slack packages/term packages/todos packages/webfetch",
+    "fmt:check": "oxfmt extensions packages/better-diff packages/memory packages/notion packages/pi-core packages/profile packages/slack packages/term packages/todos packages/webfetch --check",
     "check": "tsc --noEmit && pnpm -r --if-present check",
     "eval:local": "node scripts/local-llm-eval.mjs"
   },
@@ -22,6 +22,7 @@
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@earendil-works/pi-tui": "^0.74.0",
     "@mattrobenolt/pi-core": "workspace:*",
+    "@mattrobenolt/pi-profile": "workspace:*",
     "defuddle": "^0.18.1",
     "hysnappy": "^1.1.1",
     "linkedom": "^0.18.12",
