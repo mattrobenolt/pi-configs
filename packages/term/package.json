@@ -13,7 +13,7 @@
     "lint": "oxlint index.ts"
   },
   "dependencies": {
-    "typebox": "*"
+    "typebox": "catalog:"
   },
   "pi": {
     "extensions": [

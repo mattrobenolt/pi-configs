@@ -245,9 +245,10 @@ export default function (pi: ExtensionAPI) {
           const result = await pi.exec("gh", ["api", endpoint]);
           const parsed = JSON.parse(result.stdout) as unknown;
           if (!Array.isArray(parsed)) {
-            const msg = typeof (parsed as Record<string, unknown>).message === "string"
-              ? (parsed as Record<string, unknown>).message as string
-              : "unknown error";
+            const msg =
+              typeof (parsed as Record<string, unknown>).message === "string"
+                ? ((parsed as Record<string, unknown>).message as string)
+                : "unknown error";
             throw new Error(`GitHub API error for ${gh.owner}/${gh.repo}: ${msg}`);
           }
           const items = parsed as Array<{
@@ -272,7 +273,11 @@ export default function (pi: ExtensionAPI) {
 
         if (gh.type === "repo") {
           const result = await pi.exec("gh", ["api", `repos/${gh.owner}/${gh.repo}/readme`]);
-          const readme = JSON.parse(result.stdout) as { content?: string; name?: string; message?: string };
+          const readme = JSON.parse(result.stdout) as {
+            content?: string;
+            name?: string;
+            message?: string;
+          };
           if (typeof readme.content !== "string") {
             const msg = typeof readme.message === "string" ? readme.message : "unknown error";
             throw new Error(`GitHub API error for ${gh.owner}/${gh.repo}: ${msg}`);

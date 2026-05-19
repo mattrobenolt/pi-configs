@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@mattrobenolt/pi-core": "workspace:*",
-    "typebox": "*"
+    "typebox": "catalog:"
   },
   "pi": {
     "extensions": [

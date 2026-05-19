@@ -15,16 +15,16 @@
     "lint": "oxlint index.ts core.ts config.ts narrow.ts index.test.ts eval.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "catalog:",
+    "@earendil-works/pi-coding-agent": "catalog:",
     "@mattrobenolt/pi-core": "workspace:*",
-    "defuddle": "*",
-    "turndown": "*",
-    "typebox": "*"
+    "defuddle": "catalog:",
+    "turndown": "catalog:",
+    "typebox": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "*",
-    "@types/turndown": "*"
+    "@types/node": "catalog:",
+    "@types/turndown": "catalog:"
   },
   "pi": {
     "extensions": [

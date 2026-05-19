@@ -1,6 +1,21 @@
 packages:
   - packages/*
 
+catalog:
+  '@earendil-works/pi-ai': 0.75.3
+  '@earendil-works/pi-coding-agent': 0.75.3
+  '@earendil-works/pi-tui': 0.75.3
+  '@pierre/diffs': ^1.1.22
+  '@types/node': ^25.9.1
+  '@types/turndown': ^5.0.6
+  defuddle: ^0.18.1
+  hysnappy: ^1.1.1
+  oxfmt: ^0.51.0
+  oxlint: ^1.66.0
+  turndown: ^7.2.4
+  typebox: ^1.1.38
+  typescript: ^6.0.3
+
 allowBuilds:
   '@google/genai': true
   koffi: true

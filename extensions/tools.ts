@@ -1,4 +1,9 @@
-import type { ExtensionAPI, ExtensionContext, Theme, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  Theme,
+  ToolInfo,
+} from "@earendil-works/pi-coding-agent";
 import { keyText } from "@earendil-works/pi-coding-agent";
 import {
   fuzzyFilter,
@@ -55,9 +60,10 @@ function toolSearchText(tool: ToolInfo): string {
 
 function summarizeTools(allTools: ToolInfo[], enabledTools: Set<string>): string {
   const enabled = sortedNames(enabledTools);
-  return [`Tools: ${enabled.length}/${allTools.length} enabled`, `Enabled: ${enabled.join(", ") || "none"}`].join(
-    "\n",
-  );
+  return [
+    `Tools: ${enabled.length}/${allTools.length} enabled`,
+    `Enabled: ${enabled.join(", ") || "none"}`,
+  ].join("\n");
 }
 
 function renderToolsSummary(

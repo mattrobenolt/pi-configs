@@ -7,12 +7,14 @@
  */
 
 import { spawn } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const enableFocusEvents = "\x1b[?1004h";
 const disableFocusEvents = "\x1b[?1004l";
 const focusIn = "\x1b[I";
 const focusOut = "\x1b[O";
+const soundPlayer = "/usr/bin/afplay";
 const soundPath = "/System/Library/Sounds/Glass.aiff";
 
 let focused = true;
@@ -28,10 +30,18 @@ const bell = (): void => {
 };
 
 const playSound = (): void => {
-  const child = spawn("/usr/bin/afplay", [soundPath], {
+  try {
+    accessSync(soundPlayer, constants.X_OK);
+  } catch {
+    return;
+  }
+
+  const child = spawn(soundPlayer, [soundPath], {
     detached: true,
     stdio: "ignore",
   });
+
+  child.on("error", () => {});
   child.unref();
 };
 

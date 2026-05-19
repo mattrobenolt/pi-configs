@@ -11,14 +11,7 @@ type DirenvValue = string | null;
 type DirenvStatus = "on" | "blocked" | "error" | "off";
 
 const RELOAD_DEBOUNCE_MS = 300;
-const WATCH_TARGETS = [
-  ".envrc",
-  ".envrc.local",
-  "flake.nix",
-  "flake.lock",
-  "devshell.toml",
-  ".direnv",
-];
+const WATCH_TARGETS = [".envrc", ".envrc.local", "flake.nix", "flake.lock", "devshell.toml"];
 
 function formatHomePath(cwd: string): string {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
@@ -180,30 +173,46 @@ function applyEnv(env: Record<string, DirenvValue>): number {
   return loaded;
 }
 
-function loadDirenv(cwd: string, ctx: ExtensionContext): void {
-  exec(
-    "direnv export json",
-    { cwd, env: { ...process.env, DIRENV_LOG_FORMAT: "" }, timeout: 10_000 },
-    (error, stdout, stderr) => {
-      const errorStatus = parseStatus(error, stderr);
-      if (errorStatus) {
-        setDirenvStatus(ctx, errorStatus);
-        return;
-      }
+function getDirenvFingerprint(cwd: string): string {
+  return WATCH_TARGETS.map((target) => {
+    try {
+      const stats = fs.statSync(path.join(cwd, target));
+      return `${target}:${stats.mtimeMs}:${stats.size}`;
+    } catch {
+      return `${target}:missing`;
+    }
+  }).join("|");
+}
 
-      if (!stdout.trim()) {
-        setDirenvStatus(ctx, "off");
-        return;
-      }
+function loadDirenv(cwd: string, ctx: ExtensionContext): Promise<void> {
+  return new Promise((resolve) => {
+    exec(
+      "direnv export json",
+      { cwd, env: { ...process.env, DIRENV_LOG_FORMAT: "" }, timeout: 10_000 },
+      (error, stdout, stderr) => {
+        const errorStatus = parseStatus(error, stderr);
+        if (errorStatus) {
+          setDirenvStatus(ctx, errorStatus);
+          resolve();
+          return;
+        }
 
-      try {
-        const loaded = applyEnv(JSON.parse(stdout) as Record<string, DirenvValue>);
-        setDirenvStatus(ctx, loaded > 0 ? "on" : "off");
-      } catch {
-        setDirenvStatus(ctx, "error");
-      }
-    },
-  );
+        if (!stdout.trim()) {
+          setDirenvStatus(ctx, "off");
+          resolve();
+          return;
+        }
+
+        try {
+          const loaded = applyEnv(JSON.parse(stdout) as Record<string, DirenvValue>);
+          setDirenvStatus(ctx, loaded > 0 ? "on" : "off");
+        } catch {
+          setDirenvStatus(ctx, "error");
+        }
+        resolve();
+      },
+    );
+  });
 }
 
 async function rewriteWithRtk(pi: ExtensionAPI, command: string): Promise<string> {
@@ -212,8 +221,8 @@ async function rewriteWithRtk(pi: ExtensionAPI, command: string): Promise<string
   return rewritten && rewritten !== command ? rewritten : command;
 }
 
-function wrapForCwdAndDirenv(command: string, cwd: string): string {
-  return `direnv exec ${shellQuote(cwd)} bash -lc ${shellQuote(command)}`;
+function wrapForCwd(command: string, cwd: string): string {
+  return `cd ${shellQuote(cwd)} && ${command}`;
 }
 
 function stripLeadingDirenvLogs(text: string): string {
@@ -229,6 +238,7 @@ export default function (pi: ExtensionAPI) {
   let latestCtx: ExtensionContext | null = null;
   let watchers: FSWatcher[] = [];
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let direnvFingerprint: string | null = null;
 
   function stopWatchers(): void {
     for (const watcher of watchers) {
@@ -250,7 +260,7 @@ export default function (pi: ExtensionAPI) {
     reloadTimer = setTimeout(() => {
       reloadTimer = null;
       if (!latestCtx || cwd !== process.cwd()) return;
-      loadDirenv(cwd, latestCtx);
+      void refreshDirenv(cwd, latestCtx);
     }, RELOAD_DEBOUNCE_MS);
   }
 
@@ -264,9 +274,24 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  async function refreshDirenv(cwd: string, ctx: ExtensionContext): Promise<void> {
+    await loadDirenv(cwd, ctx);
+    direnvFingerprint = getDirenvFingerprint(cwd);
+  }
+
   function reloadForCwd(cwd: string, ctx: ExtensionContext): void {
-    loadDirenv(cwd, ctx);
+    direnvFingerprint = null;
+    void refreshDirenv(cwd, ctx);
     startWatchers(cwd);
+  }
+
+  async function refreshDirenvIfChanged(cwd: string): Promise<void> {
+    if (!latestCtx) return;
+
+    const nextFingerprint = getDirenvFingerprint(cwd);
+    if (nextFingerprint === direnvFingerprint) return;
+
+    await refreshDirenv(cwd, latestCtx);
   }
 
   pi.on("session_start", (_event, ctx) => {
@@ -324,8 +349,10 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event) => {
     if (isToolCallEventType("bash", event)) {
+      const cwd = process.cwd();
+      await refreshDirenvIfChanged(cwd);
       const rewritten = await rewriteWithRtk(pi, event.input.command);
-      event.input.command = wrapForCwdAndDirenv(rewritten, process.cwd());
+      event.input.command = wrapForCwd(rewritten, cwd);
       return;
     }
 

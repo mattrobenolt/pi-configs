@@ -13,10 +13,10 @@
     "lint": "oxlint index.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "@earendil-works/pi-coding-agent": "catalog:",
     "@mattrobenolt/pi-core": "workspace:*",
-    "hysnappy": "*",
-    "typebox": "*"
+    "hysnappy": "catalog:",
+    "typebox": "catalog:"
   },
   "pi": {
     "extensions": [

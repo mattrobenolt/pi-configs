@@ -14,9 +14,9 @@
     "lint": "oxlint ."
   },
   "devDependencies": {
-    "@types/node": "*",
-    "oxfmt": "*",
-    "oxlint": "*",
-    "typescript": "*"
+    "@types/node": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "typescript": "catalog:"
   }
 }

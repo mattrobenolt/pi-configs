@@ -17,12 +17,12 @@
     "lint": "oxlint ."
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "*",
-    "oxfmt": "*",
-    "oxlint": "*",
-    "typescript": "*"
+    "@types/node": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "typescript": "catalog:"
   }
 }
