@@ -5,7 +5,7 @@ catalog:
   '@earendil-works/pi-ai': 0.75.4
   '@earendil-works/pi-coding-agent': 0.75.4
   '@earendil-works/pi-tui': 0.75.4
-  '@pierre/diffs': ^1.1.22
+  '@pierre/diffs': ^1.2.1
   '@types/node': ^25.9.1
   '@types/turndown': ^5.0.6
   defuddle: ^0.18.1
