@@ -11,31 +11,34 @@ interface GitInfo {
   isDirty: boolean;
 }
 
-function readGitInfo(cwd: string): Promise<GitInfo> {
+function execGit(cwd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 1000 }, (err, root) => {
-      if (err || !root.trim()) {
-        resolve({ repoName: null, repoRoot: null, branch: null, isDirty: false });
-        return;
-      }
-
-      execFile("git", ["branch", "--show-current"], { cwd, timeout: 1000 }, (_err2, branch) => {
-        execFile(
-          "git",
-          ["--no-optional-locks", "status", "--porcelain"],
-          { cwd, timeout: 1000 },
-          (err3, status) => {
-            resolve({
-              repoName: path.basename(root.trim()),
-              repoRoot: root.trim(),
-              branch: branch.trim() || null,
-              isDirty: err3 ? false : status.trim().length > 0,
-            });
-          },
-        );
-      });
+    execFile("git", args, { cwd, timeout: 1000 }, (err, stdout) => {
+      resolve(err ? null : stdout.trim());
     });
   });
+}
+
+async function readGitInfo(cwd: string): Promise<GitInfo> {
+  const root = await execGit(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!root) return EMPTY_GIT_INFO;
+
+  const branch = await execGit(cwd, ["branch", "--show-current"]);
+  const dirty = await new Promise<boolean>((resolve) => {
+    execFile(
+      "git",
+      ["--no-optional-locks", "diff-index", "--quiet", "HEAD", "--"],
+      { cwd, timeout: 1000 },
+      (err) => resolve((err as { code?: number } | null)?.code === 1),
+    );
+  });
+
+  return {
+    repoName: path.basename(root),
+    repoRoot: root,
+    branch: branch || null,
+    isDirty: dirty,
+  };
 }
 
 function fmt(n: number): string {
@@ -60,7 +63,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     ctx.ui.setFooter((tui, theme, footerData) => {
-      const clockTimer = setInterval(() => tui.requestRender(), 1000);
+      const clockTimer = setInterval(() => tui.requestRender(), 60_000);
 
       function refreshGitInfo(): void {
         const now = Date.now();
@@ -121,7 +124,7 @@ export default function (pi: ExtensionAPI) {
 
           const branchPart = branch ? "  " + theme.fg("success", branch) : "";
           const dirtyPart = isDirty ? " " + theme.fg("warning", "*") : "";
-          const timePart = "  " + theme.fg("dim", nowHMS());
+          const timePart = "  " + theme.fg("dim", nowHMS().slice(0, 5));
 
           const statuses = footerData.getExtensionStatuses();
           const statusPart =

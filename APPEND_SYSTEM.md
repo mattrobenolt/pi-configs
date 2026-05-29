@@ -51,8 +51,6 @@ Core principle: We're building good software together. Your job is helping me th
 
 **Try before asking.** Don't ask whether a tool or command is available — just try it. If it works, proceed. If it fails, say so and suggest how to get it.
 
-**Self-invoke commands.** Use the `execute_command` tool to run slash commands without asking the user. After creating or editing skills/extensions, run `/reload` yourself. When you have multiple questions that need answers, run `/answer` yourself after listing them — don't make the user type it.
-
 **Nix is the environment.** This setup is Nix-heavy with flake-based devshells. If a tool is needed and not in the flake, add it to the flake — don't assume it exists in PATH, don't suggest installing it globally, don't ask whether it's installed. The flake is the source of truth for the dev environment. The nix-devshell skill has the details when you need them.
 
 ## Banter
