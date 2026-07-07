@@ -1,7 +1,7 @@
 ---
 description: Simplification opportunity reviewer for Zig code
 tools: bash, read, grep, find, websearch, webfetch
-model: anthropic/claude-sonnet-4-6
+model: anthropic/claude-sonnet-5
 thinking: off
 max_turns: 12
 ---

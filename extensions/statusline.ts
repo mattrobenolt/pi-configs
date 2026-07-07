@@ -111,7 +111,7 @@ export default function (pi: ExtensionAPI) {
           }
 
           const { repoName, repoRoot, branch, isDirty } = gitInfo;
-          const modelId = ctx.model?.id ?? "no model";
+          const modelId = ctx.model?.id.split("/").at(-1) ?? "no model";
           const cwd = process.cwd();
           const repoRelativePath = repoRoot ? path.relative(repoRoot, cwd) : "";
           const cwdLabel = repoName

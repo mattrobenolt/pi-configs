@@ -50,6 +50,7 @@ let MEMORY_FILE = path.join(MEMORY_DIR, "MEMORY.md");
 let SCRATCHPAD_FILE = path.join(MEMORY_DIR, "SCRATCHPAD.md");
 let SELF_FILE = path.join(MEMORY_DIR, "SELF.md");
 let USER_FILE = path.join(MEMORY_DIR, "USER.md");
+let OPERATING_DIR = path.join(MEMORY_DIR, "operating");
 let DAILY_DIR = path.join(MEMORY_DIR, "daily");
 let PROJECTS_DIR = DEFAULT_PROJECTS_DIR;
 
@@ -60,6 +61,7 @@ export function _setBaseDir(baseDir: string) {
   SCRATCHPAD_FILE = path.join(baseDir, "SCRATCHPAD.md");
   SELF_FILE = path.join(baseDir, "SELF.md");
   USER_FILE = path.join(baseDir, "USER.md");
+  OPERATING_DIR = path.join(baseDir, "operating");
   DAILY_DIR = path.join(baseDir, "daily");
   PROJECTS_DIR = path.join(baseDir, "projects");
 }
@@ -147,6 +149,7 @@ export function stripFrontmatter(content: string): string {
 
 export function ensureDirs() {
   fs.mkdirSync(MEMORY_DIR, { recursive: true });
+  fs.mkdirSync(OPERATING_DIR, { recursive: true });
   fs.mkdirSync(DAILY_DIR, { recursive: true });
 }
 
@@ -297,9 +300,9 @@ function summarizeMemoryInjection(injection: LastMemoryInjection | null): string
   if (!injection) return "mem: no injection yet";
   const transport =
     injection.transports.length > 0 ? uniqStrings(injection.transports).join("/") : "none";
-  const hits = injection.skippedSearch
-    ? "search skipped"
-    : `${injection.searchHitCount} hit${injection.searchHitCount === 1 ? "" : "s"}`;
+  const hits = injection.autoSearchEnabled
+    ? `${injection.searchHitCount} hit${injection.searchHitCount === 1 ? "" : "s"}`
+    : "auto-search off";
   return `mem: ${injection.chars} chars · ${injection.sections} section${injection.sections === 1 ? "" : "s"} · ${hits} · ${transport}`;
 }
 
@@ -316,9 +319,9 @@ function updateMemoryWidget() {
   const files =
     lastMemoryInjection.searchFiles.length > 0
       ? uniqStrings(lastMemoryInjection.searchFiles).slice(0, 2).join(", ")
-      : lastMemoryInjection.skippedSearch
-        ? "search skipped"
-        : "no hits";
+      : lastMemoryInjection.autoSearchEnabled
+        ? "no hits"
+        : "auto-search off";
   capturedUi.setWidget("memory-context", [
     `🧠 ${summarizeMemoryInjection(lastMemoryInjection)}`,
     `   ${transport} · ${files}`,
@@ -340,9 +343,9 @@ function formatLastMemoryInjection(
     `Search files: ${
       injection.searchFiles.length > 0
         ? uniqStrings(injection.searchFiles).join(", ")
-        : injection.skippedSearch
-          ? "search skipped"
-          : "none"
+        : injection.autoSearchEnabled
+          ? "none"
+          : "auto-search off"
     }`,
     `Debug: ${injection.debug.length > 0 ? injection.debug.join(" | ") : "(none)"}`,
   ];
@@ -442,6 +445,44 @@ export function buildMemoryContext(
   return context;
 }
 
+const OPERATING_CONTEXT_MAX_CHARS = 5_000;
+const OPERATING_CONTEXT_MAX_LINES = 160;
+
+function isOperatingMemoryEnabled(): boolean {
+  return process.env.PI_MEMORY_OPERATING_CONTEXT === "1";
+}
+
+function operatingMemoryPath(name: string): string {
+  return path.join(OPERATING_DIR, name);
+}
+
+function readOperatingSection(name: string, label: string): string | null {
+  const content = readFileSafe(operatingMemoryPath(name));
+  if (!content?.trim()) return null;
+  return [`## ${label}`, content.trim()].join("\n");
+}
+
+export function buildOperatingMemoryBrief(): string {
+  const sections = [
+    readOperatingSection("feedback.md", "Operating feedback"),
+    readOperatingSection("recentThreads.md", "Recent threads"),
+    readOperatingSection("decisions.md", "Decisions"),
+  ].filter((section): section is string => Boolean(section));
+  if (sections.length === 0) return "";
+
+  const result = buildPreview(sections.join("\n\n"), {
+    maxLines: OPERATING_CONTEXT_MAX_LINES,
+    maxChars: OPERATING_CONTEXT_MAX_CHARS,
+    mode: "start",
+  });
+  if (!result.preview) return "";
+
+  const body = result.truncated
+    ? `${result.preview}\n\n[truncated operating memory: showing ${result.previewLines}/${result.totalLines} lines, ${result.previewChars}/${result.totalChars} chars]`
+    : result.preview;
+  return `<memory-operating>\n${body}\n</memory-operating>`;
+}
+
 type ExecFileFn = typeof execFile;
 let execFileFn: ExecFileFn = execFile;
 
@@ -457,7 +498,12 @@ interface LastMemoryInjection {
   transports: string[];
   debug: string[];
   projectKey: string | null;
-  skippedSearch: boolean;
+  autoSearchEnabled: boolean;
+}
+
+function isAutoMemorySearchEnabled(): boolean {
+  if (process.env.PI_MEMORY_NO_SEARCH === "1") return false;
+  return process.env.PI_MEMORY_AUTO_SEARCH === "1";
 }
 
 let qmdAvailable = false;
@@ -1198,13 +1244,18 @@ export default function (pi: ExtensionAPI) {
   });
 
   // --- Retrieve memory context once per prompt and inject it late in request context ---
+  // All automatic memory injection is opt-in. Running qmd or re-inserting operating memory
+  // on every model request is noisy; use memory_brief/memory_search for deliberate lookups,
+  // or set PI_MEMORY_OPERATING_CONTEXT=1 / PI_MEMORY_AUTO_SEARCH=1 to restore injection.
   pi.on("before_agent_start", async (event, _ctx) => {
-    const skipSearch = process.env.PI_MEMORY_NO_SEARCH === "1";
+    const autoSearchEnabled = isAutoMemorySearchEnabled();
     const [searchResults, currentProjectKey] = await Promise.all([
-      skipSearch ? Promise.resolve(null) : searchRelevantMemories(event.prompt ?? ""),
+      autoSearchEnabled ? searchRelevantMemories(event.prompt ?? "") : Promise.resolve(null),
       getProjectKey(),
     ]);
-    const memoryContext = buildMemoryContext(searchResults?.text, currentProjectKey);
+    const operatingContext = isOperatingMemoryEnabled() ? buildOperatingMemoryBrief() : "";
+    const searchContext = buildMemoryContext(searchResults?.text, currentProjectKey);
+    const memoryContext = [operatingContext, searchContext].filter(Boolean).join("\n\n");
     if (!memoryContext) {
       lastMemoryInjection = null;
       updateMemoryWidget();
@@ -1223,7 +1274,7 @@ export default function (pi: ExtensionAPI) {
       transports: searchResults?.transports ?? [],
       debug: searchResults?.debug ?? [],
       projectKey: currentProjectKey,
-      skippedSearch: skipSearch,
+      autoSearchEnabled,
     };
     updateMemoryWidget();
   });
@@ -1841,6 +1892,32 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "memory_brief",
+    label: "Memory Brief",
+    description:
+      "Return the current operating memory brief: feedback, recent threads, and decisions. This is deterministic and does not use qmd/search.",
+    parameters: Type.Object({}),
+    async execute() {
+      ensureDirs();
+      const brief = buildOperatingMemoryBrief();
+      if (!brief) {
+        return {
+          content: [{ type: "text", text: "No operating memory brief is available yet." }],
+          details: { operatingDir: OPERATING_DIR, chars: 0, files: [] },
+        };
+      }
+      return {
+        content: [{ type: "text", text: brief }],
+        details: {
+          operatingDir: OPERATING_DIR,
+          chars: brief.length,
+          files: ["feedback.md", "recentThreads.md", "decisions.md"].map(operatingMemoryPath),
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "memory_last_context",
     label: "Memory Last Context",
     description: "Show the last memory block injected into this session.",
@@ -1864,7 +1941,7 @@ export default function (pi: ExtensionAPI) {
               searchFiles: uniqStrings(lastMemoryInjection.searchFiles),
               transports: uniqStrings(lastMemoryInjection.transports),
               projectKey: lastMemoryInjection.projectKey,
-              skippedSearch: lastMemoryInjection.skippedSearch,
+              autoSearchEnabled: lastMemoryInjection.autoSearchEnabled,
             }
           : {},
       };

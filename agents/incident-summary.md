@@ -2,7 +2,7 @@
 name: incident-summary
 description: Summarize a Slack incident channel — produces an executive summary with timeline, root cause, and resolution
 tools: SlackChannelHistory, SlackSearch, SlackRead, SlackUserLookup, write, read, bash
-model: anthropic/claude-sonnet-4-6
+model: anthropic/claude-sonnet-5
 thinking: medium
 spawning: false
 auto-exit: true

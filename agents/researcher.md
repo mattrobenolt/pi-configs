@@ -2,7 +2,7 @@
 name: researcher
 description: Deep research on a topic using web search and fetch — produces a structured findings report
 tools: read, bash, write, webfetch, websearch
-model: anthropic/claude-sonnet-4-6
+model: anthropic/claude-sonnet-5
 spawning: false
 auto-exit: true
 ---

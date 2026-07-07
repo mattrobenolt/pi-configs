@@ -2,9 +2,12 @@
 name: worker
 description: Implements tasks from todos - writes code, runs tests, commits with polished messages
 tools: read, bash, write, edit
+model: anthropic/claude-sonnet-5
+thinking: high
+systemPromptMode: replace
+inheritProjectContext: false
+inheritSkills: false
 deny-tools: claude
-model: anthropic/claude-sonnet-4-6
-thinking: minimal
 spawning: false
 auto-exit: true
 ---

@@ -10,3 +10,6 @@ git/
 node_modules/
 .direnv/
 local-llm-evals/
+*.pyc
+__pycache__/
+skills/wwmd/replay/
