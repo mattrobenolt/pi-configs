@@ -73,9 +73,11 @@ When delegating: **direct the subagents WITH the lens** (hand them the prescribe
 
 - `simplify` / `deslop` — the atomic simplicity + slop-removal moves the lens calls for.
 - `write-like-matt` — human-facing tone when drafting messages as Matt.
-- `self-improve` — the end-of-work retro: what slowed us, what friction to remove next time.
+- `self-improve` — run after each meaningful chunk of work, not just at the end: turn observed friction, bad prompts, missing tests, and workflow drag into autonomous project-local improvements while the evidence is fresh.
 
 ## The meta-loop (the lens improves itself)
+
+After each meaningful chunk of work, consider invoking `self-improve`. Don't wait for a grand end-of-session ceremony; the best improvement signal is fresh and specific. If the chunk exposed friction in project instructions, subagent prompts, tests, docs, scripts, tools, or skills, run the autonomous self-improve loop and let it patch the project-local control surfaces.
 
 **Elicit → extract → encode.** When the human corrects a call, that *is* the reward signal: capture the divergence (your read vs their verdict + the why) and fold it back. The lens is alive — it sharpens with their reactions, not by being written once.
 
