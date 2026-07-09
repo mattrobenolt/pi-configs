@@ -40,6 +40,6 @@
     "showTerminalProgress": true
   },
   "webfetch": {
-    "objectiveModel": "openai-codex/gpt-5.6-luna"
+    "objectiveModel": "fireworks/accounts/fireworks/models/gpt-oss-120b"
   }
 }
