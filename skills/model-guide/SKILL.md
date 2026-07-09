@@ -14,6 +14,7 @@ Lightweight routing aid. The full living eval doc with dated findings logs is `M
 3. **Quorums across discrete families for decisions.** Review/critique/design choices run models from *different* families: Anthropic, OpenAI, Moonshot, MiniMax, Z.ai (Fireworks is a host, not a family). Valid 3-family quorum: `Opus 4.8 + GPT-5.6 Sol + GLM 5.2`. Invalid: `Opus + Sonnet + Fable` (all Anthropic). For decisions, not every execution task.
 4. **Fable 5 is a consciously-invoked juggernaut.** Very expensive, 109s to first token at max effort (batch/async only, never interactive). Pull in only when the work is deemed worth it. **Prep it with cheaper agents first** (research, planning, context-gathering) so its expensive tokens go to hard execution, not figuring out what to do.
 5. **MiniMax M3 is never a coding agent.** Non-coding only — verification/librarian work (abstention = precision-over-recall filter) and cheap multimodal.
+6. **Match thinking level to stakes, not to model.** pi levels: `off`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max` (`max` new in pi 0.80.6, native on GPT-5.6 + adaptive Claude). Low-stakes utility work stays `low`/`medium`; hard coding/review escalate to `xhigh`/`max`. Don't pin `max` globally — it multiplies token spend on every call. Per-model: GLM 5.2 only exposes `high`/`max` (and `max` burns ~2-2.7x tokens); Kimi K2.7 Code and Fable 5 can't disable thinking; M3 is limited to `low`/`medium`/`high`. See `MODEL_GUIDE.md` → Thinking levels.
 
 ## Quick reference
 
