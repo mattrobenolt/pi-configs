@@ -2,7 +2,7 @@
 name: reviewer-second-opinion
 description: Adversarial synthesizer for parallel code reviews — challenges, confirms, and consolidates findings from two independent reviewers
 tools: read, bash
-model: openai-codex/gpt-5.5
+model: openai-codex/gpt-5.6-sol
 thinking: medium
 spawning: false
 auto-exit: true
