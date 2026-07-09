@@ -71,8 +71,10 @@ Extraction details:
 
 GitHub URLs skip the normal page extraction path:
 
-- Blob URLs return raw file content, including line fragment support.
+- Blob URLs return raw file content. `#L10-L20` (or `#L42`) fragments return the requested range with ±10 lines of surrounding context, marked `:` for in-range lines and `-` for context lines.
 - Tree URLs return directory listings.
+- Pull URLs return a structured PR view (state, author, base/head, mergeable, review decision, files, reviews, comments).
+- Issue URLs return a structured issue view (state, author, body, comments).
 - Repo URLs return README content when available.
 
 ## Objective narrowing
