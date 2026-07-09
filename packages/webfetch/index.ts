@@ -121,8 +121,10 @@ type GitHubBlob = {
   lineRange: LineRange | null;
 };
 type GitHubTree = { type: "tree"; owner: string; repo: string; branch: string; path: string };
+type GitHubPull = { type: "pull"; owner: string; repo: string; number: number };
+type GitHubIssue = { type: "issue"; owner: string; repo: string; number: number };
 type GitHubRepo = { type: "repo"; owner: string; repo: string };
-type GitHubUrl = GitHubBlob | GitHubTree | GitHubRepo;
+type GitHubUrl = GitHubBlob | GitHubTree | GitHubPull | GitHubIssue | GitHubRepo;
 
 const LINE_CONTEXT = 10;
 
@@ -153,33 +155,69 @@ function extractLines(content: string, start: number, end: number): string {
     .join("\n");
 }
 
-function parseGitHubUrl(url: string): GitHubUrl | null {
-  const [urlNoFragment, fragment] = url.split("#");
-  const lineRange = fragment ? parseLineFragment(fragment) : null;
+export function parseGitHubUrl(url: string): GitHubUrl | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "github.com") return null;
 
-  const blob = urlNoFragment.match(
-    /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/,
-  );
-  if (blob)
-    return {
-      type: "blob",
-      owner: blob[1],
-      repo: blob[2],
-      branch: blob[3],
-      path: blob[4],
-      lineRange,
-    };
+  const [owner, repo, kind, ...rest] = parsed.pathname.split("/").filter(Boolean);
+  if (!owner || !repo) return null;
 
-  const tree = urlNoFragment.match(
-    /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.+))?$/,
-  );
-  if (tree)
-    return { type: "tree", owner: tree[1], repo: tree[2], branch: tree[3], path: tree[4] ?? "" };
+  const lineRange = parsed.hash ? parseLineFragment(parsed.hash.slice(1)) : null;
+  const number = rest[0] ? Number.parseInt(rest[0], 10) : NaN;
 
-  const repo = urlNoFragment.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/?$/);
-  if (repo) return { type: "repo", owner: repo[1], repo: repo[2] };
+  if (kind === "blob" && rest.length >= 2) {
+    const [branch, ...path] = rest;
+    return { type: "blob", owner, repo, branch, path: path.join("/"), lineRange };
+  }
 
-  return null;
+  if (kind === "tree" && rest.length >= 1) {
+    const [branch, ...path] = rest;
+    return { type: "tree", owner, repo, branch, path: path.join("/") };
+  }
+
+  if (kind === "pull" && Number.isInteger(number)) return { type: "pull", owner, repo, number };
+  if (kind === "issues" && Number.isInteger(number)) return { type: "issue", owner, repo, number };
+  if (!kind) return { type: "repo", owner, repo };
+
+  // Unknown GitHub page. Treat it as a repo so we still authenticate through gh.
+  return { type: "repo", owner, repo };
+}
+
+async function fetchGitHubContent(
+  pi: ExtensionAPI,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+): Promise<string> {
+  const endpoint = `repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`;
+  const result = await pi.exec("gh", ["api", endpoint]);
+  const parsed = JSON.parse(result.stdout) as {
+    content?: string;
+    encoding?: string;
+    message?: string;
+  };
+  if (typeof parsed.content !== "string") {
+    const msg = typeof parsed.message === "string" ? parsed.message : "unknown error";
+    throw new Error(`GitHub API error for ${owner}/${repo}: ${msg}`);
+  }
+  if (parsed.encoding && parsed.encoding !== "base64")
+    throw new Error(`Unsupported GitHub content encoding: ${parsed.encoding}`);
+  return Buffer.from(parsed.content.replace(/\n/g, ""), "base64").toString("utf-8");
+}
+
+function formatMarkdownList(
+  items: unknown[],
+  label: string,
+  formatter: (item: any) => string,
+): string[] {
+  if (items.length === 0) return [];
+  return [`\n## ${label}`, ...items.map(formatter)];
 }
 
 function formatBytes(bytes: number): string {
@@ -227,16 +265,17 @@ export default function (pi: ExtensionAPI) {
       const gh = parseGitHubUrl(url);
       if (gh) {
         if (gh.type === "blob") {
-          const rawUrl = `https://raw.githubusercontent.com/${gh.owner}/${gh.repo}/${gh.branch}/${gh.path}`;
-          const response = await fetch(rawUrl);
-          const content = await response.text();
+          const content = await fetchGitHubContent(pi, gh.owner, gh.repo, gh.path, gh.branch);
           const text = gh.lineRange
             ? extractLines(content, gh.lineRange.start, gh.lineRange.end)
             : content;
           const truncated = await truncateForModelWithTempFile(text, "webfetch");
           return {
             content: [{ type: "text", text: truncated.text }],
-            details: { url, rawUrl, truncation: truncated.details } as Record<string, unknown>,
+            details: { url, source: "gh", truncation: truncated.details } as Record<
+              string,
+              unknown
+            >,
           };
         }
 
@@ -268,6 +307,94 @@ export default function (pi: ExtensionAPI) {
           return {
             content: [{ type: "text", text: lines.join("\n") }],
             details: { url } as Record<string, unknown>,
+          };
+        }
+
+        if (gh.type === "pull") {
+          const result = await pi.exec("gh", [
+            "pr",
+            "view",
+            `${gh.number}`,
+            "--repo",
+            `${gh.owner}/${gh.repo}`,
+            "--json",
+            "number,title,state,author,body,url,baseRefName,headRefName,isDraft,mergeable,reviewDecision,comments,reviews,files",
+          ]);
+          const pull = JSON.parse(result.stdout) as any;
+          const comments = (pull.comments ?? []) as any[];
+          const reviews = (pull.reviews ?? []) as any[];
+          const files = (pull.files ?? []) as any[];
+          const lines = [
+            `# PR #${pull.number ?? gh.number}: ${pull.title ?? "(untitled)"}`,
+            ``,
+            `State: ${pull.state ?? "unknown"}${pull.isDraft ? " (draft)" : ""}`,
+            `Author: ${pull.author?.login ?? "unknown"}`,
+            `Base: ${pull.baseRefName ?? "?"} ← Head: ${pull.headRefName ?? "?"}`,
+            `Mergeable: ${pull.mergeable ?? "unknown"}`,
+            `Review decision: ${pull.reviewDecision ?? "unknown"}`,
+            `URL: ${pull.url ?? url}`,
+            ``,
+            pull.body ?? "",
+            ...formatMarkdownList(
+              files,
+              "Files",
+              (file) => `- ${file.path} (+${file.additions ?? 0}/-${file.deletions ?? 0})`,
+            ),
+            ...formatMarkdownList(
+              reviews,
+              "Reviews",
+              (review) =>
+                `- ${review.author?.login ?? "unknown"}: ${review.state ?? "unknown"}${review.body ? ` — ${review.body}` : ""}`,
+            ),
+            ...formatMarkdownList(
+              comments,
+              "Comments",
+              (comment) => `- ${comment.author?.login ?? "unknown"}: ${comment.body ?? ""}`,
+            ),
+          ];
+          const truncated = await truncateForModelWithTempFile(lines.join("\n"), "webfetch");
+          return {
+            content: [{ type: "text", text: truncated.text }],
+            details: { url, source: "gh", truncation: truncated.details } as Record<
+              string,
+              unknown
+            >,
+          };
+        }
+
+        if (gh.type === "issue") {
+          const result = await pi.exec("gh", [
+            "issue",
+            "view",
+            `${gh.number}`,
+            "--repo",
+            `${gh.owner}/${gh.repo}`,
+            "--json",
+            "number,title,state,author,body,url,comments",
+          ]);
+          const issue = JSON.parse(result.stdout) as any;
+          const comments = (issue.comments ?? []) as any[];
+          const lines = [
+            `# Issue #${issue.number ?? gh.number}: ${issue.title ?? "(untitled)"}`,
+            ``,
+            `State: ${issue.state ?? "unknown"}`,
+            `Author: ${issue.author?.login ?? "unknown"}`,
+            `URL: ${issue.url ?? url}`,
+            ``,
+            issue.body ?? "",
+            ...formatMarkdownList(
+              comments,
+              "Comments",
+              (comment) => `- ${comment.author?.login ?? "unknown"}: ${comment.body ?? ""}`,
+            ),
+          ];
+          const truncated = await truncateForModelWithTempFile(lines.join("\n"), "webfetch");
+          return {
+            content: [{ type: "text", text: truncated.text }],
+            details: { url, source: "gh", truncation: truncated.details } as Record<
+              string,
+              unknown
+            >,
           };
         }
 
