@@ -194,6 +194,31 @@ A good type alias tells you *what it is*, not just *what it's made of*. `Mask` i
 3. Check project's style guide if one exists
 4. After writing, verify with `zig build test` — don't guess
 
+## Timestamp surprises
+
+`std.time.nanoTimestamp()` returns **`i128`**, not `i64`. Direct
+`@intCast` to `i64`/`u64` fails with "must have a known result type." Use:
+```zig
+const ns: i64 = @intCast(@as(i64, @truncate(std.time.nanoTimestamp())));
+```
+`std.time.milliTimestamp()` returns `i64` (safe to `@intCast` directly). For
+monotonic time, prefer `std.time.Instant` (from a `Timer`) over wall-clock
+timestamps when NTP skew matters.
+
+## Broken/incomplete std APIs in 0.15.2
+
+`std.compress.flate.Compress.Simple` is broken in Zig 0.15.2 — `BlockWriter`
+is missing the `bit_writer` field and `Container.writeFooter` is incomplete.
+If you need DEFLATE **compression**, hand-roll stored blocks (BTYPE=00, no
+Huffman/LZ77) — valid DEFLATE that any decompressor can read, ~1:1 ratio.
+`std.compress.flate.Decompress` (the decompressor) works fine.
+
+`std.meta.intToEnum` is deprecated — use `std.enums.fromInt` instead.
+`std.enums.fromInt(Enum, int_value)` returns `?Enum` (null on invalid),
+NOT an error union — use `orelse .default` or `orelse return error.Malformed`,
+not `catch`. This is the safe alternative to `@enumFromInt` which panics on
+invalid bit patterns.
+
 ## Full Reference
 
 See [references/zig-0.15-migration.md](references/zig-0.15-migration.md) for complete migration details with all code examples, the new Writer/Reader VTable layout, signal handling patterns, format string changes, and allocator API updates.

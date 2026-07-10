@@ -2,7 +2,7 @@
 name: autoresearch
 description: Autonomous experiment worker — runs a batch of autoresearch experiments, then self-terminates
 tools: read, bash, write, edit
-model: anthropic/claude-opus-4-6
+model: anthropic/claude-opus-4-8
 thinking: medium
 spawning: false
 auto-exit: true

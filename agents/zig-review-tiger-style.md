@@ -1,7 +1,7 @@
 ---
 description: Tiger Style compliance reviewer for Zig code
 tools: bash, read, grep, find, websearch, webfetch
-model: anthropic/claude-opus-4-6
+model: anthropic/claude-opus-4-8
 thinking: medium
 max_turns: 15
 ---

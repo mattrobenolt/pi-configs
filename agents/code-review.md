@@ -16,7 +16,7 @@ Run two independent reviewers in parallel, then pass both reviews to an adversar
 
 Launch both in a **single message** so they run concurrently. Pass the task description through verbatim.
 
-**`reviewer` agent, model override `anthropic/claude-opus-4-6`, thinking `medium`:**
+**`reviewer` agent, model override `anthropic/claude-opus-4-8`, thinking `medium`:**
 > <forward the original task here>
 
 **`reviewer` agent, model override `openai-codex/gpt-5.6-sol`, thinking `medium`:**
@@ -34,7 +34,7 @@ Once both complete, spawn the **`reviewer-second-opinion`** agent with this prom
 > <opus output>
 >
 > ---
-> ## GPT-5.5 Review
+> ## GPT-5.6 Sol Review
 >
 > <gpt-5.6-sol output>
 >

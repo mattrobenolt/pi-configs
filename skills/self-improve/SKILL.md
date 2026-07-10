@@ -12,13 +12,9 @@ Default scope is the current project. Prefer project-local fixes over global hab
 
 ## Load the local rules first
 
-Read these before making changes:
-
 - The nearest project instructions: `AGENTS.md`.
-- This skill's local rules: `skills/self-improve/AGENTS.md`.
 - `wwmd` when the work involves judgment, review, delegation, or deciding what not to do.
 - `skill-creator` when changing this skill or another skill.
-- `session-reader` only when the relevant session/subagent transcript is not already summarized in the conversation.
 
 ## Stance
 
@@ -30,12 +26,13 @@ The loop must have teeth: any finding can change the plan, kill a proposed chang
 
 1. Reconstruct what happened from the current conversation, tool output, errors, tests, subagent summaries, and touched files.
 2. Run the WWMD lens over the workflow itself: simpler? right tool? objectively verified? sure or guessing? long-term ramification? would Matt wince?
-3. Inspect project-local control surfaces first: `AGENTS.md`, repo docs, scripts, tests, local skills, local agents/subagent prompts, extension config, CI/devshell commands.
-4. Check this skill's owned prompt resources under `skills/self-improve/prompts/` when using or improving self-improve subagents.
-5. Pick a bounded batch of high-signal changes. Bias toward 1–3 tight edits over a grand self-help seminar.
-6. Create/claim todos for the chosen work with tags `self-improve` and `project` or `global`.
-7. Implement, verify mechanically where possible, and mark todos done. Commit only if the user explicitly asked for commits or the repo convention requires it.
-8. Summarize what changed, what verified it, and any residual risk/follow-up.
+3. **Act on findings in the same turn.** The most common self-improve failure is collecting friction and not encoding it. A subagent's self-report that flags a stale skill, a broken path, or a tool surprise is a signal that loses value every turn it sits unacted. Update the skill, fix the prompt, add the note — now, not "later."
+4. Inspect project-local control surfaces first: `AGENTS.md`, repo docs, scripts, tests, local skills, local agents/subagent prompts, extension config, CI/devshell commands.
+5. Check this skill's owned prompt resources under `skills/self-improve/prompts/` when using or improving self-improve subagents.
+6. Pick a bounded batch of high-signal changes. Bias toward 1–3 tight edits over a grand self-help seminar.
+7. Create/claim todos for the chosen work with tags `self-improve` and `project` or `global`.
+8. Implement, verify mechanically where possible, and mark todos done. Commit only if the user explicitly asked for commits or the repo convention requires it.
+9. Summarize what changed, what verified it, and any residual risk/follow-up.
 
 ## What to improve
 
@@ -52,6 +49,10 @@ Look for actionable gaps only:
 | Extensions/tools | Tighten schemas, descriptions, defaults, and debug output when tool behavior caused friction. |
 | Workflow | Remove unnecessary back-and-forth, slow loops, or repeated manual checks. |
 | Code quality | Simplify code revealed as brittle, noisy, or overbuilt by the session. |
+| Solved algorithms | When a task involves a well-known algorithm (compression, crypto, hashing), link the proven C library or defer — don't hand-roll. A literal-only encoder passing round-trip with its own decoder is a stub, not a solution. |
+| Flaky tests | Understand what the test is measuring before iterating on bounds. A warmup separating setup from measurement beats a bigger timeout. |
+| Self-report findings | When a subagent's self-report flags friction, encode it immediately — update the skill, fix the prompt, add the note. Findings left for later are findings lost. |
+| Model cost tiers | Match the model to the task's difficulty. Cheap models for routine work, strong models for hard design + adversarial review. Don't burn Opus on scaffolding. |
 
 ## Scope rules
 
@@ -64,18 +65,6 @@ Self-improve owns these files and may update them when evidence supports it:
 - `skills/self-improve/SKILL.md`
 - `skills/self-improve/AGENTS.md`
 - `skills/self-improve/prompts/*.md`
-
-## Subagent use
-
-Use subagents for breadth or adversarial review, not as a way to outsource judgment. You remain the director.
-
-When delegating self-improvement work, feed agents the relevant prompt from `skills/self-improve/prompts/` and require evidence: changed files, commands run, validation output, and residual risks. Discard uncited claims. Synthesize; do not average.
-
-Suggested split:
-
-- `prompts/auditor.md` — find friction and missed opportunities from session/project evidence.
-- `prompts/prompt-reviewer.md` — critique AGENTS.md, skills, and subagent prompts.
-- `prompts/implementer.md` — apply a bounded accepted improvement with verification.
 
 ## Final output
 

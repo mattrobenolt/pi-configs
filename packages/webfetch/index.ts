@@ -1,4 +1,4 @@
-import { truncateForModelWithTempFile } from "@mattrobenolt/pi-core/tool-output";
+import { truncateForModelWithTempFile } from "./tool-output.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
