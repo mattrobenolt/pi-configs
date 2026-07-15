@@ -148,6 +148,24 @@ Same for `@bitCast`, `@truncate`, `@floatFromInt`, `@intFromFloat`, `@enumFromIn
 - Keep tests inline with the code they cover
 - Comments explain why, not what
 
+### Narrow-type arithmetic in bounds checks (security footgun)
+
+Zig 0.15 evaluates `narrow_type + comptime_int` in the narrow type **before** widening for the comparison. A bounds check like:
+
+```zig
+const len = r.assumeRead(u8);  // or u16, u24
+if (remaining < len + N) return error.UnexpectedEof;  // BUG: len + N overflows u8
+```
+
+overflows the narrow type when `len` is near its max, causing a panic (Debug/ReleaseSafe) or UB (ReleaseFast) **before** the comparison rejects the oversized input. This is a remote DoS class on any parser that reads an attacker-controlled length field — it caused 14 exploitable sites in ztls (#72). `ziglint` does not catch this.
+
+Always widen before the add:
+```zig
+if (remaining < @as(usize, len) + N) return error.UnexpectedEof;
+```
+
+Audit every `narrow_var + comptime_int` bounds check when writing or reviewing parser code. This applies to any `u8`/`u16`/`u24`/`u32` length field read from untrusted input.
+
 ### Use `@splat` for initialization
 
 Use `@splat` to initialize arrays and vectors with a uniform value. Do NOT manually repeat values or use `**` multiplication:

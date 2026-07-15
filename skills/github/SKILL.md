@@ -8,6 +8,10 @@ license: From mitsuhiko/agent-stuff
 
 Use the `gh` CLI to interact with GitHub. Always specify `--repo owner/repo` when not in a git directory, or use URLs directly.
 
+## Cross-repository references
+
+GitHub auto-links issues and PRs across repositories using the `owner/repo#number` syntax, e.g. `planetscale/psevents#51` renders as a link to that PR in any PR/issue body or comment. Use this form (not a bare `#51` or a full URL) when referencing work in another repo — bare `#number` only links within the current repo. This matters for stacked PRs, upstream schema deps, and follow-ups filed against other repositories.
+
 ## Pull Requests
 
 Check CI status on a PR:

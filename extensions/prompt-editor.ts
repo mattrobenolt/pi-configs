@@ -1,7 +1,7 @@
 import { atomicWriteUtf8, expandHome, readTail, withFileLock } from "@mattrobenolt/pi-core/files";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 import {
   CustomEditor,
   ModelSelectorComponent,

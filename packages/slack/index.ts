@@ -34,7 +34,7 @@ const LOG_RECORD_FIRST = 2;
 const LOG_RECORD_MIDDLE = 3;
 const LOG_RECORD_LAST = 4;
 
-type SlackAuth = {
+export type SlackAuth = {
   kind: "browser";
   token: string;
   cookieD: string;
@@ -598,7 +598,7 @@ async function getConfiguredWorkspaceUrl(cwd?: string): Promise<string> {
   return normalizeWorkspaceUrl(workspaceUrl);
 }
 
-async function getSlackAuth(workspaceUrl: string, signal?: AbortSignal): Promise<SlackAuth> {
+export async function getSlackAuth(workspaceUrl: string, signal?: AbortSignal): Promise<SlackAuth> {
   const normalizedWorkspaceUrl = normalizeWorkspaceUrl(workspaceUrl);
   const cached = cachedWorkspaceAuth.get(normalizedWorkspaceUrl);
   if (cached) return cached;
@@ -1208,7 +1208,7 @@ async function findKeysContaining(dir: string, substring: Buffer): Promise<Level
   return entries.filter((entry) => entry.key.includes(substring));
 }
 
-async function slackApiCall(
+export async function slackApiCall(
   method: string,
   params: Record<string, unknown>,
   input: { auth?: SlackAuth; workspaceUrl: string; signal?: AbortSignal; attempt?: number },

@@ -8,7 +8,7 @@
     "./packages/term",
     "./packages/todos",
     "git:github.com/ocodista/pi-token-bloat",
-    "git:github.com/mattrobenolt/pi-subagents@fireworks-schema-compat",
+    "git:github.com/nicobailon/pi-subagents",
     "git:github.com/nicobailon/pi-mcp-adapter",
     "git:github.com/HazAT/pi-ghostty",
     "git:github.com/championswimmer/pi-cache-graph",

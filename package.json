@@ -19,7 +19,7 @@
     "@mattrobenolt/pi-profile": "workspace:*",
     "defuddle": "catalog:",
     "hysnappy": "catalog:",
-    "linkedom": "^0.18.12",
+    "linkedom": "^0.18.13",
     "turndown": "catalog:",
     "typebox": "catalog:"
   },

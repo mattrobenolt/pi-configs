@@ -39,7 +39,7 @@ function extractToken(): string {
       "Library/Application Support/Notion/Partitions/notion/Cookies",
     );
     const hex = execSync(
-      `sqlite3 "${dbPath}" "SELECT hex(encrypted_value) FROM cookies WHERE name='token_v2' AND host_key='.www.notion.so';"`,
+      `sqlite3 "${dbPath}" "SELECT hex(encrypted_value) FROM cookies WHERE name='token_v2' AND host_key LIKE '%notion%' ORDER BY length(host_key) LIMIT 1;"`,
       { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
     ).trim();
 

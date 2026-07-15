@@ -1,6 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { complete } from "@earendil-works/pi-ai";
-import type { Model } from "@earendil-works/pi-ai";
+import { complete, type Model } from "@earendil-works/pi-ai/compat";
 import type { ModelSpec } from "./config.ts";
 
 const PREFERRED_NARROWING_MODEL = { provider: "openai-codex", id: "gpt-5.4-mini" } as const;
