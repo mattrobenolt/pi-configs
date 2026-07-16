@@ -10,6 +10,7 @@ catalog:
   '@types/turndown': ^5.0.6
   defuddle: ^0.19.1
   hysnappy: ^1.1.1
+  marked: ^18.0.0
   oxfmt: ^0.59.0
   oxlint: ^1.74.0
   turndown: ^7.2.4

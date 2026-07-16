@@ -8,14 +8,15 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
-    "fmt": "oxfmt index.ts",
-    "fmt:check": "oxfmt index.ts --check",
-    "lint": "oxlint index.ts"
+    "fmt": "oxfmt index.ts mrkdwn.ts",
+    "fmt:check": "oxfmt index.ts mrkdwn.ts --check",
+    "lint": "oxlint index.ts mrkdwn.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "catalog:",
     "@mattrobenolt/pi-core": "workspace:*",
     "hysnappy": "catalog:",
+    "marked": "catalog:",
     "typebox": "catalog:"
   },
   "pi": {

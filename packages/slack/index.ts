@@ -15,6 +15,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { snappyUncompress } from "hysnappy";
+import { markdownToMrkdwn } from "./mrkdwn.js";
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const DEFAULT_USER_LOOKUP_LIMIT = 10;
@@ -384,6 +385,28 @@ type SlackSearchInput = Static<typeof SlackSearchParams>;
 type SlackReplyInput = Static<typeof SlackReplyParams>;
 type SlackUserLookupInput = Static<typeof SlackUserLookupParams>;
 type SlackChannelHistoryInput = Static<typeof SlackChannelHistoryParams>;
+
+const SlackFileParams = Type.Object({
+  url: Type.Optional(
+    Type.String({
+      description:
+        "Slack file URL (url_private / url_private_download from a message attachment, or a permalink).",
+    }),
+  ),
+  file_id: Type.Optional(
+    Type.String({
+      description: "Slack file ID (resolves the URL via files.info).",
+    }),
+  ),
+  channel: Type.Optional(
+    Type.String({
+      description:
+        "Channel name or ID — used to resolve the workspace when file_id is given without a URL.",
+    }),
+  ),
+});
+
+type SlackFileInput = Static<typeof SlackFileParams>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -1923,6 +1946,10 @@ function renderSlackFiles(files: SlackFileSummary[], options?: { clipSnippet?: n
     if (file.permalink) {
       lines.push(`- [Permalink](${file.permalink})`);
     }
+    if (file.urlPrivateDownload || file.urlPrivate) {
+      const fileUrl = file.urlPrivateDownload ?? file.urlPrivate!;
+      lines.push(`- Download URL: ${fileUrl}`);
+    }
     if (file.snippetContent) {
       lines.push(
         "",
@@ -2619,6 +2646,333 @@ export async function slackChannelHistory(
   };
 }
 
+// --- slack_file ---
+
+const IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+  "image/bmp",
+]);
+
+function isImageMimetype(mimeType: string): boolean {
+  return IMAGE_MIME_TYPES.has(mimeType.toLowerCase());
+}
+
+/**
+ * Fetch a Slack file (image, snippet, or other attachment) and return it as
+ * inline content for the model. Images are returned as ImageContent; text
+ * snippets and other files are returned as TextContent.
+ *
+ * The file URL (url_private / url_private_download) requires Slack auth —
+ * the same token + cookie-d used by slackApiCall.
+ */
+export async function slackFile(
+  input: SlackFileInput,
+  options?: ToolExecutionOptions,
+): Promise<{
+  content: Array<
+    { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+  >;
+  details: { fileId?: string; name?: string; mimeType?: string; size?: number };
+}> {
+  const signal = options?.signal;
+
+  // Resolve the file URL and workspace.
+  let fileUrl: string | undefined;
+  let workspaceUrl: string | undefined;
+  let fileId: string | undefined;
+
+  if (input.url) {
+    // The URL itself is the file download URL. Extract workspace from it.
+    try {
+      const parsed = new URL(input.url);
+      workspaceUrl = `${parsed.protocol}//${parsed.host}`;
+      fileUrl = input.url;
+    } catch {
+      throw new Error(`Invalid file URL: ${input.url}`);
+    }
+  } else if (input.file_id) {
+    fileId = input.file_id;
+    // We need a workspace to call files.info. Try resolving from channel or config.
+    if (input.channel) {
+      workspaceUrl = await getConfiguredWorkspaceUrl(options?.cwd);
+    } else {
+      workspaceUrl = await getConfiguredWorkspaceUrl(options?.cwd);
+    }
+  } else {
+    throw new Error("slack_file requires either url or file_id.");
+  }
+
+  // If we have a file_id but no URL, resolve via files.info.
+  if (!fileUrl && fileId) {
+    const response = await slackApiCall(
+      "files.info",
+      { file: fileId },
+      { workspaceUrl: workspaceUrl!, signal },
+    );
+    const rawFile = isRecord(response.file) ? response.file : undefined;
+    fileUrl = getString(rawFile?.url_private_download) ?? getString(rawFile?.url_private);
+    if (!fileUrl) {
+      throw new Error(`Could not resolve download URL for file ${fileId}.`);
+    }
+    // If we didn't get file metadata from the initial URL, extract it now.
+    if (!workspaceUrl) {
+      try {
+        const parsed = new URL(fileUrl);
+        workspaceUrl = `${parsed.protocol}//${parsed.host}`;
+      } catch {
+        workspaceUrl = await getConfiguredWorkspaceUrl(options?.cwd);
+      }
+    }
+  }
+
+  // Fetch the file with Slack auth.
+  const auth = await getSlackAuth(workspaceUrl!, signal);
+  const response = await fetch(fileUrl!, {
+    headers: {
+      Cookie: `d=${encodeURIComponent(auth.cookieD)}`,
+      Authorization: `Bearer ${auth.token}`,
+      "User-Agent": USER_AGENT,
+    },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to download Slack file: HTTP ${response.status}`);
+  }
+
+  const mimeType = (response.headers.get("content-type") ?? "application/octet-stream")
+    .split(";")[0]!
+    .trim();
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const size = buffer.length;
+
+  // Determine the file name for the details.
+  let name: string | undefined;
+  if (fileId) {
+    try {
+      const info = await slackApiCall(
+        "files.info",
+        { file: fileId },
+        { workspaceUrl: workspaceUrl!, signal },
+      );
+      const file = isRecord(info.file) ? info.file : undefined;
+      name = getString(file?.name);
+    } catch {
+      // Non-critical — name is just for details.
+    }
+  }
+
+  if (isImageMimetype(mimeType)) {
+    const base64 = buffer.toString("base64");
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Slack file: ${name ?? fileId ?? "unknown"} [${mimeType}, ${size} bytes]`,
+        },
+        { type: "image", data: base64, mimeType },
+      ],
+      details: { fileId, name, mimeType, size },
+    };
+  }
+
+  // Non-image: return as text (snippets, text files, etc.)
+  const text = buffer.toString("utf-8");
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Slack file: ${name ?? fileId ?? "unknown"} [${mimeType}, ${size} bytes]\n\n${text}`,
+      },
+    ],
+    details: { fileId, name, mimeType, size },
+  };
+}
+
+// --- Mention & channel resolution ---
+//
+// Agents often write `@max` or `#general` as bare text. Slack requires
+// `<@U123>` / `<#C123|general>` for actual mentions. This resolves them
+// automatically so the agent doesn't have to know user/channel IDs.
+//
+// Runs AFTER markdown→mrkdwn conversion, so code blocks (```...```)
+// and inline code (`...`) are already in final form — we skip those
+// segments to avoid resolving @mentions inside code.
+
+const SPECIAL_MENTIONS = new Set(["here", "channel", "everyone"]);
+
+// `@name` outside code blocks. Excludes: emails (preceded by word char),
+// existing Slack mentions (<@U...>), and special mentions (@here etc.).
+const MENTION_RE = /(?:^|(?<=[^\w<]))@([a-zA-Z][a-zA-Z0-9._-]*)/g;
+
+// `#channel` outside code blocks. Channel names are lowercase.
+const CHANNEL_REF_RE = /(?:^|(?<=[^\w<]))#([a-z0-9][a-z0-9_-]*)/g;
+
+// Splits text into code and non-code segments. Uses String.split with a
+// capturing group — captured groups are interleaved with non-matches.
+// Even indices = non-code, odd indices = code.
+const CODE_SPLIT_RE = /(```[\s\S]*?```|`[^`\n]+`)/g;
+
+function processOutsideCode(text: string, fn: (segment: string) => string): string {
+  return text
+    .split(CODE_SPLIT_RE)
+    .map((segment, i) => (i % 2 === 0 ? fn(segment) : segment))
+    .join("");
+}
+
+async function buildUserNameMap(
+  names: Set<string>,
+  workspaceUrl: string,
+  signal?: AbortSignal,
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const lowerNames = new Set([...names].map((n) => n.toLowerCase()));
+
+  let cursor: string | undefined;
+  for (;;) {
+    const response = await slackApiCall(
+      "users.list",
+      { limit: 200, cursor },
+      { workspaceUrl, signal },
+    );
+    const members = asArray(response.members).filter(isRecord);
+    for (const member of members) {
+      const id = getString(member.id);
+      if (!id) continue;
+      const profile = isRecord(member.profile) ? member.profile : {};
+      // Match against handle, display name, and real name (case-insensitive).
+      for (const name of [
+        getString(member.name),
+        getString(profile.display_name),
+        getString(profile.real_name),
+      ]) {
+        if (!name) continue;
+        const lower = name.toLowerCase();
+        if (lowerNames.has(lower) && !result.has(lower)) {
+          result.set(lower, id);
+        }
+      }
+    }
+    if (result.size >= lowerNames.size) break;
+    const meta = isRecord(response.response_metadata) ? response.response_metadata : undefined;
+    const nextCursor = meta ? getString(meta.next_cursor) : undefined;
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+
+  return result;
+}
+
+async function buildChannelNameMap(
+  names: Set<string>,
+  workspaceUrl: string,
+  signal?: AbortSignal,
+): Promise<Map<string, { id: string; name: string }>> {
+  const result = new Map<string, { id: string; name: string }>();
+  const lowerNames = new Set([...names].map((n) => n.toLowerCase()));
+
+  let cursor: string | undefined;
+  for (;;) {
+    const response = await slackApiCall(
+      "conversations.list",
+      { exclude_archived: true, limit: 200, cursor, types: "public_channel,private_channel" },
+      { workspaceUrl, signal },
+    );
+    const channels = asArray(response.channels).filter(isRecord);
+    for (const channel of channels) {
+      const name = getString(channel.name);
+      const id = getString(channel.id);
+      if (!name || !id) continue;
+      const lower = name.toLowerCase();
+      if (lowerNames.has(lower) && !result.has(lower)) {
+        result.set(lower, { id, name });
+      }
+    }
+    if (result.size >= lowerNames.size) break;
+    const meta = isRecord(response.response_metadata) ? response.response_metadata : undefined;
+    const nextCursor = meta ? getString(meta.next_cursor) : undefined;
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+
+  return result;
+}
+
+async function resolveMentions(
+  text: string,
+  workspaceUrl: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  // Collect all @name patterns from non-code segments.
+  const names = new Set<string>();
+  processOutsideCode(text, (segment) => {
+    for (const match of segment.matchAll(MENTION_RE)) {
+      const name = match[1]!;
+      if (!SPECIAL_MENTIONS.has(name.toLowerCase())) {
+        names.add(name);
+      }
+    }
+    return segment;
+  });
+
+  if (names.size === 0) return text;
+
+  const userMap = await buildUserNameMap(names, workspaceUrl, signal);
+
+  return processOutsideCode(text, (segment) =>
+    segment.replace(MENTION_RE, (match, name: string) => {
+      // Special mentions: @here → <!here>, etc.
+      if (SPECIAL_MENTIONS.has(name.toLowerCase())) {
+        return `<!${name.toLowerCase()}>`;
+      }
+      const userId = userMap.get(name.toLowerCase());
+      return userId ? `<@${userId}>` : match;
+    }),
+  );
+}
+
+async function resolveChannelRefs(
+  text: string,
+  workspaceUrl: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const names = new Set<string>();
+  processOutsideCode(text, (segment) => {
+    for (const match of segment.matchAll(CHANNEL_REF_RE)) {
+      names.add(match[1]!);
+    }
+    return segment;
+  });
+
+  if (names.size === 0) return text;
+
+  const channelMap = await buildChannelNameMap(names, workspaceUrl, signal);
+
+  return processOutsideCode(text, (segment) =>
+    segment.replace(CHANNEL_REF_RE, (match, name: string) => {
+      const channel = channelMap.get(name.toLowerCase());
+      return channel ? `<#${channel.id}|${channel.name}>` : match;
+    }),
+  );
+}
+
+async function prepareSlackText(
+  text: string,
+  workspaceUrl: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  // Convert markdown → mrkdwn first, then resolve mentions/channels.
+  // Mention resolution skips code blocks/inline code automatically.
+  const mrkdwn = markdownToMrkdwn(text);
+  const withMentions = await resolveMentions(mrkdwn, workspaceUrl, signal);
+  const withChannels = await resolveChannelRefs(withMentions, workspaceUrl, signal);
+  return withChannels;
+}
+
 export async function slackReply(
   input: SlackReplyInput,
   options?: ToolExecutionOptions,
@@ -2665,12 +3019,14 @@ export async function slackReply(
     };
   }
 
+  const preparedText = await prepareSlackText(input.text, target.workspaceUrl, options?.signal);
+
   const response = await slackApiCall(
     "chat.postMessage",
     {
       channel: target.channelId,
       thread_ts: target.threadTs,
-      text: input.text,
+      text: preparedText,
     },
     { workspaceUrl: target.workspaceUrl, signal: options?.signal },
   );
@@ -2825,9 +3181,11 @@ async function slackPost(
     };
   }
 
+  const preparedText = await prepareSlackText(input.text, workspaceUrl, options?.signal);
+
   const response = await slackApiCall(
     "chat.postMessage",
-    { channel: channelId, text: input.text },
+    { channel: channelId, text: preparedText },
     { workspaceUrl, signal: options?.signal },
   );
 
@@ -3139,9 +3497,11 @@ async function generateAndSendReply(
     conv.typingAbortController = typingAbortController;
     await delay(calculateTypingDelay(replyText), typingAbortController.signal);
 
+    const preparedReply = await prepareSlackText(replyText, conv.workspaceUrl);
+
     await slackApiCall(
       "chat.postMessage",
-      { channel: conv.channelId, text: replyText },
+      { channel: conv.channelId, text: preparedReply },
       { workspaceUrl: conv.workspaceUrl },
     );
     replyPosted = true;
@@ -3149,7 +3509,7 @@ async function generateAndSendReply(
     conv.transcript.push({
       role: "me",
       username: "me",
-      text: replyText,
+      text: preparedReply,
       ts: String(Date.now() / 1000),
     });
     conv.lastActivity = new Date();
@@ -3430,6 +3790,28 @@ export default function (pi: ExtensionAPI) {
           ...rendered.details,
           truncated: truncated.truncated,
         },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "slack_file",
+    label: "Slack File",
+    description:
+      "Download a Slack file (image, snippet, or attachment) from a message. Returns images inline as attachments; text snippets as text. Use the url_private or url_private_download from a message's file attachment, or a file_id.",
+    promptSnippet: "Download and view a Slack file attachment.",
+    parameters: SlackFileParams,
+    async execute(_toolCallId, params: SlackFileInput, signal, onUpdate, ctx) {
+      onUpdate?.({
+        content: [{ type: "text", text: "Downloading Slack file…" }],
+        details: { stage: "file" },
+      });
+      const result = await slackFile(params, { signal, cwd: ctx.cwd });
+      return {
+        content: result.content as Array<
+          { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+        >,
+        details: result.details,
       };
     },
   });
