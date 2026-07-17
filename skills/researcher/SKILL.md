@@ -52,6 +52,7 @@ Interview the user (skip what's obvious from context). Use defaults when the use
 6. **Run chain** — the full command sequence to build + run one experiment and emit the metric(s). Entire chain must succeed.
 7. **Wall-clock budget per experiment** — default 5 min; raise for long-settling runtimes (GC, scavenger, JVM).
 8. **Termination** — target value, experiment count, or "plateau / diminishing returns / user interrupt."
+9. **Load validity** — confirm the bench exercises the production load paths, not just idle polling. If the system serves traffic, the bench must drive that traffic (HTTP scrapes, requests, real work) at a realistic cadence; idle-only measurements miss the serving-path allocations and mislead. State explicitly which production paths the bench drives and which it doesn't.
 
 Repeat the config back; get explicit confirmation before Phase 2.
 
@@ -65,8 +66,9 @@ Repeat the config back; get explicit confirmation before Phase 2.
 6. `.lab/parking-lot.md`.
 7. `.lab/branches.md` — Branch, Forked from, Status, Experiments, Best metric, Notes.
 8. Add `.lab/` and `run.log` to `.gitignore`.
-9. Run experiment **#0 = baseline** (no changes). Record it. Fill baseline + best in config.
-10. Begin.
+9. **Production-build fidelity gate (do this before the baseline).** Confirm the bench builds the binary *the same way production does* — same build flags, same static/dynamic linking (`CGO_ENABLED`), same `GOOS`/`GOARCH`, same strip level. If production builds via a CI workflow and the bench builds via a local `go build`, diff the flags. A baseline measured against a local cgo build while production ships a static binary will be inflated by libc RSS that production never has, and any "win" that's really just fixing that discrepancy is an artifact, not a production improvement. Record the confirmed build flags in `.lab/config.md`.
+10. Run experiment **#0 = baseline** (no changes). Record it. Fill baseline + best in config. Sanity-check the baseline number against the production-build fidelity finding before trusting it.
+11. Begin.
 
 ### Phase 3 — Autonomous research
 
@@ -91,6 +93,8 @@ Branch / Type (thought|real) / Parent (#M) / Hypothesis / Changes / Result / Dur
 ### Autonomy
 
 Default: work autonomously, log instead of reporting. Consult the user only when (a) the only viable path needs files outside scope, or (b) all strategies, branches, and parking-lot ideas are exhausted.
+
+**For critical infrastructure, soften this:** check in more often, especially before declaring a floor or stop condition. A declared "floor" is a hypothesis, not a conclusion — invite the user to challenge it, and re-examine the space (binary composition via `go tool nm`/`pmap`, runtime chunks, every mapping) before concluding. Two expensive mistakes come from declaring the floor too early: missing a real lever, and shipping a "win" that's actually a bench artifact. The user's pushback is signal, not noise.
 
 ### Branching
 
@@ -124,6 +128,13 @@ Ablation · Amplification (push what works) · Combination (merge wins across br
 ## Output contract
 
 When reporting: **Metric** (baseline → best, % delta), **Changes** (the kept experiments and what each did), **Evidence** (the measurements, including at least one experiment that ruled out a credible alternative), **Limits** (what wasn't tested, assumptions remaining), **Next** (smallest action to go further, or "at practical floor").
+
+## Pre-PR gates (run before filing each kept experiment)
+
+1. **Tests + lint green** — non-negotiable for critical code; a metric win that breaks a test is a discard.
+2. **Verify it actually ships** — for build-flag, config, or toolchain changes: trace the change to the *production build path*, not just the local Makefile. If production builds via a CI workflow, confirm the workflow uses the changed flags (or calls the Makefile that does). A Makefile-only change that production ignores is not a win — it's drift waiting to happen. This is the lesson from a campaign where a strip change landed in the Makefile but the release workflow kept shipping unstripped binaries.
+3. **Cross-model review** — required when the change touches an output contract, swaps a dependency, or alters a behavior surface; optional for trivial mechanical changes (build flags, one-line refactors). Trigger rule: if a reviewer re-benching in a different merge order could see different behavior, or if the change replaces a library others depend on, get a second model's eyes on it. Skip it for changes where "it compiles and the tests pin the behavior" is sufficient proof.
+4. **Re-measure against the correct baseline** — if the campaign discovered a production-fidelity gap after the baseline was set, re-cite deltas against a production-accurate baseline, not the inflated one. Don't ship a "−X%" that's really "−(X−1.2MB of libc that was never in production)."
 
 ## Resources
 

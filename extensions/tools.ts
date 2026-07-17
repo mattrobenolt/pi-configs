@@ -4,7 +4,7 @@ import type {
   Theme,
   ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import { keyText } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, keyText } from "@earendil-works/pi-coding-agent";
 import {
   fuzzyFilter,
   getKeybindings,
@@ -30,6 +30,8 @@ interface ToolsConfig {
   version: typeof TOOLS_CONFIG_VERSION;
   disabledTools: string[];
   enabledTools?: string[];
+  enable?: string[];
+  disable?: string[];
 }
 
 function sortedNames(names: Iterable<string>): string[] {
@@ -46,6 +48,10 @@ function getAgentDir(): string {
 
 function getToolsConfigPath(): string {
   return path.join(getAgentDir(), "tools.json");
+}
+
+function getProjectToolsConfigPath(ctx: ExtensionContext): string {
+  return path.join(ctx.cwd, CONFIG_DIR_NAME, "tools.json");
 }
 
 function oneLine(text: string): string {
@@ -135,6 +141,47 @@ function loadToolsConfig(allTools: ToolInfo[]): Set<string> | undefined {
   }
 }
 
+// Resolve trusted project overrides during session_start so the first provider
+// request already has the final tool set and a stable system prompt.
+function loadProjectToolsConfig(ctx: ExtensionContext): Partial<ToolsConfig> | undefined {
+  if (!ctx.isProjectTrusted()) return undefined;
+
+  try {
+    const config = JSON.parse(
+      fs.readFileSync(getProjectToolsConfigPath(ctx), "utf-8"),
+    ) as Partial<ToolsConfig>;
+    const enable = Array.isArray(config.enable) ? config.enable : undefined;
+    const disable = Array.isArray(config.disable) ? config.disable : undefined;
+    return enable || disable ? { enable, disable } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function applyProjectToolsConfig(
+  enabledTools: Set<string>,
+  config: Partial<ToolsConfig> | undefined,
+  allTools: ToolInfo[],
+): Set<string> {
+  if (!config) return enabledTools;
+  const disabled = filterValidTools(config.disable, allTools) ?? [];
+  const enabled = filterValidTools(config.enable, allTools) ?? [];
+  return enableTools(disableTools(enabledTools, disabled), enabled);
+}
+
+function preserveConfiguredOverrides(
+  enabledTools: Set<string>,
+  configuredTools: Set<string>,
+  config: Partial<ToolsConfig> | undefined,
+): Set<string> {
+  const next = new Set(enabledTools);
+  for (const name of new Set([...(config?.enable ?? []), ...(config?.disable ?? [])])) {
+    if (configuredTools.has(name)) next.add(name);
+    else next.delete(name);
+  }
+  return next;
+}
+
 function saveToolsConfig(enabledTools: Set<string>, allTools: ToolInfo[]): void {
   const config: ToolsConfig = {
     version: TOOLS_CONFIG_VERSION,
@@ -168,7 +215,9 @@ function disableTools(enabled: Set<string>, names: Iterable<string>): Set<string
 
 export default function toolsExtension(pi: ExtensionAPI) {
   let allTools: ToolInfo[] = [];
+  let configuredTools = new Set<string>();
   let enabledTools = new Set<string>();
+  let projectToolsConfig: Partial<ToolsConfig> | undefined;
   let summaryTimer: ReturnType<typeof setTimeout> | undefined;
 
   function refreshTools(): void {
@@ -187,16 +236,24 @@ export default function toolsExtension(pi: ExtensionAPI) {
   }
 
   function persistState(): void {
+    configuredTools = preserveConfiguredOverrides(
+      enabledTools,
+      configuredTools,
+      projectToolsConfig,
+    );
     pi.appendEntry<ToolsState>(ENTRY_TYPE, {
-      enabledTools: sortedNames(enabledTools),
+      enabledTools: sortedNames(configuredTools),
     });
-    saveToolsConfig(enabledTools, allTools);
+    saveToolsConfig(configuredTools, allTools);
   }
 
   function restoreTools(ctx: ExtensionContext): void {
     refreshTools();
-    enabledTools =
-      restoreFromBranch(ctx, allTools) ?? loadToolsConfig(allTools) ?? new Set(pi.getActiveTools());
+    const globallyConfigured = loadToolsConfig(allTools) ?? new Set(pi.getActiveTools());
+    const restored = restoreFromBranch(ctx, allTools) ?? globallyConfigured;
+    projectToolsConfig = loadProjectToolsConfig(ctx);
+    configuredTools = preserveConfiguredOverrides(restored, globallyConfigured, projectToolsConfig);
+    enabledTools = applyProjectToolsConfig(restored, projectToolsConfig, allTools);
     applyTools(ctx);
   }
 
