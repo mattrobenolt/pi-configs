@@ -1,0 +1,22 @@
+{
+  "name": "@mattrobenolt/prose-audit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test index.test.ts",
+    "fmt": "oxfmt index.ts cli.ts index.test.ts",
+    "fmt:check": "oxfmt index.ts cli.ts index.test.ts --check",
+    "lint": "oxlint index.ts cli.ts index.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "typescript": "catalog:"
+  }
+}

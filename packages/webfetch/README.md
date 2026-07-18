@@ -3,7 +3,7 @@
 A pi extension that gives agents two web tools:
 
 - `webfetch`: fetch a specific URL and return agent-readable content.
-- `websearch`: search the web through Exa and return a consolidated result snippet.
+- `websearch`: search the web through capability-aware Exa/Jina backends and return a consolidated result snippet.
 
 The bias is simple: make web pages useful to an agent without handing it a giant pile of HTML soup. `webfetch` defaults to markdown, cleans up common extraction junk, handles GitHub URLs specially, and can optionally narrow long pages to only the parts relevant to an objective.
 
@@ -33,7 +33,7 @@ Parameters:
 
 ### `websearch`
 
-Searches the web through Exa's MCP endpoint.
+Searches through an internal provider router. Exa is the measured primary backend; Jina is the capability-aware failover for ordinary searches. Without either credential, the tool falls back to Exa's rate-limited basic MCP search.
 
 ```json
 {
@@ -45,11 +45,33 @@ Searches the web through Exa's MCP endpoint.
 
 Parameters:
 
-- `query`: search query.
-- `numResults`: result count, default 8.
-- `livecrawl`: `"fallback"` by default, or `"preferred"` when freshness matters more than speed.
-- `type`: `"auto"`, `"fast"`, or `"deep"`.
-- `contextMaxCharacters`: optional Exa context size limit.
+- `query`: natural-language search query.
+- `numResults`: result count, default 8, max 100.
+- `type`: `"auto"`, `"fast"`, `"instant"`, `"deep-lite"`, `"deep"`, or `"deep-reasoning"`.
+- `category`: optional specialized index for companies, people, research papers, news, personal sites, or financial reports.
+- `includeDomains` / `excludeDomains`: optional domain filters.
+- `startPublishedDate` / `endPublishedDate`: optional ISO 8601 publication-date filters.
+- `content`: `"highlights"` by default, `"text"` for fuller pages, or `"none"` for result metadata only.
+- `maxCharacters`: optional per-result content limit.
+- `maxAgeHours`: omit for normal fallback crawling, `0` to always livecrawl, or `-1` for cache only.
+- `moderation`: optionally filter unsafe results.
+
+Highlights are the default because Exa recommends them for agent workflows: they return relevant source excerpts without dumping full pages into context. Deep search modes get a longer request timeout, and direct API calls retry rate limits and transient server failures.
+
+Store the key in the active Pi profile's `auth.json`:
+
+```json
+{
+  "exa": { "type": "api_key", "key": "your-exa-key" },
+  "jina": { "type": "api_key", "key": "your-jina-key" }
+}
+```
+
+The extension registers both services as Pi API-key providers, so `/login exa` and `/login jina` can store profile-local credentials without editing JSON. `EXA_API_KEY` and `JINA_API_KEY` remain available as fallbacks.
+
+Provider choice is deliberately not exposed to the agent. The router tries Exa first and fails over to Jina after authentication failures, timeouts, quota exhaustion, rate limits, transient server failures, or empty results. Authentication failures remain visible in attempt metadata and put the backend on a five-minute cooldown. Invalid requests and unsupported features remain terminal rather than being silently rewritten. Jina is skipped for Exa-only controls such as deep search, categories, publication-date filters, multiple include domains, exclusion filters, cache-only retrieval, and moderation. Shorter cooldowns prevent repeatedly hammering rate-limited or transiently failing backends.
+
+The initial 50-query benchmark used historical searches followed by fetched URLs as implicit relevance labels. Exa had 100% request success, 38% exact-URL recall@5, 74% domain recall@5, and 943ms median latency. Jina had 96% success, 34% exact recall, 60% domain recall, and 898ms median latency. Exa scored higher on a historical-follow-up rank heuristic for 14 queries, Jina for 5, and 31 were equal. That heuristic is a relevance proxy, not a blind judgment of semantic result quality. Exa remains primary while Jina contributes materially different results (13.7% mean top-five overlap) as failover.
 
 ## Markdown extraction
 
@@ -124,16 +146,17 @@ Prefer the string form. It matches normal pi model IDs and gives the model one l
 From the repo root:
 
 ```sh
-pnpm --filter webfetch test
-pnpm --filter webfetch check
-pnpm --filter webfetch lint
-pnpm --filter webfetch fmt:check
+pnpm --filter @mattrobenolt/pi-webfetch test
+pnpm --filter @mattrobenolt/pi-webfetch check
+pnpm --filter @mattrobenolt/pi-webfetch lint
+pnpm --filter @mattrobenolt/pi-webfetch fmt:check
 ```
 
-There is also a small local eval harness:
+There are also package-local eval harnesses:
 
 ```sh
-pnpm --filter webfetch eval
+pnpm --filter @mattrobenolt/pi-webfetch eval
+pnpm --filter @mattrobenolt/pi-webfetch eval:search -- --limit 50 --concurrency 3
 ```
 
-It fetches the corpus in `eval-corpus.json`, runs the extraction path, and prints rough size/token stats. It is intentionally package-local and not wired into CI. Use it when changing extraction, cleanup, or narrowing behavior.
+`eval` measures page extraction against `eval-corpus.json`. `eval:search` mines historical Pi sessions for user turns containing exactly one search followed by fetched URLs, uses those URLs as implicit relevance labels, runs a deterministic stratified sample against Exa and Jina, and reports exact/domain recall, reciprocal rank, latency, failures, result overlap, and a clearly labeled rank-heuristic comparison. Search eval output defaults to a timestamped JSON file under the system temp directory.

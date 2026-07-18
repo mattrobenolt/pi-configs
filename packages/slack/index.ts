@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { snappyUncompress } from "hysnappy";
 import { markdownToMrkdwn } from "./mrkdwn.js";
+import { validateSlackSearchDate, validateSlackSearchQuery } from "./search-query.js";
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const DEFAULT_USER_LOOKUP_LIMIT = 10;
@@ -248,64 +249,71 @@ const SlackReadParams = Type.Object({
   outputFile: OutputFileParam,
 });
 
-const SlackSearchParams = Type.Object({
-  query: Type.String({
-    description: "Search query for Slack messages.",
-  }),
-  channel: Type.Optional(
-    Type.String({
-      description: "Optional channel filter like '#general' or 'general'.",
+const SlackSearchParams = Type.Object(
+  {
+    query: Type.String({
+      description:
+        "Plain search terms only. Do not include in:, from:, after:, or before: operators; use the structured fields instead.",
     }),
-  ),
-  from: Type.Optional(
-    Type.String({
-      description: "Optional sender filter.",
-    }),
-  ),
-  after: Type.Optional(
-    Type.String({
-      description: "Optional lower date bound in YYYY-MM-DD format.",
-    }),
-  ),
-  before: Type.Optional(
-    Type.String({
-      description: "Optional upper date bound in YYYY-MM-DD format.",
-    }),
-  ),
-  mode: Type.Optional(
-    Type.Union([
-      Type.Literal("messages", { description: "Return messages." }),
-      Type.Literal("threads", { description: "Expand into full threads." }),
-    ]),
-  ),
-  sort: Type.Optional(
-    Type.Union([
-      Type.Literal("relevance", { description: "Sort by relevance." }),
-      Type.Literal("timestamp", { description: "Sort by timestamp." }),
-    ]),
-  ),
-  sort_dir: Type.Optional(
-    Type.Union([
-      Type.Literal("asc", { description: "Oldest first." }),
-      Type.Literal("desc", { description: "Newest first." }),
-    ]),
-  ),
-  page: Type.Optional(
-    Type.Number({
-      description: "1-indexed page number.",
-      minimum: 1,
-    }),
-  ),
-  limit: Type.Optional(
-    Type.Number({
-      description: `Max results. Default ${DEFAULT_SEARCH_LIMIT}; max ${MAX_SEARCH_LIMIT}.`,
-      minimum: 1,
-      maximum: MAX_SEARCH_LIMIT,
-    }),
-  ),
-  format: OutputFormatParam,
-  outputFile: OutputFileParam,
-});
+    channel: Type.Optional(
+      Type.String({
+        description: "Optional channel filter like '#general' or 'general'.",
+      }),
+    ),
+    from: Type.Optional(
+      Type.String({
+        description: "Optional sender filter.",
+      }),
+    ),
+    after: Type.Optional(
+      Type.String({
+        description:
+          "Optional lower calendar-date bound in YYYY-MM-DD format. For exact-time polling, use slack_channel_history.oldest.",
+        pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+      }),
+    ),
+    before: Type.Optional(
+      Type.String({
+        description: "Optional upper calendar-date bound in YYYY-MM-DD format.",
+        pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+      }),
+    ),
+    mode: Type.Optional(
+      Type.Union([
+        Type.Literal("messages", { description: "Return messages." }),
+        Type.Literal("threads", { description: "Expand into full threads." }),
+      ]),
+    ),
+    sort: Type.Optional(
+      Type.Union([
+        Type.Literal("relevance", { description: "Sort by relevance." }),
+        Type.Literal("timestamp", { description: "Sort by timestamp." }),
+      ]),
+    ),
+    sort_dir: Type.Optional(
+      Type.Union([
+        Type.Literal("asc", { description: "Oldest first." }),
+        Type.Literal("desc", { description: "Newest first." }),
+      ]),
+    ),
+    page: Type.Optional(
+      Type.Number({
+        description: "1-indexed page number.",
+        minimum: 1,
+      }),
+    ),
+    limit: Type.Optional(
+      Type.Number({
+        description: `Max results. Default ${DEFAULT_SEARCH_LIMIT}; max ${MAX_SEARCH_LIMIT}.`,
+        minimum: 1,
+        maximum: MAX_SEARCH_LIMIT,
+      }),
+    ),
+    format: OutputFormatParam,
+    outputFile: OutputFileParam,
+  },
+  { additionalProperties: false },
+);
 
 const SlackReplyParams = Type.Object({
   url: Type.Optional(
@@ -469,14 +477,6 @@ function validateTs(value: string, fieldName: string): string {
   const trimmed = value.trim();
   if (!/^\d{6,}\.\d{6}$/.test(trimmed)) {
     throw new Error(`Invalid ${fieldName}: ${value}`);
-  }
-  return trimmed;
-}
-
-function validateDate(value: string): string {
-  const trimmed = value.trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    throw new Error(`Invalid date: ${value} (expected YYYY-MM-DD)`);
   }
   return trimmed;
 }
@@ -1564,10 +1564,10 @@ async function buildSearchQuery(
   signal?: AbortSignal,
 ): Promise<string> {
   const parts: string[] = [];
-  const base = input.query.trim();
-  if (base) parts.push(base);
-  if (input.after) parts.push(`after:${validateDate(input.after)}`);
-  if (input.before) parts.push(`before:${validateDate(input.before)}`);
+  const query = validateSlackSearchQuery(input.query);
+  if (query) parts.push(query);
+  if (input.after) parts.push(`after:${validateSlackSearchDate(input.after)}`);
+  if (input.before) parts.push(`before:${validateSlackSearchDate(input.before)}`);
   if (input.channel)
     parts.push(await resolveSearchChannelToken(input.channel, workspaceUrl, signal));
   if (input.from) parts.push(await resolveSearchUserToken(input.from, workspaceUrl, signal));
@@ -3590,8 +3590,13 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "slack_search",
     label: "Slack Search",
-    description: "Search Slack messages or threads.",
-    promptSnippet: "Search Slack messages or expand results into threads.",
+    description:
+      "Search Slack messages or threads. Put channel, sender, and YYYY-MM-DD date filters in their structured fields, not in query. Use slack_channel_history.oldest for exact-time channel polling.",
+    promptSnippet: "Search Slack messages or expand results into threads with structured filters.",
+    promptGuidelines: [
+      "Keep slack_search.query to plain search terms and use its channel, from, after, and before fields for filters; after/before accept YYYY-MM-DD only.",
+      "Use slack_channel_history with oldest=nextOldest instead of slack_search when polling a channel after an exact message timestamp.",
+    ],
     parameters: SlackSearchParams,
     async execute(_toolCallId, params: SlackSearchInput, signal, onUpdate, ctx) {
       onUpdate?.({

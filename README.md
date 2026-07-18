@@ -137,7 +137,7 @@ Local workspaces:
 - `./packages/slack` — native Slack tools and background conversation loop
 - `./packages/term` — named terminal workspace backed by zellij
 - `./packages/todos` — file-backed todo manager and selector
-- `./packages/webfetch` — `webfetch` and `websearch` tools; GitHub-URL-aware fetching and Exa-powered search
+- `./packages/webfetch` — `webfetch` and `websearch` tools; GitHub-URL-aware fetching and capability-aware Exa/Jina search with failover
 
 Loaded via `settings.json`:
 

@@ -7,13 +7,15 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { loadWebfetchConfig } from "./config.ts";
 import { transformContent, validateAndNormalizeUrl } from "./core.ts";
+import { formatSearchResponse, searchWithFailover } from "./search.ts";
 import { narrowMarkdown } from "./narrow.ts";
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 const DEFAULT_WEBFETCH_TIMEOUT_SECONDS = 30;
 const MAX_WEBFETCH_TIMEOUT_SECONDS = 120;
-const WEBSEARCH_TIMEOUT_MS = 25_000;
+const WEBSEARCH_TIMEOUT_MS = 60_000;
 const DEFAULT_WEBSEARCH_RESULTS = 8;
+const MAX_WEBSEARCH_RESULTS = 100;
 
 const WEBSEARCH_BASE_URL = "https://mcp.exa.ai";
 const WEBSEARCH_ENDPOINT = "/mcp";
@@ -48,37 +50,71 @@ const WEBFETCH_PARAMS = Type.Object({
 type WebFetchParams = Static<typeof WEBFETCH_PARAMS>;
 
 const WEBSEARCH_PARAMS = Type.Object({
-  query: Type.String({ description: "Web search query" }),
+  query: Type.String({ description: "Natural-language web search query" }),
   numResults: Type.Optional(
-    Type.Number({
-      description: `Number of search results to return (default: ${DEFAULT_WEBSEARCH_RESULTS})`,
+    Type.Integer({
+      description: `Number of search results to return (default: ${DEFAULT_WEBSEARCH_RESULTS}, max: ${MAX_WEBSEARCH_RESULTS})`,
       minimum: 1,
-    }),
-  ),
-  livecrawl: Type.Optional(
-    StringEnum(["fallback", "preferred"] as const, {
-      description:
-        "Live crawl mode - 'fallback': use live crawling as backup if cached content is unavailable, 'preferred': prioritize live crawling.",
-      default: "fallback",
+      maximum: MAX_WEBSEARCH_RESULTS,
     }),
   ),
   type: Type.Optional(
-    StringEnum(["auto", "fast", "deep"] as const, {
+    StringEnum(["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"] as const, {
       description:
-        "Search type - 'auto': balanced (default), 'fast': quick results, 'deep': comprehensive search.",
+        "Search mode. Use auto by default, fast/instant for latency-sensitive lookups, and deep variants for multi-step research.",
       default: "auto",
     }),
   ),
-  contextMaxCharacters: Type.Optional(
-    Type.Number({
+  category: Type.Optional(
+    StringEnum(
+      ["company", "people", "research paper", "news", "personal site", "financial report"] as const,
+      { description: "Optional specialized search category" },
+    ),
+  ),
+  includeDomains: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Only return results from these domains",
+      maxItems: 1200,
+    }),
+  ),
+  excludeDomains: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Exclude results from these domains",
+      maxItems: 1200,
+    }),
+  ),
+  startPublishedDate: Type.Optional(
+    Type.String({ description: "Only return results published after this ISO 8601 date" }),
+  ),
+  endPublishedDate: Type.Optional(
+    Type.String({ description: "Only return results published before this ISO 8601 date" }),
+  ),
+  content: Type.Optional(
+    StringEnum(["highlights", "text", "none"] as const, {
       description:
-        "Maximum characters for context string optimized for LLMs (default provider behavior).",
+        "Content returned per result. Highlights are token-efficient (default); text returns fuller page content; none returns metadata only.",
+      default: "highlights",
+    }),
+  ),
+  maxCharacters: Type.Optional(
+    Type.Integer({
+      description: "Optional per-result character limit for highlights or text",
       minimum: 1,
     }),
   ),
+  maxAgeHours: Type.Optional(
+    Type.Integer({
+      description:
+        "Maximum cached-content age in hours. Omit for normal fallback crawling, 0 to always livecrawl, -1 for cache only.",
+      minimum: -1,
+    }),
+  ),
+  moderation: Type.Optional(
+    Type.Boolean({ description: "Filter unsafe or inappropriate results" }),
+  ),
 });
 
-type WebSearchParams = Static<typeof WEBSEARCH_PARAMS>;
+export type WebSearchParams = Static<typeof WEBSEARCH_PARAMS>;
 
 const WEBFETCH_DESCRIPTION = `Fetch a specific URL and return agent-readable content.
 
@@ -101,13 +137,18 @@ const WEBSEARCH_DESCRIPTION = `Search the web for current or unknown information
 Use websearch for open-ended questions, recent information, discovery, or when the user asks about something outside the model's knowledge. If the user provides a specific URL, use webfetch instead.
 
 Arguments:
-- query: search query. Include the current year (${new Date().getFullYear()}) for recent/news/current-event queries when useful.
-- numResults: number of results, default ${DEFAULT_WEBSEARCH_RESULTS}.
-- livecrawl: "fallback" (default) or "preferred". Use "preferred" when freshness matters more than speed.
-- type: "auto" (default), "fast", or "deep". Use "deep" for complex research, "fast" for quick lookup.
-- contextMaxCharacters: optional result context size limit.
+- query: natural-language search query. Include the current year (${new Date().getFullYear()}) for recent/news/current-event queries when useful.
+- numResults: result count, default ${DEFAULT_WEBSEARCH_RESULTS}, max ${MAX_WEBSEARCH_RESULTS}.
+- type: "auto" (default), "fast", "instant", "deep-lite", "deep", or "deep-reasoning".
+- category: optional specialized index for companies, people, research papers, news, personal sites, or financial reports.
+- includeDomains/excludeDomains: optional domain filters.
+- startPublishedDate/endPublishedDate: optional ISO 8601 publication-date filters.
+- content: "highlights" (default), "text", or "none". Prefer highlights unless full page content is necessary.
+- maxCharacters: optional per-result content limit.
+- maxAgeHours: omit for normal fallback crawling, 0 for always-live, or -1 for cache only.
+- moderation: optionally filter unsafe results.
 
-Output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} lines when needed.`;
+Provider routing is internal: Exa handles the full schema, Jina is used as capability-aware failover for ordinary searches, and Exa's rate-limited basic MCP search is the no-credential fallback. Output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} lines when needed.`;
 
 // --- GitHub URL handling ---
 
@@ -233,6 +274,15 @@ function summarizeText(text: string, maxLen = 160): string {
 // --- Main extension ---
 
 export default function (pi: ExtensionAPI) {
+  pi.registerProvider("exa", {
+    name: "Exa",
+    apiKey: "$EXA_API_KEY",
+  });
+  pi.registerProvider("jina", {
+    name: "Jina",
+    apiKey: "$JINA_API_KEY",
+  });
+
   pi.registerTool({
     name: "webfetch",
     label: "Web Fetch",
@@ -515,12 +565,22 @@ export default function (pi: ExtensionAPI) {
     name: "websearch",
     label: "Web Search",
     description: WEBSEARCH_DESCRIPTION,
-    promptSnippet: "Search the web using Exa and return a consolidated result snippet.",
+    promptSnippet: "Search the web and return a consolidated result snippet.",
     promptGuidelines: [
       "Use websearch for open-ended or recent-information questions.",
       "Add the current year to news and current-events queries when useful.",
     ],
     parameters: WEBSEARCH_PARAMS,
+    prepareArguments(args) {
+      if (!args || typeof args !== "object") return args as WebSearchParams;
+      const input = args as Record<string, unknown>;
+      const { livecrawl, contextMaxCharacters, ...current } = input;
+      if (current.maxAgeHours === undefined && livecrawl === "preferred") current.maxAgeHours = 0;
+      if (current.maxCharacters === undefined && typeof contextMaxCharacters === "number") {
+        current.maxCharacters = contextMaxCharacters;
+      }
+      return current as WebSearchParams;
+    },
     renderCall(args, theme) {
       const params = args as Partial<WebSearchParams>;
       let text = theme.fg("toolTitle", theme.bold("websearch "));
@@ -537,9 +597,63 @@ export default function (pi: ExtensionAPI) {
       }
       return new Text(text, 0, 0);
     },
-    async execute(_toolCallId, params: WebSearchParams, signal) {
-      const { signal: requestSignal, cleanup } = mergeAbortSignals(signal, WEBSEARCH_TIMEOUT_MS);
-      const payload = {
+    async execute(_toolCallId, params: WebSearchParams, signal, _onUpdate, ctx) {
+      const [exa, jina] = await Promise.all([
+        ctx.modelRegistry.getApiKeyForProvider("exa"),
+        ctx.modelRegistry.getApiKeyForProvider("jina"),
+      ]);
+      if (!exa?.trim() && !jina?.trim()) return searchExaMcp(params, signal);
+
+      const routed = await searchWithFailover(params, { exa, jina }, signal);
+      const output = formatSearchResponse(routed.response);
+      const truncated = await truncateForModelWithTempFile(output, "websearch");
+
+      return {
+        content: [{ type: "text", text: truncated.text }],
+        details: {
+          backend: routed.response.backend,
+          attempts: routed.attempts,
+          query: params.query,
+          numResults: params.numResults ?? DEFAULT_WEBSEARCH_RESULTS,
+          type: params.type ?? "auto",
+          category: params.category,
+          requestId: routed.response.requestId,
+          resolvedSearchType: routed.response.resolvedSearchType,
+          searchTime: routed.response.searchTime,
+          costDollars: routed.response.costDollars,
+          usage: routed.response.usage,
+          truncation: truncated.details,
+        },
+      };
+    },
+  });
+}
+
+async function searchExaMcp(params: WebSearchParams, parentSignal: AbortSignal | undefined) {
+  const usesAdvancedOptions =
+    (params.type !== undefined && params.type !== "auto") ||
+    params.category !== undefined ||
+    params.includeDomains !== undefined ||
+    params.excludeDomains !== undefined ||
+    params.startPublishedDate !== undefined ||
+    params.endPublishedDate !== undefined ||
+    (params.content !== undefined && params.content !== "highlights") ||
+    params.maxCharacters !== undefined ||
+    params.maxAgeHours !== undefined ||
+    params.moderation !== undefined;
+  if (usesAdvancedOptions) {
+    throw new Error("This websearch request uses options that require an Exa API key");
+  }
+
+  const { signal, cleanup } = mergeAbortSignals(parentSignal, WEBSEARCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${WEBSEARCH_BASE_URL}${WEBSEARCH_ENDPOINT}`, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
@@ -547,55 +661,35 @@ export default function (pi: ExtensionAPI) {
           name: "web_search_exa",
           arguments: {
             query: params.query,
-            type: params.type ?? "auto",
             numResults: params.numResults ?? DEFAULT_WEBSEARCH_RESULTS,
-            livecrawl: params.livecrawl ?? "fallback",
-            contextMaxCharacters: params.contextMaxCharacters,
           },
         },
-      };
+      }),
+      signal,
+    });
+    const responseText = await response.text();
+    if (!response.ok) throw new Error(`Search error (${response.status}): ${responseText}`);
 
-      let response: Response;
-      try {
-        response = await fetch(`${WEBSEARCH_BASE_URL}${WEBSEARCH_ENDPOINT}`, {
-          method: "POST",
-          headers: {
-            accept: "application/json, text/event-stream",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(payload),
-          signal: requestSignal,
-        });
-      } catch (error) {
-        cleanup();
-        if (isAbortError(error)) throw new Error("Search request timed out");
-        throw error;
-      }
-      cleanup();
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Search error (${response.status}): ${errorText}`);
-      }
-
-      const responseText = await response.text();
-      const parsedText = parseWebSearchResponse(responseText);
-      const output = parsedText || "No search results found. Please try a different query.";
-      const truncated = await truncateForModelWithTempFile(output, "websearch");
-
-      return {
-        content: [{ type: "text", text: truncated.text }],
-        details: {
-          query: params.query,
-          numResults: params.numResults ?? DEFAULT_WEBSEARCH_RESULTS,
-          livecrawl: params.livecrawl ?? "fallback",
-          type: params.type ?? "auto",
-          contextMaxCharacters: params.contextMaxCharacters,
-          truncation: truncated.details,
-        },
-      };
-    },
-  });
+    const output = parseWebSearchResponse(responseText);
+    const truncated = await truncateForModelWithTempFile(
+      output || "No search results found. Please try a different query.",
+      "websearch",
+    );
+    return {
+      content: [{ type: "text" as const, text: truncated.text }],
+      details: {
+        backend: "mcp",
+        query: params.query,
+        numResults: params.numResults ?? DEFAULT_WEBSEARCH_RESULTS,
+        truncation: truncated.details,
+      },
+    };
+  } catch (error) {
+    if (signal.aborted) throw new Error("Search request timed out or was cancelled");
+    throw error;
+  } finally {
+    cleanup();
+  }
 }
 
 function buildWebFetchHeaders(format: "markdown" | "raw") {
@@ -617,32 +711,28 @@ function buildWebFetchHeaders(format: "markdown" | "raw") {
   };
 }
 
-function parseWebSearchResponse(text: string): string | null {
-  const eventPayloads = parseSsePayloads(text);
-  for (const payload of eventPayloads) {
+export function parseWebSearchResponse(text: string): string | null {
+  const payloads = [...parseSsePayloads(text), text];
+  for (const payload of payloads) {
     if (payload === "[DONE]") continue;
-    try {
-      const data = JSON.parse(payload) as {
-        result?: { content?: Array<{ type?: string; text?: string }> };
+    let data: {
+      error?: { message?: string };
+      result?: {
+        isError?: boolean;
+        content?: Array<{ type?: string; text?: string }>;
       };
-      const firstText = data.result?.content?.find(
-        (item) => typeof item.text === "string" && item.text.length > 0,
-      )?.text;
-      if (firstText) return firstText;
-    } catch {
-      // ignore malformed lines
-    }
-  }
-  try {
-    const json = JSON.parse(text) as {
-      result?: { content?: Array<{ type?: string; text?: string }> };
     };
-    const firstText = json.result?.content?.find(
+    try {
+      data = JSON.parse(payload) as typeof data;
+    } catch {
+      continue;
+    }
+    if (data.error) throw new Error(data.error.message || "Exa MCP search failed");
+    const firstText = data.result?.content?.find(
       (item) => typeof item.text === "string" && item.text.length > 0,
     )?.text;
+    if (data.result?.isError) throw new Error(firstText || "Exa MCP search failed");
     if (firstText) return firstText;
-  } catch {
-    // ignore non-JSON fallback
   }
   return null;
 }

@@ -14,10 +14,33 @@ Prefer demonstrated behavior, project conventions, and documented requirements
 over personal preference. When multiple approaches are equally valid, accept
 the author's choice.
 
-## Verify before commenting
+## Start with the premise and design
 
-Understand why the change exists and what requirements or contracts it must
-satisfy. Review the design and scope before polishing individual lines.
+Before reviewing individual lines, step back and ask whether the change is the
+right way to advance the larger goal. A PR is a design decision, not merely a
+patch to inspect mechanically.
+
+Understand why the change exists, what outcome it serves, and what requirements
+or constraints shape it. Consider its fit with the surrounding architecture,
+long-term maintainability, operational burden, migration path, and technical
+debt. Question the premise when the change entrenches a workaround, introduces
+a weak abstraction, duplicates an existing capability, creates avoidable
+coupling, or commits the project to a costly direction. A fundamental design
+concern is valid review feedback even when every changed line works as written.
+
+Do not invent a grand redesign merely because one is imaginable. Distinguish a
+foreseeable maintenance cost introduced by this change from a speculative
+future requirement, and accept a local solution when it is genuinely the
+simplest coherent design.
+
+When this judgment depends on missing product, architectural, historical, or
+operational context, ask the user before settling on a verdict or publishing the
+feedback. State the assumption and why the answer matters. Use the user as a
+source of context rather than silently guessing. Ask the PR author on GitHub
+only when the answer belongs in the project record or the user cannot resolve
+it. Prefer a short dialogue over a confident review built on a false premise.
+
+## Verify before commenting
 
 Read the complete diff and enough surrounding code to understand each concern.
 Inspect callers, tests, configuration, documentation, dependencies, and history
@@ -240,6 +263,9 @@ then record the decision and reasoning in the PR for future readers.
 
 Before submitting, check:
 
+- Does the change's premise and design advance the larger goal coherently?
+- Did any consequential missing context get resolved with the user rather than
+  assumed?
 - Is each finding supported by code or another primary source?
 - Is it caused or materially worsened by this change?
 - Is its blocking status honest?

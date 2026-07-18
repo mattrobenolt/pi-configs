@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { parseModelSpec } from "./config.ts";
+import { parseWebSearchResponse } from "./index.ts";
+import {
+  buildExaSearchRequest,
+  formatSearchResponse,
+  jinaUnsupportedReason,
+  SearchBackendError,
+  searchJina,
+  searchWithFailover,
+} from "./search.ts";
 import {
   cleanMarkdown,
   convertHTMLToMarkdown,
@@ -374,6 +383,216 @@ test("splitMarkdownSections preserves heading paths", () => {
   assert.deepEqual(
     sections.map((section) => section.path),
     [["API"], ["API", "Auth"], ["API", "Auth", "Tokens"], ["API", "Billing"]],
+  );
+});
+
+test("buildExaSearchRequest defaults to auto search with highlights", () => {
+  assert.deepEqual(buildExaSearchRequest({ query: "Zig 0.15 allocators" }), {
+    query: "Zig 0.15 allocators",
+    type: "auto",
+    numResults: 8,
+    contents: { highlights: true },
+  });
+});
+
+test("buildExaSearchRequest maps filters, content, and freshness", () => {
+  assert.deepEqual(
+    buildExaSearchRequest({
+      query: "AI regulation",
+      type: "deep",
+      numResults: 12,
+      category: "news",
+      includeDomains: ["reuters.com"],
+      excludeDomains: ["example.com"],
+      startPublishedDate: "2026-01-01",
+      endPublishedDate: "2026-07-01",
+      content: "text",
+      maxCharacters: 5000,
+      maxAgeHours: 0,
+      moderation: true,
+    }),
+    {
+      query: "AI regulation",
+      type: "deep",
+      numResults: 12,
+      category: "news",
+      includeDomains: ["reuters.com"],
+      excludeDomains: ["example.com"],
+      startPublishedDate: "2026-01-01",
+      endPublishedDate: "2026-07-01",
+      moderation: true,
+      contents: { text: { maxCharacters: 5000 }, maxAgeHours: 0 },
+    },
+  );
+});
+
+test("buildExaSearchRequest rejects filters unsupported by entity categories", () => {
+  assert.throws(
+    () =>
+      buildExaSearchRequest({
+        query: "database engineers",
+        category: "people",
+        startPublishedDate: "2026-01-01",
+      }),
+    /does not support/,
+  );
+});
+
+test("jinaUnsupportedReason rejects Exa-only controls", () => {
+  assert.equal(jinaUnsupportedReason({ query: "x", type: "deep" }), "search type deep");
+  assert.equal(
+    jinaUnsupportedReason({ query: "x", includeDomains: ["a.com", "b.com"] }),
+    "multiple includeDomains",
+  );
+  assert.equal(jinaUnsupportedReason({ query: "x", maxAgeHours: 0 }), undefined);
+});
+
+test("SearchBackendError allows backend availability failures to fail over", () => {
+  assert.equal(new SearchBackendError("exa", "transient", "timeout").canFailOver, true);
+  assert.equal(new SearchBackendError("exa", "quota", "limited").canFailOver, true);
+  assert.equal(new SearchBackendError("exa", "auth", "bad key").canFailOver, true);
+  assert.equal(new SearchBackendError("exa", "request", "bad input").canFailOver, false);
+  assert.equal(new SearchBackendError("exa", "cancelled", "cancelled").canFailOver, false);
+});
+
+test("searchJina preserves cancellation while waiting to retry", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ message: "rate limited" }), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": "30" },
+    });
+  const controller = new AbortController();
+  const search = searchJina({ query: "test" }, "jina-key", controller.signal);
+  setTimeout(() => controller.abort(), 5);
+
+  try {
+    await assert.rejects(
+      search,
+      (error: unknown) => error instanceof SearchBackendError && error.kind === "cancelled",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("searchJina treats response-stream failures as transient", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new Error("connection reset"));
+        },
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+
+  try {
+    await assert.rejects(
+      searchJina({ query: "test" }, "jina-key"),
+      (error: unknown) => error instanceof SearchBackendError && error.kind === "transient",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("searchJina treats its no-results 422 as an empty search", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ message: "No search results available for query test" }), {
+      status: 422,
+      headers: { "content-type": "application/json" },
+    });
+
+  try {
+    const response = await searchJina({ query: "test" }, "jina-key");
+    assert.deepEqual(response.results, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("searchWithFailover routes Exa authentication failures to Jina and cools Exa down", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes("api.exa.ai")) {
+      return new Response(JSON.stringify({ error: "invalid API key" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({
+        data: [{ title: "Jina result", url: "https://example.com", description: "Useful" }],
+        meta: { usage: { tokens: 10000 } },
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+  };
+
+  try {
+    const credentials = { exa: "bad-exa-key", jina: "jina-key" };
+    const routed = await searchWithFailover({ query: "test", content: "none" }, credentials);
+    assert.equal(routed.response.backend, "jina");
+    assert.deepEqual(
+      routed.attempts.map(({ backend, outcome }) => ({ backend, outcome })),
+      [
+        { backend: "exa", outcome: "failed" },
+        { backend: "jina", outcome: "success" },
+      ],
+    );
+
+    const duringCooldown = await searchWithFailover(
+      { query: "test", content: "none" },
+      credentials,
+    );
+    assert.equal(duringCooldown.response.backend, "jina");
+    assert.equal(duringCooldown.attempts[0].outcome, "skipped");
+    assert.match(duringCooldown.attempts[0].reason ?? "", /^cooldown for 300s$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("formatSearchResponse includes answers, results, and unique citations", () => {
+  const output = formatSearchResponse({
+    backend: "exa",
+    answer: "Grounded answer",
+    citations: [
+      { title: "Official docs", url: "https://example.com/docs" },
+      { title: "Official docs", url: "https://example.com/docs" },
+    ],
+    results: [
+      {
+        title: "Example",
+        url: "https://example.com",
+        highlights: ["Relevant excerpt"],
+      },
+    ],
+  });
+
+  assert.match(output, /Answer:\nGrounded answer/);
+  assert.match(output, /Title: Example/);
+  assert.match(output, /Highlights:\nRelevant excerpt/);
+  assert.equal(output.match(/Official docs/g)?.length, 1);
+});
+
+test("parseWebSearchResponse surfaces MCP tool errors", () => {
+  assert.throws(
+    () =>
+      parseWebSearchResponse(
+        JSON.stringify({
+          result: { isError: true, content: [{ type: "text", text: "rate limited" }] },
+        }),
+      ),
+    /rate limited/,
+  );
+  assert.throws(
+    () => parseWebSearchResponse(JSON.stringify({ error: { message: "bad request" } })),
+    /bad request/,
   );
 });
 
