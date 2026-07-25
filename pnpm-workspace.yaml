@@ -2,9 +2,9 @@ packages:
   - packages/*
 
 catalog:
-  '@earendil-works/pi-ai': '0.80.9'
-  '@earendil-works/pi-coding-agent': '0.80.9'
-  '@earendil-works/pi-tui': '0.80.9'
+  '@earendil-works/pi-ai': '0.82.0'
+  '@earendil-works/pi-coding-agent': '0.82.0'
+  '@earendil-works/pi-tui': '0.82.0'
   '@pierre/diffs': ^1.2.12
   '@types/node': ^26.1.1
   '@types/turndown': ^5.0.6

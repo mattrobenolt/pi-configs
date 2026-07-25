@@ -87,6 +87,10 @@ try map.put(allocator, "key", 42);
 
 Initialize with `.empty`, NOT `.init()` or `.{}`.
 
+### MemoryPool alignment is stronger than item alignment
+
+`std.heap.MemoryPoolAligned` floors `item_alignment` at `@alignOf(*anyopaque)` because freed items store a linked-list node. A pool configured below pointer alignment therefore returns over-aligned slots. When casting a byte pointer back to the pool item type for `destroy`, use `Pool.item_alignment`, not the requested alignment.
+
 ### Build system
 
 ```zig

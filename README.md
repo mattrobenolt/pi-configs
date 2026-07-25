@@ -132,7 +132,7 @@ Local workspaces:
 
 - `./packages/better-diff` — syntax-highlighted edit/write diff renderer
 - `./packages/memory` — five-target memory system with qmd-backed search
-- `./packages/notion` — `notion_read` and `notion_search` tools via NOTION_TOKEN or macOS app token
+- `./packages/notion` — Notion read/search plus page, block, database-row, and archive tools via NOTION_TOKEN or macOS app token
 - `./packages/pi-core` — shared primitives used by local pi extensions and packages
 - `./packages/slack` — native Slack tools and background conversation loop
 - `./packages/term` — named terminal workspace backed by zellij

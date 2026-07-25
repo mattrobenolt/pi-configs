@@ -483,7 +483,15 @@ export default function (pi: ExtensionAPI) {
     const renderMessage = useRainbow
       ? () => rainbowShimmer(message, ctx.ui.theme, tick++)
       : () => normalShimmer(message, ctx.ui.theme, tick++);
-    const render = () => ctx.ui.setWorkingMessage(renderMessage());
+    const render = () => {
+      try {
+        ctx.ui.setWorkingMessage(renderMessage());
+      } catch {
+        // ctx is stale after session replacement/reload — stop the timer.
+        if (timer) clearInterval(timer);
+        timer = undefined;
+      }
+    };
 
     render();
     timer = setInterval(render, useRainbow ? 90 : 80);

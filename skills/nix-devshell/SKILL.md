@@ -109,6 +109,27 @@ All PlanetScale projects use `flake-parts` with `planetscale/nix-devshell` modul
 - Composition patterns, input conventions, version overrides
 - Multiple shells, allowUnfree, lock file discipline
 
+## Formatting Nix Files (`nix fmt`)
+
+Nix flakes can expose a `formatter` output that makes `nix fmt` work out of the box — no extra config files needed. The simplest option is `nixfmt-tree`, which bundles nixfmt pre-wrapped with its own treefmt config inside the derivation:
+
+```nix
+perSystem =
+  { system, ... }:
+  let
+    pkgs = import nixpkgs { inherit system; };
+  in
+  {
+    formatter = pkgs.nixfmt-tree;
+
+    devShells.default = pkgs.mkShell { ... };
+  };
+```
+
+Then `nix fmt` formats all `.nix` files in the repo. No `treefmt.toml`, no separate `treefmt` or `nixfmt` packages in the devShell — just the one `formatter` line.
+
+Do **not** use `pkgs.nixfmt` directly as the formatter — it doesn't accept the `treefmt`-style arguments that `nix fmt` passes. `nixfmt-tree` is the correct wrapper.
+
 ## Key Rules
 
 - The devShell is the **sole** source of development dependencies. Never work around it.

@@ -5,10 +5,17 @@
     "get_last_payload",
     "get_system_prompt",
     "get_tools",
+    "intercom",
     "mcp",
     "memory_last_context",
+    "notion_append_blocks",
+    "notion_archive_page",
+    "notion_create_database_row",
+    "notion_create_page",
     "notion_read",
     "notion_search",
+    "notion_update_database_row",
+    "notion_update_page",
     "scratchpad",
     "slack_channel_history",
     "slack_conversation_interject",
@@ -21,6 +28,7 @@
     "slack_search",
     "slack_start_conversation",
     "slack_stop_conversation",
-    "slack_user_lookup"
+    "slack_user_lookup",
+    "subagent_supervisor"
   ]
 }

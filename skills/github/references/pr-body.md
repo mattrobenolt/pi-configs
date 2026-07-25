@@ -223,12 +223,30 @@ fixes, explain the failing scenario and the evidence that now covers it.
 
 ## Link work precisely
 
-Use GitHub closing keywords such as `Fixes owner/repo#123` only when merging the
-PR should close that issue. Use `Related to owner/repo#123` or plain prose when
-the relationship is informational.
+When merging this PR should close an issue, put a GitHub closing keyword in the
+PR body. Prefer `Fixes #123` for a same-repository issue and
+`Fixes owner/repo#123` for a cross-repository issue. The `#` is required:
+`Fixes 123` does not use the required issue-reference syntax. `Fix #123` is a
+valid alternative, but prefer the conventional `Fixes #123`; a bare issue
+reference only links the issue.
 
-Use `owner/repo#number` for cross-repository issues and PRs. Avoid bare issue
-numbers when they could resolve to the wrong repository.
+GitHub also recognizes `Close`, `Closes`, `Closed`, `Fix`, `Fixes`, `Fixed`,
+`Resolve`, `Resolves`, and `Resolved`, in any case and optionally followed by a
+colon. Use one clear keyword per issue when closing several, for example:
+
+```markdown
+Fixes #123
+Fixes owner/repo#456
+```
+
+Closing keywords work only when the PR targets the repository's default branch;
+otherwise use an informational reference or link the issue manually. Do not put
+the closing keyword only in a commit message: it can close the issue after
+merge, but GitHub will not show the PR as its linked pull request.
+
+Use `Related to owner/repo#123` or plain prose when the relationship is
+informational. Use `owner/repo#number` for cross-repository issues and PRs.
+Avoid bare issue numbers when they could resolve to the wrong repository.
 
 Link design documents, incidents, and prior decisions, but preserve the
 load-bearing context in the body in case an external or private link becomes
