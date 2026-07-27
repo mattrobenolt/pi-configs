@@ -17,6 +17,7 @@ import {
   decodeHtmlEntities,
   extractMarkdownAlternateUrl,
   extractTextFromHTML,
+  readResponseBytes,
   transformContent,
   validateAndNormalizeUrl,
 } from "./core.ts";
@@ -76,6 +77,24 @@ test("convertHTMLToMarkdown removes document chrome tags and converts basic mark
   assert.doesNotMatch(markdown, /meta/);
 });
 
+test("readResponseBytes stops oversized streamed responses", async () => {
+  let cancelled = false;
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(4));
+        controller.enqueue(new Uint8Array(4));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }),
+  );
+
+  await assert.rejects(readResponseBytes(response, 5), /Response too large/);
+  assert.equal(cancelled, true);
+});
+
 test("transformContent returns raw content when requested", async () => {
   const html = "<main><h1>Hello</h1></main>";
   assert.equal(await transformContent(html, "text/html", "raw", "https://example.com"), html);
@@ -111,6 +130,26 @@ test("transformContent uses Defuddle's Node API for html markdown extraction", a
   assert.match(markdown, /main article content/);
   assert.match(markdown, /Read more/);
   assert.doesNotMatch(markdown, /Navigation/);
+});
+
+test("transformContent handles CSS-special IDs during Defuddle's hidden-content retry", async () => {
+  const errors: unknown[][] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+
+  try {
+    const markdown = await transformContent(
+      `<main><p>tiny</p></main><div id="foo:4" hidden>${"word ".repeat(40)}</div>`,
+      "text/html",
+      "markdown",
+      "https://example.com/article",
+    );
+
+    assert.match(markdown, /tiny/);
+    assert.deepEqual(errors, []);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 // --- extractMarkdownAlternateUrl ---
@@ -239,6 +278,40 @@ test("transformContent falls back to Defuddle when alternate URL returns 404", a
     mockFetch,
   );
   assert.match(result, /Actual page content/);
+});
+
+test("transformContent cancels alternate markdown fetches", async () => {
+  const html = `<!doctype html><html><head>
+    <link rel="alternate" type="text/markdown" href="/page.md">
+  </head><body><main><p>Fallback content.</p></main></body></html>`;
+  const controller = new AbortController();
+  let alternateSignal: AbortSignal | null = null;
+  const mockFetch: typeof globalThis.fetch = async (_input, init) => {
+    alternateSignal = init?.signal ?? null;
+    return new Promise<Response>((_resolve, reject) => {
+      alternateSignal?.addEventListener(
+        "abort",
+        () => reject(new DOMException("Aborted", "AbortError")),
+        {
+          once: true,
+        },
+      );
+    });
+  };
+
+  const pending = transformContent(
+    html,
+    "text/html",
+    "markdown",
+    "https://example.com/page",
+    mockFetch,
+    controller.signal,
+  );
+  controller.abort();
+
+  const result = await pending;
+  assert.equal((alternateSignal as AbortSignal | null)?.aborted, true);
+  assert.match(result, /Fallback content/);
 });
 
 // --- chunkMarkdown ---

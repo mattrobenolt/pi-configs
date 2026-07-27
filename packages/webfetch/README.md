@@ -7,6 +7,12 @@ A pi extension that gives agents two web tools:
 
 The bias is simple: make web pages useful to an agent without handing it a giant pile of HTML soup. `webfetch` defaults to markdown, cleans up common extraction junk, handles GitHub URLs specially, and can optionally narrow long pages to only the parts relevant to an objective.
 
+Install it with:
+
+```sh
+pi install npm:@mattrobenolt/pi-webfetch
+```
+
 ## Tools
 
 ### `webfetch`

@@ -11,7 +11,7 @@ Use text grep for plain strings. Use compiler/type tooling for type-driven seman
 
 ## Workflow
 
-1. Check the tool exists: `command -v ast-grep || command -v sg`. Use `ast-grep` unless only `sg` exists. In a flake project, add it to the devshell instead of installing globally.
+1. Check the tool exists: `command -v ast-grep || command -v sg`. Use `ast-grep` unless only `sg` exists. When a project pins `@ast-grep/cli`, use that installation and expose its `node_modules/.bin` through the devshell; do not add a competing Nix copy. Add ast-grep to Nix only when the project has no native package manifest.
 2. Search before rewriting. Start narrow and inspect real matches:
    ```sh
    ast-grep -p 'PATTERN' -l ts src

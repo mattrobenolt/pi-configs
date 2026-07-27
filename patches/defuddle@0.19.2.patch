@@ -1,0 +1,24 @@
+diff --git a/dist/defuddle.js b/dist/defuddle.js
+index e9b3879c491f272dfe372f967338121704dc1a47..4c317665bc4132c815b0894afb235a14212fc804 100644
+--- a/dist/defuddle.js
++++ b/dist/defuddle.js
+@@ -19,6 +19,10 @@ const dom_1 = require("./utils/dom");
+ const STANDARD_VARIABLE_KEYS = new Set(['title', 'author', 'published', 'site', 'description', 'image', 'language']);
+ // CSS-special characters that make class names invalid in selectors (Tailwind utilities like sm:pt-[131px])
+ const UNSAFE_CSS_CLASS_RE = /[:\[\]()#>~+,]/;
++const CSS_STRING_ESCAPE_RE = /[\0-\x1f\x7f"\\]/g;
++const escapeCssString = (value) => value.replace(CSS_STRING_ESCAPE_RE, char => char === '"' || char === '\\'
++    ? `\\${char}`
++    : `\\${char.charCodeAt(0).toString(16)} `);
+ class Defuddle {
+     /**
+      * Create a new Defuddle instance
+@@ -1195,7 +1199,7 @@ class Defuddle {
+         while (current && current !== this.doc.documentElement) {
+             let selector = current.tagName.toLowerCase();
+             if (current.id) {
+-                selector += '#' + current.id;
++                selector += `[id="${escapeCssString(current.id)}"]`;
+             }
+             else if ((0, dom_1.getClassName)(current)) {
+                 const safe = (0, dom_1.getClassName)(current).trim().split(/\s+/)

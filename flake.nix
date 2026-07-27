@@ -25,6 +25,7 @@
               gh
               pnpm
             ];
+            env.NPM_CONFIG_MIN_RELEASE_AGE = "0";
           };
         };
     };

@@ -1,6 +1,6 @@
 {
   "name": "@mattrobenolt/pi-webfetch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "keywords": [
     "pi-package"
   ],
@@ -15,15 +15,18 @@
     "lint": "oxlint index.ts core.ts config.ts narrow.ts search.ts tool-output.ts index.test.ts eval.ts eval-search.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "catalog:",
-    "@earendil-works/pi-coding-agent": "catalog:",
     "defuddle": "catalog:",
-    "turndown": "catalog:",
-    "typebox": "catalog:"
+    "turndown": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@types/turndown": "catalog:"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": [

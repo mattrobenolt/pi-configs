@@ -14,3 +14,5 @@ local-llm-evals/
 *.pyc
 __pycache__/
 skills/wwmd/replay/
+mcp-cache.json
+mcp-onboarding.json

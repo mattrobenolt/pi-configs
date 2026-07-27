@@ -2,6 +2,7 @@ import { truncateForModel, writeOptionalOutputFile } from "@mattrobenolt/pi-core
 import {
   createAgentSession,
   createExtensionRuntime,
+  ModelRuntime,
   SessionManager,
   type ExtensionAPI,
   type ExtensionContext,
@@ -195,7 +196,7 @@ type ConversationState = {
   systemContext: string;
   myUserId: string;
   model: NonNullable<ExtensionContext["model"]>;
-  modelRegistry: ExtensionContext["modelRegistry"];
+  modelRuntime: ModelRuntime;
   transcript: TranscriptEntry[];
   lastActivity: Date;
   status: ConversationStatus;
@@ -3427,6 +3428,23 @@ async function interruptCurrentTurn(conv: ConversationState): Promise<void> {
   }
 }
 
+async function createConversationModelRuntime(
+  registry: ExtensionContext["modelRegistry"],
+  providerId: string,
+): Promise<ModelRuntime> {
+  const runtime = await ModelRuntime.create();
+  const nativeProvider = registry.getRegisteredNativeProvider(providerId);
+  const providerConfig = registry.getRegisteredProviderConfig(providerId);
+
+  if (nativeProvider) runtime.registerNativeProvider(nativeProvider);
+  else if (providerConfig) runtime.registerProvider(providerId, providerConfig);
+
+  const auth = await registry.getProviderAuth(providerId);
+  if (auth?.auth.apiKey) await runtime.setRuntimeApiKey(providerId, auth.auth.apiKey);
+
+  return runtime;
+}
+
 async function generateAndSendReply(
   conv: ConversationState,
   messages: PendingMessage[],
@@ -3456,9 +3474,7 @@ async function generateAndSendReply(
     const result = await createAgentSession({
       sessionManager: SessionManager.inMemory(),
       model: conv.model,
-      modelRegistry: conv.modelRegistry as
-        | import("@earendil-works/pi-coding-agent").ModelRegistry
-        | undefined,
+      modelRuntime: conv.modelRuntime,
       thinkingLevel: "off",
       tools: [],
       resourceLoader: makeConversationResourceLoader(conv.systemContext),
@@ -3913,6 +3929,10 @@ export default function (pi: ExtensionAPI) {
 
       const rtmSocket = await connectRtm(workspaceUrl);
 
+      const modelRuntime = await createConversationModelRuntime(
+        ctx.modelRegistry,
+        ctx.model.provider,
+      );
       const conv: ConversationState = {
         workspaceUrl,
         channelId,
@@ -3926,7 +3946,7 @@ export default function (pi: ExtensionAPI) {
         systemContext,
         myUserId,
         model: ctx.model,
-        modelRegistry: ctx.modelRegistry,
+        modelRuntime,
         transcript: [],
         lastActivity: new Date(),
         status: "idle",

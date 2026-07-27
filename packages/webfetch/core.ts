@@ -28,6 +28,42 @@ const DEFUDDLE_OPTS = {
   standardize: true,
 } as const;
 
+export async function readResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && Number.parseInt(contentLength, 10) > maxBytes)
+    throw new Error(`Response too large (exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB limit)`);
+
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array(await response.arrayBuffer());
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error(
+          `Response too large (exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB limit)`,
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
 export function validateAndNormalizeUrl(value: string): string {
   let parsed: URL;
   try {
@@ -46,6 +82,8 @@ export async function transformContent(
   format: "markdown" | "raw",
   url = "about:blank",
   fetchFn: typeof globalThis.fetch = globalThis.fetch,
+  signal?: AbortSignal,
+  maxResponseBytes = 5 * 1024 * 1024,
 ): Promise<string> {
   if (format === "raw") return raw;
   if (contentType.toLowerCase().includes("text/html")) {
@@ -55,7 +93,9 @@ export async function transformContent(
       try {
         const res = await fetchFn(alternateUrl, {
           headers: { Accept: "text/markdown, text/plain;q=0.9, */*;q=0.1" },
-          signal: AbortSignal.timeout(10_000),
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+            : AbortSignal.timeout(10_000),
         });
         if (res.ok) {
           const ct = res.headers.get("content-type") ?? "";
@@ -65,7 +105,7 @@ export async function transformContent(
             alternateUrl.endsWith(".md") ||
             alternateUrl.endsWith(".mdx")
           ) {
-            const text = await res.text();
+            const text = new TextDecoder().decode(await readResponseBytes(res, maxResponseBytes));
             if (text.trim()) return cleanMarkdown(text);
           }
         }

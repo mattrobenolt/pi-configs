@@ -6,7 +6,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { loadWebfetchConfig } from "./config.ts";
-import { transformContent, validateAndNormalizeUrl } from "./core.ts";
+import { readResponseBytes, transformContent, validateAndNormalizeUrl } from "./core.ts";
 import { formatSearchResponse, searchWithFailover } from "./search.ts";
 import { narrowMarkdown } from "./narrow.ts";
 
@@ -481,6 +481,7 @@ export default function (pi: ExtensionAPI) {
       const { signal: requestSignal, cleanup } = mergeAbortSignals(signal, timeoutSeconds * 1000);
 
       let response: Response;
+      let responseBytes: Uint8Array;
       try {
         const headers = buildWebFetchHeaders(format);
         const initial = await fetch(normalizedUrl, { signal: requestSignal, headers });
@@ -491,23 +492,17 @@ export default function (pi: ExtensionAPI) {
                 headers: { ...headers, "User-Agent": "pi-web-tools" },
               })
             : initial;
+
+        if (!response.ok) throw new Error(`Request failed with status code: ${response.status}`);
+
+        responseBytes = await readResponseBytes(response, MAX_RESPONSE_SIZE);
       } catch (error) {
-        cleanup();
-        if (isAbortError(error))
+        if (requestSignal.aborted || isAbortError(error))
           throw new Error(`Request timed out after ${timeoutSeconds} seconds`);
         throw error;
+      } finally {
+        cleanup();
       }
-      cleanup();
-
-      if (!response.ok) throw new Error(`Request failed with status code: ${response.status}`);
-
-      const contentLength = response.headers.get("content-length");
-      if (contentLength && Number.parseInt(contentLength, 10) > MAX_RESPONSE_SIZE)
-        throw new Error("Response too large (exceeds 5MB limit)");
-
-      const arrayBuffer = await response.arrayBuffer();
-      if (arrayBuffer.byteLength > MAX_RESPONSE_SIZE)
-        throw new Error("Response too large (exceeds 5MB limit)");
 
       const contentType = response.headers.get("content-type") ?? "application/octet-stream";
       const mime = contentType.split(";")[0]?.trim().toLowerCase() || "application/octet-stream";
@@ -517,14 +512,22 @@ export default function (pi: ExtensionAPI) {
         return {
           content: [
             { type: "text", text: `Fetched image: ${normalizedUrl} (${mime})` },
-            { type: "image", data: Buffer.from(arrayBuffer).toString("base64"), mimeType: mime },
+            { type: "image", data: Buffer.from(responseBytes).toString("base64"), mimeType: mime },
           ],
-          details: { url: normalizedUrl, format, contentType, bytes: arrayBuffer.byteLength },
+          details: { url: normalizedUrl, format, contentType, bytes: responseBytes.byteLength },
         };
       }
 
-      const raw = new TextDecoder().decode(arrayBuffer);
-      const transformed = await transformContent(raw, contentType, format, normalizedUrl);
+      const raw = new TextDecoder().decode(responseBytes);
+      const transformed = await transformContent(
+        raw,
+        contentType,
+        format,
+        normalizedUrl,
+        undefined,
+        signal,
+        MAX_RESPONSE_SIZE,
+      );
 
       // Optional: LLM-based objective narrowing. Best-effort — falls back to full markdown.
       const { objective } = params;
@@ -551,7 +554,7 @@ export default function (pi: ExtensionAPI) {
           url: normalizedUrl,
           format,
           contentType,
-          bytes: arrayBuffer.byteLength,
+          bytes: responseBytes.byteLength,
           narrowed,
           narrowingModel,
           narrowingDiagnostics,

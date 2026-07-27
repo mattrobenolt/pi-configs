@@ -1,15 +1,27 @@
 import { expandHome } from "@mattrobenolt/pi-core/files";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isBashToolResult, isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { exec } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import { exec, type ExecException, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { watch, type FSWatcher } from "node:fs";
 import * as path from "node:path";
 
 type DirenvValue = string | null;
 type DirenvStatus = "on" | "blocked" | "error" | "off";
+type DirenvResult = {
+  status: DirenvStatus;
+  summary?: string;
+  detail?: string;
+};
+type DirenvFailure = {
+  cwd: string;
+  trigger: string;
+  startedAt: number;
+  durationMs: number;
+  result: DirenvResult;
+};
 
+const DIRENV_STATUS_DETAIL_MAX_LENGTH = 80;
 const RELOAD_DEBOUNCE_MS = 300;
 const WATCH_TARGETS = [".envrc", ".envrc.local", "flake.nix", "flake.lock", "devshell.toml"];
 
@@ -142,21 +154,74 @@ function changeDirectory(pi: ExtensionAPI, cwd: string): void {
   pi.events.emit("local:cwd_changed", process.cwd());
 }
 
-function parseStatus(error: Error | null, stderr: string): DirenvStatus | null {
-  if (!error) return null;
-  const message = `${stderr}\n${error.message}`.toLowerCase();
-  return /allow|blocked|denied|not allowed/.test(message) ? "blocked" : "error";
+function cleanDirenvDetail(text: string): string {
+  return text
+    .split("\x1b")
+    .map((part, index) => (index === 0 ? part : part.replace(/^\[[0-9;]*m/, "")))
+    .join("")
+    .trim();
 }
 
-function setDirenvStatus(ctx: ExtensionContext, status: DirenvStatus): void {
+function summarizeDirenvDetail(detail: string): string {
+  const lines = detail
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line &&
+        !/^command failed:/i.test(line) &&
+        !/^direnv: (?:error )?exit status \d+$/i.test(line) &&
+        line.toLowerCase() !== "error:",
+    );
+  const summary =
+    lines.find((line) => /^(?:error|fatal):\s+\S/i.test(line)) ?? lines[0] ?? "unknown error";
+  const normalized = summary.replace(/^direnv:\s*(?:error\s*)?/i, "");
+
+  return normalized.length > DIRENV_STATUS_DETAIL_MAX_LENGTH
+    ? `${normalized.slice(0, DIRENV_STATUS_DETAIL_MAX_LENGTH - 1)}…`
+    : normalized;
+}
+
+function getDirenvFailure(error: ExecException, stderr: string): DirenvResult {
+  const stderrDetail = cleanDirenvDetail(stderr);
+  const fallbackDetail = cleanDirenvDetail(error.message);
+  const detail = stderrDetail || fallbackDetail || "direnv export failed without an error message";
+  const message = `${detail}\n${fallbackDetail}`.toLowerCase();
+
+  if (/allow|blocked|denied|not allowed/.test(message)) {
+    return { status: "blocked", summary: "run direnv allow", detail };
+  }
+
+  return { status: "error", summary: summarizeDirenvDetail(detail), detail };
+}
+
+function formatDuration(durationMs: number): string {
+  return durationMs < 1_000 ? `${durationMs}ms` : `${(durationMs / 1_000).toFixed(1)}s`;
+}
+
+function formatDirenvFailure(failure: DirenvFailure): string {
+  return [
+    `time: ${new Date(failure.startedAt).toLocaleTimeString()}`,
+    `trigger: ${failure.trigger}`,
+    `duration: ${formatDuration(failure.durationMs)}`,
+    `cwd: ${formatHomePath(failure.cwd)}`,
+    "",
+    failure.result.detail ?? failure.result.summary ?? "No error detail",
+  ].join("\n");
+}
+
+function setDirenvStatus(ctx: ExtensionContext, result: DirenvResult): void {
   if (!ctx.hasUI) return;
 
-  if (status === "on" || status === "off") {
+  if (result.status === "on" || result.status === "off") {
     ctx.ui.setStatus("direnv", undefined);
     return;
   }
 
-  ctx.ui.setStatus("direnv", status === "blocked" ? "direnv:blocked" : "direnv:error");
+  const label = result.status === "blocked" ? "direnv:blocked" : "direnv:error";
+  const color = result.status === "blocked" ? "warning" : "error";
+  const summary = result.summary ? ` ${result.summary}` : "";
+  ctx.ui.setStatus("direnv", ctx.ui.theme.fg(color, `${label} [run /direnv]${summary}`));
 }
 
 function applyEnv(env: Record<string, DirenvValue>): number {
@@ -184,32 +249,38 @@ function getDirenvFingerprint(cwd: string): string {
   }).join("|");
 }
 
-function loadDirenv(cwd: string, ctx: ExtensionContext): Promise<void> {
+function loadDirenv(cwd: string, ctx: ExtensionContext): Promise<DirenvResult> {
   return new Promise((resolve) => {
+    const finish = (result: DirenvResult): void => {
+      setDirenvStatus(ctx, result);
+      resolve(result);
+    };
+
     exec(
       "direnv export json",
-      { cwd, env: { ...process.env, DIRENV_LOG_FORMAT: "" }, timeout: 10_000 },
+      { cwd, env: { ...process.env, DIRENV_LOG_FORMAT: "" } },
       (error, stdout, stderr) => {
-        const errorStatus = parseStatus(error, stderr);
-        if (errorStatus) {
-          setDirenvStatus(ctx, errorStatus);
-          resolve();
+        if (error) {
+          finish(getDirenvFailure(error, stderr));
           return;
         }
 
         if (!stdout.trim()) {
-          setDirenvStatus(ctx, "off");
-          resolve();
+          finish({ status: "off" });
           return;
         }
 
         try {
           const loaded = applyEnv(JSON.parse(stdout) as Record<string, DirenvValue>);
-          setDirenvStatus(ctx, loaded > 0 ? "on" : "off");
-        } catch {
-          setDirenvStatus(ctx, "error");
+          finish({ status: loaded > 0 ? "on" : "off" });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          finish({
+            status: "error",
+            summary: "invalid JSON output",
+            detail: `Could not parse direnv export output: ${detail}`,
+          });
         }
-        resolve();
       },
     );
   });
@@ -239,6 +310,10 @@ export default function (pi: ExtensionAPI) {
   let watchers: FSWatcher[] = [];
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
   let direnvFingerprint: string | null = null;
+  let currentDirenvResult: DirenvResult = { status: "off" };
+  let activeDirenvRefresh: Promise<DirenvResult> | null = null;
+  let lastDirenvFailure: DirenvFailure | null = null;
+  const pendingReloadTargets = new Set<string>();
 
   function stopWatchers(): void {
     for (const watcher of watchers) {
@@ -252,15 +327,19 @@ export default function (pi: ExtensionAPI) {
       clearTimeout(reloadTimer);
       reloadTimer = null;
     }
+    pendingReloadTargets.clear();
   }
 
-  function scheduleReload(cwd: string): void {
+  function scheduleReload(cwd: string, target: string): void {
     if (!latestCtx) return;
+    pendingReloadTargets.add(target);
     if (reloadTimer) clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => {
       reloadTimer = null;
+      const targets = [...pendingReloadTargets].sort().join(", ");
+      pendingReloadTargets.clear();
       if (!latestCtx || cwd !== process.cwd()) return;
-      void refreshDirenv(cwd, latestCtx);
+      void refreshDirenvIfChanged(cwd, `changed: ${targets}`);
     }, RELOAD_DEBOUNCE_MS);
   }
 
@@ -269,35 +348,64 @@ export default function (pi: ExtensionAPI) {
 
     for (const target of WATCH_TARGETS) {
       try {
-        watchers.push(watch(path.join(cwd, target), () => scheduleReload(cwd)));
+        watchers.push(watch(path.join(cwd, target), () => scheduleReload(cwd, target)));
       } catch {}
     }
   }
 
-  async function refreshDirenv(cwd: string, ctx: ExtensionContext): Promise<void> {
-    await loadDirenv(cwd, ctx);
-    direnvFingerprint = getDirenvFingerprint(cwd);
+  async function refreshDirenv(
+    cwd: string,
+    ctx: ExtensionContext,
+    trigger: string,
+  ): Promise<DirenvResult> {
+    while (activeDirenvRefresh) await activeDirenvRefresh;
+
+    const fingerprint = getDirenvFingerprint(cwd);
+    const startedAt = Date.now();
+    if (ctx.hasUI) {
+      ctx.ui.setStatus("direnv", ctx.ui.theme.fg("warning", "direnv:loading"));
+    }
+    const refresh = loadDirenv(cwd, ctx);
+    activeDirenvRefresh = refresh;
+
+    try {
+      const result = await refresh;
+      const durationMs = Date.now() - startedAt;
+      if (result.status === "blocked" || result.status === "error") {
+        lastDirenvFailure = { cwd, trigger, startedAt, durationMs, result };
+      }
+      currentDirenvResult = result;
+      direnvFingerprint = fingerprint;
+      return result;
+    } finally {
+      if (activeDirenvRefresh === refresh) activeDirenvRefresh = null;
+    }
   }
 
-  function reloadForCwd(cwd: string, ctx: ExtensionContext): void {
+  function reloadForCwd(
+    cwd: string,
+    ctx: ExtensionContext,
+    trigger: string,
+  ): Promise<DirenvResult> {
     direnvFingerprint = null;
-    void refreshDirenv(cwd, ctx);
     startWatchers(cwd);
+    return refreshDirenv(cwd, ctx, trigger);
   }
 
-  async function refreshDirenvIfChanged(cwd: string): Promise<void> {
-    if (!latestCtx) return;
+  async function refreshDirenvIfChanged(cwd: string, trigger: string): Promise<DirenvResult> {
+    if (!latestCtx) return { status: "error", detail: "direnv context is unavailable" };
+    while (activeDirenvRefresh) await activeDirenvRefresh;
 
     const nextFingerprint = getDirenvFingerprint(cwd);
-    if (nextFingerprint === direnvFingerprint) return;
+    if (nextFingerprint === direnvFingerprint) return currentDirenvResult;
 
-    await refreshDirenv(cwd, latestCtx);
+    return refreshDirenv(cwd, latestCtx, trigger);
   }
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     latestCtx = ctx;
     pi.events.emit("local:cwd_changed", process.cwd());
-    reloadForCwd(process.cwd(), ctx);
+    await reloadForCwd(process.cwd(), ctx, "session startup");
   });
 
   pi.on("session_shutdown", () => {
@@ -322,17 +430,43 @@ export default function (pi: ExtensionAPI) {
       }
 
       changeDirectory(pi, nextCwd);
-      reloadForCwd(process.cwd(), ctx);
+      lastDirenvFailure = null;
+      await reloadForCwd(process.cwd(), ctx, "cwd changed");
       ctx.ui.notify(`cwd → ${formatHomePath(process.cwd())}`, "info");
     },
   });
 
   pi.registerCommand("direnv", {
-    description: "Reload direnv environment variables for the current working directory",
+    description: "Reload direnv and show the full reason for any failure",
     handler: async (_args, ctx) => {
       latestCtx = ctx;
-      reloadForCwd(process.cwd(), ctx);
-      ctx.ui.notify("direnv reloaded", "info");
+      const cwd = process.cwd();
+      const result = await reloadForCwd(cwd, ctx, "manual /direnv");
+
+      if (result.status === "blocked" || result.status === "error") {
+        const failure = lastDirenvFailure;
+        const hint = result.status === "blocked" ? "\n\nRun `direnv allow` in that directory." : "";
+        ctx.ui.notify(
+          `direnv still fails:\n${failure ? formatDirenvFailure(failure) : (result.detail ?? "No error detail")}${hint}`,
+          result.status === "blocked" ? "warning" : "error",
+        );
+        return;
+      }
+
+      const recoveredFailure = lastDirenvFailure?.cwd === cwd ? lastDirenvFailure : null;
+      if (recoveredFailure) {
+        ctx.ui.notify(
+          `direnv recovered on manual retry. Previous failure:\n${formatDirenvFailure(recoveredFailure)}`,
+          "warning",
+        );
+        lastDirenvFailure = null;
+        return;
+      }
+
+      ctx.ui.notify(
+        result.status === "on" ? "direnv environment reloaded" : "No direnv changes to load",
+        "info",
+      );
     },
   });
 
@@ -350,7 +484,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {
     if (isToolCallEventType("bash", event)) {
       const cwd = process.cwd();
-      await refreshDirenvIfChanged(cwd);
+      const direnvResult = await refreshDirenvIfChanged(cwd, "watched files changed before bash");
+      if (direnvResult.status === "blocked" || direnvResult.status === "error") {
+        return {
+          block: true,
+          reason: direnvResult.detail ?? direnvResult.summary ?? "direnv failed to load",
+        };
+      }
       const rewritten = await rewriteWithRtk(pi, event.input.command);
       event.input.command = wrapForCwd(rewritten, cwd);
       return;
