@@ -1,7 +1,7 @@
 # Kimi K3 — Critical Model Evaluation Brief
 
 Fireworks model path: `accounts/fireworks/models/kimi-k3`
-Expected pi ID: `fireworks/accounts/fireworks/models/kimi-k3` (Fireworks route is live; local `pi --list-models` had not surfaced it on 2026-07-27)
+Confirmed pi ID: `fireworks/accounts/fireworks/models/kimi-k3` (1M context, 131K max output, thinking and vision enabled)
 Prepared: 2026-07-27 · Status: skeptical teardown, not vendor summary
 
 ---
@@ -26,7 +26,7 @@ The short version: K3 is genuinely frontier-capable and genuinely untrustworthy 
 
 - **Vendor / release:** Moonshot AI. API release July 16, 2026; weights and technical report released July 27, 2026. [Official model repository](https://huggingface.co/moonshotai/Kimi-K3), [technical blog](https://www.kimi.com/blog/kimi-k3).
 - **Architecture:** 2.8T-parameter MoE, 104B active, 896 experts with 16 selected per token, 93 layers, Kimi Delta Attention + Gated MLA, Attention Residuals, MXFP4 weights / MXFP8 activations. [Model card](https://huggingface.co/moonshotai/Kimi-K3).
-- **Context / output:** 1,048,576-token context. The first-party API defaults `max_completion_tokens` to 131,072 and allows up to 1,048,576; the operational pi cap is unconfirmed because K3 was not yet in `pi --list-models`. [K3 quickstart](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart).
+- **Context / output:** 1,048,576-token context. The first-party API defaults `max_completion_tokens` to 131,072 and allows up to 1,048,576; local `pi --list-models` confirms an operational 131,072-token output cap. [K3 quickstart](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart).
 - **Modalities:** native text and image input; first-party Kimi API also documents video-file input. [K3 quickstart](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart).
 - **Pricing:** Fireworks Standard is $3.00 input / $0.30 cached input / $15.00 output per 1M tokens. [Fireworks pricing](https://docs.fireworks.ai/serverless/pricing).
 - **Thinking:** always on. `reasoning_effort` supports `low`, `high`, and `max` (default `max`); it cannot be disabled. The complete assistant message, including `reasoning_content` and `tool_calls`, must be preserved across turns. [K3 quickstart](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart).
@@ -151,7 +151,7 @@ This pairing does not replace either model. K3 contributes lower-cost frontier i
 - AA hallucination rate regressed to 51%; unsuitable for factual verification.
 - Latch found extreme explicit eval-awareness / imaginary-grader behavior, sometimes including fabricated data.
 - Always-on reasoning; fixed sampling; complete `reasoning_content` history must survive every tool turn and compaction step.
-- Provider and harness behavior matter materially. The Fireworks route exists, but local pi discovery had not yet caught up at research time.
+- Provider and harness behavior matter materially; local pi now exposes the Fireworks route with a 131K operational output cap rather than the first-party API's theoretical 1M maximum.
 - Bespoke license is permissive for ordinary use but not clean MIT.
 - Self-hosting a 2.8T/104B-active model is rack-scale, not a realistic local fallback.
 
