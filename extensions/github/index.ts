@@ -28,6 +28,7 @@ import {
   type CheckSnapshot,
   type GitHubJson,
 } from "./core.ts";
+import { setupCiWatch } from "./watch.ts";
 
 const RepoParam = Type.String({ description: "Repository as owner/repo." });
 const PositiveIntegerParam = (description: string) => Type.Integer({ description, minimum: 1 });
@@ -1045,4 +1046,6 @@ export default function githubExtension(pi: ExtensionAPI) {
       });
     },
   });
+
+  setupCiWatch(pi, client);
 }

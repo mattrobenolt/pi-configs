@@ -2,7 +2,7 @@
 name: worker
 description: Implements tasks from todos - writes code, runs tests, commits with polished messages
 tools: read, bash, write, edit
-model: anthropic/claude-sonnet-5
+model: fireworks/accounts/fireworks/models/glm-5p2
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: false

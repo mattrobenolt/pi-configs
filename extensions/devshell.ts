@@ -4,6 +4,7 @@ import { isBashToolResult, isToolCallEventType } from "@earendil-works/pi-coding
 import { exec, type ExecException, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { watch, type FSWatcher } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 type DirenvValue = string | null;
@@ -32,6 +33,14 @@ function formatHomePath(cwd: string): string {
 
 function shellQuote(input: string): string {
   return `'${input.replaceAll("'", "'\\''")}'`;
+}
+
+function readFileIfExists(file: string): string {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 function resolvePathInput(input: string, cwd: string): string {
@@ -251,17 +260,26 @@ function getDirenvFingerprint(cwd: string): string {
 
 function loadDirenv(cwd: string, ctx: ExtensionContext): Promise<DirenvResult> {
   return new Promise((resolve) => {
+    const stderrDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-direnv-"));
+    const stderrPath = path.join(stderrDir, "stderr.log");
+
     const finish = (result: DirenvResult): void => {
       setDirenvStatus(ctx, result);
       resolve(result);
     };
 
+    // nix-direnv reopens /dev/stderr during cache invalidation, which can fail under
+    // Node-owned stdio. Give it a real file and read diagnostics back after.
     exec(
-      "direnv export json",
+      `direnv export json 2>${shellQuote(stderrPath)}`,
       { cwd, env: { ...process.env, DIRENV_LOG_FORMAT: "" } },
       (error, stdout, stderr) => {
+        const redirectedStderr = readFileIfExists(stderrPath);
+        const direnvStderr = [redirectedStderr, stderr].filter(Boolean).join("\n");
+        fs.rmSync(stderrDir, { recursive: true, force: true });
+
         if (error) {
-          finish(getDirenvFailure(error, stderr));
+          finish(getDirenvFailure(error, direnvStderr));
           return;
         }
 

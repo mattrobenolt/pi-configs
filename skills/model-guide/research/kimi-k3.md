@@ -178,6 +178,49 @@ This pairing does not replace either model. K3 contributes lower-cost frontier i
 
 ---
 
+## 9. Post-launch findings (2026-07-29)
+
+Thirteen days of API availability and two days of open weights later, the routing verdict from §1 stands unchanged: additive paired executor, never solo, never self-accepting. The new evidence sharpens operations, not strategy.
+
+### Throughput and capacity — it's the provider, not the model
+
+AA's [per-provider board](https://artificialanalysis.ai/models/kimi-k3/providers) (9 providers, measured 2026-07-29) splits K3's speed by serving stack, with a 416% spread between fastest and slowest:
+
+| Provider | Median tok/s | First chunk | Total response |
+| --- | ---: | ---: | ---: |
+| Makora | 170 | 1.28s | 16.0s |
+| **Fireworks** | **163** | **1.09s** | **16.5s** |
+| Databricks | 139 | 1.06s | 19.1s |
+| Nebius | 127 | 1.69s | 21.4s |
+| Modal | 89 | 1.74s | 30.0s |
+| Kimi (first-party) | 33 | 4.34s | 80.4s |
+
+Fireworks' raw throughput beats the Fable 5 ~71-85 tok/s comparison band; even there, reasoning dominated the response (12.3s of the 16.5s at max effort), so thinking effort is the latency lever. The launch-week "K3 is slow" story was the **first-party Kimi API**: 33 tok/s, OpenRouter 429 warnings, and Moonshot pausing consumer subscriptions within 48h as demand exceeded contingency plans ([TechTimes](https://www.techtimes.com/articles/321499/20260724/kimi-k3-open-weights-drop-july-27-near-frontier-coding-undisclosed-hallucination-risk.htm)). The New Stack's "~4x slower than Fable 5" (relayed in [dev.to hands-on](https://dev.to/dmaxdev/kimi-k3-review-the-28t-open-model-that-beats-claude-on-paper-oog)) was measured against that stack and conflates verbosity with token rate.
+
+- **Field report (Matt, 2026-07-29):** K3 via Fireworks is "actually quite fast" and is being used in the interactive loop. Consistent with the AA Fireworks row.
+- Routing consequence: on Fireworks, K3 is interactive-viable; avoid the first-party Kimi route for anything latency-sensitive. Per-task token burn stays ~2x median on every provider (verbosity + undeactivatable thinking), so speed doesn't fix cost-per-task. Capacity can shift on any single provider — know your fallback, but don't treat K3 itself as batch-shaped.
+
+### In-the-wild behavior (corroborates §5)
+
+- Hands-on coding reports describe confident invention of nonexistent APIs inside otherwise clean diffs — e.g. `pd.read_parquet(path, engine="polars")` and a nonexistent Go stdlib helper — exactly the failure shape the 51% AA-Omniscience regression predicts ([dev.to](https://dev.to/dmaxdev/kimi-k3-review-the-28t-open-model-that-beats-claude-on-paper-oog)).
+- Error recovery is weaker than Fable 5/Sol: K3 tends to double down on a wrong assumption rather than re-theorize from a failing test. Community consensus adds "persistent and task-completion-oriented, but token-hungry, slower, prone to looping" ([AI Critique synthesis](https://www.aicritique.org/us/2026/07/21/moonshot-ais-kimi-k3/)).
+- Verbosity is measured, not vibes: K3 generated ~130M output tokens on AA's Intelligence Index run vs a 63M median, because it defaults to max reasoning ([i-scoop](https://www.i-scoop.eu/kimi-k3/)).
+- Moonshot's own launch post warns K3 is **"excessively proactive"** under ambiguity and "may make unexpected decisions on the user's behalf," advising explicit behavioral constraints ([Moonshot launch blog](https://www.kimi.com/blog/kimi-k3)). For subagent delegation this means task specs carry explicit non-goals, and runs get turn/token budgets — K3's failure shape is an expensive confident loop, not a quick wrong answer.
+
+### Additional neutral numbers
+
+- AA-Briefcase (private agentic eval): 1547 Elo, 2nd behind Fable 5; +732 over K2.6. AutomationBench-AA: 53%, 1st. GDPval-AA v2: 1668 (3rd; Fable 1760, Sol 1743, Opus 4.8 1600). [AA K3 article](https://artificialanalysis.ai/articles/kimi-k3-achieves-3-in-the-artificial-analysis-intelligence-index-comparable-to-opus-4-8-and-gpt-5-5), [itlibra](https://arte.itlibra.com/en/articles/kimi-k3-benchmarks-price-open-weights).
+- Terminal-Bench 2.1 harness spread: Moonshot 88.3% (Kimi Code) vs Vals AI 80.9% independent — a 7.4-point single-benchmark vendor discount, quantified ([Digital Applied](https://www.digitalapplied.com/blog/kimi-k3-benchmarks-hallucination-eval-before-adopt-2026)). Vals composite: 74.7 (2nd of 38).
+- Calibration on the 51% hallucination rate: the metric is incorrect / (incorrect + partial + not-attempted), i.e. guess-vs-abstain, and Fable 5 posts 54.9% on it ([TechTimes](https://www.techtimes.com/articles/321499/20260724/kimi-k3-open-weights-drop-july-27-near-frontier-coding-undisclosed-hallucination-risk.htm)). The disqualification-from-verification stands on the *trajectory* (39→51%), not on the absolute level.
+
+### Watch items
+
+- **Qwen3.8-Max-Preview**: Alibaba's 2.4T fast-follow launched three days after K3, claimed to trail only Fable 5, weights promised. No neutral numbers yet — apply the standard new-model protocol before considering a route.
+- A White House official publicly accused Moonshot of distilling Anthropic models; unproven and geopolitically charged, not a routing input.
+- Moonshot never publicly addressed an April 2026 cross-user data breach, and Chinese legal obligations apply to the first-party API regardless of hosting ([TechTimes](https://www.techtimes.com/articles/321499/20260724/kimi-k3-open-weights-drop-july-27-near-frontier-coding-undisclosed-hallucination-risk.htm)). The Fireworks route sidesteps most of this; don't send sensitive repos through Moonshot's own API.
+
+---
+
 ## Sources
 
 - https://www.kimi.com/blog/kimi-k3

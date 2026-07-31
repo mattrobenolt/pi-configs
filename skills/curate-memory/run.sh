@@ -96,8 +96,21 @@ if not $should_run { exit 0 }
 
 ensure-qmd-daemon
 
-# Run curation via pi
-pi --print --no-session --no-extensions --no-skills --no-prompt-templates --model "anthropic/claude-haiku-4-5" --skill $"($env.HOME)/.pi/agent/skills/curate-memory/SKILL.md" --tools read,write,bash,find "curate memory"
+# Run curation via pi, capturing output so we can gate the last-run stamp on actual success.
+# GLM 5.2 per the model-guide: Matt's default — cheap, open-weight, strong coding, text-only (fine here).
+let result = (pi --print --no-session --no-extensions --no-skills --no-prompt-templates --no-context-files --model "fireworks/accounts/fireworks/models/glm-5p2" --skill $"($env.HOME)/.pi/agent/skills/curate-memory/SKILL.md" --tools read,write,bash,find "curate memory" | complete)
 
-# Record successful run
-$now | format date "%+" | save --force $last_run_file
+# Re-emit output so launchd's redirect keeps curation.log complete
+if not ($result.stdout | is-empty) { print $result.stdout }
+if not ($result.stderr | is-empty) { print $result.stderr }
+
+# Only stamp last-run when the skill actually finished. The skill prints
+# "curation complete" to stdout as its final line; if that marker is absent
+# the model chatted instead of curating, so we leave the timestamp alone and
+# the next hourly tick will retry instead of silently resetting the gate.
+let succeeded = ($result.exit_code == 0) and ($result.stdout | str contains --ignore-case "curation complete")
+if $succeeded {
+    (date now) | format date "%Y-%m-%dT%H:%M:%S%:z" | save --force $last_run_file
+} else {
+    print "Curation did not complete (no 'curation complete' marker in stdout); last-run timestamp not updated, next tick will retry"
+}

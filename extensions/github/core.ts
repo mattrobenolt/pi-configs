@@ -200,6 +200,24 @@ export function splitRepo(repo: string): { owner: string; name: string; path: st
   };
 }
 
+/**
+ * Extracts owner/repo from a git remote URL pointing at github.com.
+ * Handles https, ssh scp-style, and ssh:// forms, with or without .git.
+ */
+export function parseGitHubRemote(url: string): string | undefined {
+  const text = url.trim().replace(/\.git$/, "");
+  const match =
+    text.match(/^git@github\.com:([^/]+\/[^/]+)$/) ??
+    text.match(/^(?:https|ssh):\/\/(?:git@)?github\.com\/([^/]+\/[^/]+)$/);
+  if (!match) return undefined;
+  try {
+    const { owner, name } = splitRepo(match[1]);
+    return `${owner}/${name}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export type GitHubRefKind = "issue_comment" | "review_comment" | "review";
 
 export function parseNumericRef(
@@ -405,6 +423,30 @@ export function summarizeChecks(checkRuns: GitHubJson[], statuses: GitHubJson[])
   };
 }
 
+export async function loadCommitChecks(
+  client: GitHubClient,
+  repo: string,
+  sha: string,
+  signal?: AbortSignal,
+): Promise<CheckSnapshot> {
+  const { path } = splitRepo(repo);
+  const [checkRuns, statuses] = await Promise.all([
+    paginateObjectItems<GitHubJson>(
+      client,
+      `${path}/commits/${encodeURIComponent(sha)}/check-runs`,
+      "check_runs",
+      signal,
+    ),
+    paginateObjectItems<GitHubJson>(
+      client,
+      `${path}/commits/${encodeURIComponent(sha)}/status`,
+      "statuses",
+      signal,
+    ),
+  ]);
+  return summarizeChecks(checkRuns, statuses);
+}
+
 export async function loadPullChecks(
   client: GitHubClient,
   repo: string,
@@ -414,24 +456,11 @@ export async function loadPullChecks(
   const { path } = splitRepo(repo);
   const pull = await client.request<GitHubJson>("GET", `${path}/pulls/${pullNumber}`, { signal });
   const headSha = requireString(pull.head?.sha, "PR head SHA");
-  const [checkRuns, statuses] = await Promise.all([
-    paginateObjectItems<GitHubJson>(
-      client,
-      `${path}/commits/${encodeURIComponent(headSha)}/check-runs`,
-      "check_runs",
-      signal,
-    ),
-    paginateObjectItems<GitHubJson>(
-      client,
-      `${path}/commits/${encodeURIComponent(headSha)}/status`,
-      "statuses",
-      signal,
-    ),
-  ]);
+  const snapshot = await loadCommitChecks(client, repo, headSha, signal);
 
   return {
     head_sha: headSha,
-    snapshot: summarizeChecks(checkRuns, statuses),
+    snapshot,
   };
 }
 

@@ -2,7 +2,7 @@
 name: reviewer
 description: Code review agent - reviews changes for correctness, security, and maintainability
 tools: read, bash
-model: anthropic/claude-opus-4-8
+model: anthropic/claude-opus-5
 thinking: medium
 spawning: false
 auto-exit: true

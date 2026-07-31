@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Memory Curation
 
-You are running in non-interactive mode. Process each memory file systematically and exit. Do not ask for confirmation — just do the work.
+You are running in non-interactive mode via `pi --print`. Process each memory file systematically with tools, then stop. Do not ask for confirmation — just do the work. Do not summarize, discuss, or describe what you would do — execute every step with `read`, `bash`, `find`, and `write`. Your final stdout line **must** be the `curation complete` marker described at the bottom; the launchd wrapper gates its success check on that line appearing verbatim, so if you omit it the run is treated as a failure and retried next hour.
 
 ## Files to curate
 
@@ -191,10 +191,10 @@ Run qmd update to re-index:
 qmd update
 ```
 
-Append final log entry:
+Print this final completion line to **stdout** (not to curation.log — the wrapper forwards stdout to the log and reads this marker to decide whether the run succeeded):
 
 ```
 [YYYY-MM-DD HH:MM:SS] curation complete — <N> files processed, <M> skipped
 ```
 
-Then print a brief summary of what was done to stdout.
+This must be your last line of stdout, verbatim. Do not print anything after it.

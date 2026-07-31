@@ -25,8 +25,11 @@ or constraints shape it. Consider its fit with the surrounding architecture,
 long-term maintainability, operational burden, migration path, and technical
 debt. Question the premise when the change entrenches a workaround, introduces
 a weak abstraction, duplicates an existing capability, creates avoidable
-coupling, or commits the project to a costly direction. A fundamental design
-concern is valid review feedback even when every changed line works as written.
+coupling, or commits the project to a costly direction. Check whether the
+change solves the problem or only its reported instance: whether the same
+defect class survives at other call sites, or the change patches a symptom
+one layer away from its cause. A fundamental design concern is valid review
+feedback even when every changed line works as written.
 
 Do not invent a grand redesign merely because one is imaginable. Distinguish a
 foreseeable maintenance cost introduced by this change from a speculative
@@ -40,16 +43,120 @@ source of context rather than silently guessing. Ask the PR author on GitHub
 only when the answer belongs in the project record or the user cannot resolve
 it. Prefer a short dialogue over a confident review built on a false premise.
 
+## Judge the dialect, not just the diff
+
+Correctness is not the only way a change fails. Code can be functional and
+still wrong for the codebase: written in a foreign dialect, with idioms
+transplanted from another ecosystem or abstractions at the wrong altitude for
+their surroundings. This failure is invisible in the diff itself — every line
+can be locally correct — so it never surfaces without deliberate comparison
+against the code the change lives among.
+
+Before settling findings, construct the codebase-native version of the
+change:
+
+- Read two or three neighboring modules that solve analogous problems, not to
+  trace calls but to sample the dialect: error handling, resource ownership,
+  naming vocabulary, control flow, and test style.
+- Sketch how the same change would look under the codebase's own conventions.
+  The distance between the PR and that shape is the finding.
+- When the native shape is substantially smaller, suspect reimplementation:
+  check whether the standard library or an existing module already provides
+  the capability.
+- Where a compiled taste reference exists — the project's style guide or a
+  language reference such as tiger-style for Zig — check against it. These
+  references convert taste into citable rules.
+
+Dialect violations can be blocking feedback even when every line works, but
+they carry the same evidence standard as correctness findings. Demonstrate
+the convention: cite at least two existing modules or a written project
+guide. Name the maintenance cost: what future readers must learn, what
+becomes harder to change. If the convention cannot be cited and the cost
+named, the finding is personal preference; demote it or drop it. A choice is
+"equally valid" only when its cost is private to the change — when the cost
+lands on every future reader, the codebase's convention is the requirement,
+not a preference.
+
+A whole change written in a foreign dialect is one design-level finding, not
+a pile of line comments. Raise it once in the review summary, with the
+convention evidence and the native shape, instead of annotating dozens of
+lines with the same concern.
+
+## Trace beyond the diff
+
+A clean-looking diff can still be wrong where it meets the rest of the
+system. Follow the changed code outward before judging it.
+
+- **Follow implementations.** When the diff changes how a function is
+  called — new arguments, removed guards, widened conditions — read the
+  implementation. Understand what it does on success and on failure. A
+  removed guard is not a style change; find what the unguarded path
+  actually does.
+- **Check error paths across layers.** If one layer handles a condition
+  gracefully (treating a status code as empty, catching a specific
+  exception), check whether the other layers on the same path do the same.
+  Mismatched error handling between layers is a common source of
+  production bugs.
+- **Trace data across boundaries.** When data crosses a boundary (server
+  to client, producer to consumer, caller to callee), verify it is
+  populated and consistent on both sides. For a new consumer, check
+  availability at the point of consumption — on first use, not just
+  eventually.
+- **Cross-reference conventions.** When the codebase has an established
+  pattern for the same concern, read the analogous existing code and check
+  what the diff omits.
+
+Bug shapes this catches:
+
+- A function that throws on HTTP 405, called from a context where 405 is
+  expected and should be treated as empty.
+- A component that reads asynchronously populated data before the first
+  fetch completes, flashing incorrect state.
+- A guard removed where the caller never handles the previously guarded
+  error.
+
+The purpose is to find issues that only surface when the changed code is
+understood in interaction with the rest of the system, not whether the
+diff itself looks clean.
+
 ## Verify before commenting
 
 Read the complete diff and enough surrounding code to understand each concern.
 Inspect callers, tests, configuration, documentation, dependencies, and history
 when they affect whether a finding is real.
 
-Verify factual claims whenever practical. Run a focused test, trace the call
-path, consult the governing specification, or cite the project convention. Do
-not turn an unverified suspicion into a blocking comment. Distinguish observed
-behavior from inference, and state material uncertainty.
+Verify factual claims before asserting them. A blocking finding needs a
+precise falsifiable claim, supported reachability from an accepted entry
+point, and a demonstrated failure — a reproduction or a direct conflict with
+an explicit contract. Run a focused test, trace the call path, or consult the
+governing specification, then try once to kill the claim: check alternative
+paths, guards, validation, and legal orderings that would make the
+observation correct behavior.
+
+Source-level suspicion is a hazard until it produces a forbidden outcome. A
+plausible mechanism with only a static trace — a suspicious helper with no
+supported caller, an error path no accepted input can reach — is not a
+demonstrated defect. Report it as a question or non-blocking concern, name
+the missing evidence, and do not inflate it into a blocker. Several weak
+facts do not add up to one strong fact, and confidence is not a substitute
+for a missing gate. Distinguish observed behavior from inference, and state
+material uncertainty.
+
+Label the evidence level behind each finding: static source trace, focused
+unit test, integration test, end-to-end test, or production observation.
+Never describe one level as another. A mocked test proves only the boundary
+the mock represents.
+
+For claims about an external system's semantics, state the authority level:
+documented guarantee, conformance test, upstream source, observed behavior of
+a named version, or inference. Only a documented guarantee or an explicit
+contract supports a compatibility-defect finding; when the contract permits
+the observed behavior, it is a permitted difference, not a defect. Do not
+demand a particular ordering when the contract permits several.
+
+Verification is a bounded audit, not a second unlimited review. Run at most
+one targeted experiment per claim; when a gate cannot be filled, report the
+status and the missing evidence rather than expanding the search.
 
 Read existing review threads before commenting. Do not repeat feedback already
 raised or fixed on a later commit.
@@ -264,9 +371,15 @@ then record the decision and reasoning in the PR for future readers.
 Before submitting, check:
 
 - Does the change's premise and design advance the larger goal coherently?
+- Was the change compared against the codebase's dialect, with any mismatch
+  cited to existing modules rather than asserted as taste?
 - Did any consequential missing context get resolved with the user rather than
   assumed?
+- Were changed calls, error paths, and data boundaries traced beyond the diff?
 - Is each finding supported by code or another primary source?
+- Does each blocking finding have supported reachability and a demonstrated
+  failure — with anything short of that downgraded and its missing evidence
+  named?
 - Is it caused or materially worsened by this change?
 - Is its blocking status honest?
 - Does the comment explain the consequence and required next step?
@@ -288,3 +401,5 @@ This guidance synthesizes:
 - [Understanding Practitioners' Expectations on Clear Code Review Comments](https://arxiv.org/html/2410.06515)
 - [What Makes a Code Review Useful to OpenDev Developers?](https://ar5iv.labs.arxiv.org/html/2302.11686)
 - [Explaining Explanations: An Empirical Study of Explanations in Code Reviews](https://arxiv.org/html/2311.09020v2)
+- [nickvanw's Review Code skill](https://gist.github.com/nickvanw/c66273875d8d2b1c463896effdf0f548) (trace-beyond-the-diff methodology)
+- [nickvanw's prove-findings skill](https://gist.github.com/nickvanw/629d24db5bf8232ac22db412873cbf52) (evidence gates, hazard-vs-defect, contract authority)

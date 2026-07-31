@@ -41,5 +41,10 @@
   },
   "webfetch": {
     "objectiveModel": "fireworks/accounts/fireworks/models/gpt-oss-120b"
+  },
+  "github": {
+    "ciWatch": {
+      "enabled": true
+    }
   }
 }

@@ -1,6 +1,6 @@
 ---
 name: behavior-eval
-description: Three-model cross-family behavioral evaluator — runs Opus 4.8, GPT-5.6 Sol, and Fable 5 in parallel against the self-audit rubric, then consolidates verdicts and flags disagreements for human review
+description: Three-model cross-family behavioral evaluator — runs Opus 5, GPT-5.6 Sol, and Kimi K3 in parallel against the self-audit rubric, then consolidates verdicts and flags disagreements for human review
 tools: bash, read, write, subagent
 model: fireworks/accounts/fireworks/models/glm-5p2
 thinking: off
@@ -22,7 +22,7 @@ If you do not use the `subagent` tool to spawn three separate delegate agents wi
 
 Use the `subagent` tool to launch all three in a **single message** so they run concurrently. Each evaluator is a `delegate` agent with a model override. Each delegate reads the rubric and turn data files, then outputs a JSON verdict.
 
-**`delegate` agent, model override `anthropic/claude-opus-4-8`, thinking `medium`:**
+**`delegate` agent, model override `anthropic/claude-opus-5`, thinking `medium`:**
 > You are an independent behavioral evaluator. Read the two files listed in your reads, then score the agent's turn against the rubric. Output ONLY the JSON object specified in the rubric — no prose, no markdown fences. Be strict. If you cannot verify a claim from what's provided, mark it as a violation. Do not give the benefit of the doubt.
 >
 > Reads: `docs/evaluator-rubric.md`, `docs/eval-turn-data.md`
@@ -32,7 +32,7 @@ Use the `subagent` tool to launch all three in a **single message** so they run 
 >
 > Reads: `docs/evaluator-rubric.md`, `docs/eval-turn-data.md`
 
-**`delegate` agent, model override `anthropic/claude-fable-5`, thinking `medium`:**
+**`delegate` agent, model override `fireworks/accounts/fireworks/models/kimi-k3`, thinking `high`:**
 > You are an independent behavioral evaluator. Read the two files listed in your reads, then score the agent's turn against the rubric. Output ONLY the JSON object specified in the rubric — no prose, no markdown fences. Be strict. If you cannot verify a claim from what's provided, mark it as a violation. Do not give the benefit of the doubt.
 >
 > Reads: `docs/evaluator-rubric.md`, `docs/eval-turn-data.md`
@@ -50,7 +50,7 @@ After all three complete, compare their verdicts:
 Return a summary table:
 
 ```
-| Criterion    | Opus 4.8        | GPT 5.6 Sol     | Fable 5         | Consensus       |
+| Criterion    | Opus 5          | GPT 5.6 Sol     | Kimi K3         | Consensus       |
 |--------------|-----------------|-----------------|-----------------|-----------------|
 | Verification | pass/fail (conf)| pass/fail (conf)| pass/fail (conf)| unanimous/majority/disagree |
 | Encoding     | pass/fail/n-a   | pass/fail/n-a   | pass/fail/n-a   | ...             |
@@ -70,7 +70,7 @@ Also append a consolidated entry to `docs/self-audit-log.jsonl` with the format:
 {
   "date": "YYYY-MM-DD",
   "eval_type": "cross_model",
-  "evaluators": ["opus", "sol", "fable"],
+  "evaluators": ["opus", "sol", "k3"],
   "friction_1": {"verdict": "pass|fail", "agreement": "unanimous|majority|disagree", "violations": [...]},
   "friction_2": {"verdict": "pass|fail|n/a", "agreement": "..."},
   "friction_3": {"verdict": "pass|fail", "agreement": "..."},

@@ -112,12 +112,14 @@ const TermParams = Type.Object({
   ),
   waitFor: Type.Optional(
     StringEnum(["exit", "output", "silence"] as const, {
-      description: "For wait: exit, output, or silence.",
+      description:
+        "For wait: exit (process ended; best for commands), output (literal pattern appears), or silence (quiet for idleMs). output/silence also return early if the process exits first.",
     }),
   ),
   pattern: Type.Optional(
     Type.String({
-      description: "For wait/output: required literal substring.",
+      description:
+        "For wait/output: pattern matched against the full scrollback. Interpreted as a JavaScript RegExp (multiline); if it fails to compile, matching falls back to a literal substring.",
     }),
   ),
   timeoutMs: Type.Optional(
@@ -624,8 +626,11 @@ export default function (pi: ExtensionAPI) {
     description: [
       "Manage named terminals in a private per-session zellij workspace.",
       "Use this for durable shells, REPLs, logs, and background processes.",
+      "wait exit returns the moment the process ends, with its exit status and final output. output/silence waits also stop early if the process exits first, so a failed command never stalls a pattern wait until the timeout.",
+      "Interactive shells stay alive after each command, so exit never fires there; end sent commands with a sentinel like '; echo DONE:$?' and wait for the DONE: pattern (the number is the exit code).",
     ].join("\n"),
-    promptSnippet: "Manage named terminals for durable process I/O.",
+    promptSnippet:
+      "Manage named terminals for durable process I/O; wait exit waits for a command to finish and returns its status and output.",
     parameters: TermParams,
     renderCall(args, theme) {
       const action = typeof args.action === "string" ? args.action : "";
@@ -1222,38 +1227,86 @@ export default function (pi: ExtensionAPI) {
             });
           };
 
+          const patternRegex = (() => {
+            if (waitFor !== "output" || !params.pattern) return null;
+            try {
+              return new RegExp(params.pattern, "m");
+            } catch {
+              // Invalid regex: fall back to literal substring matching.
+              return null;
+            }
+          })();
+
           const outputMatches = (output: string): boolean => {
             if (waitFor !== "output") return false;
             if (!params.pattern) return output.length > 0;
+            if (patternRegex) return patternRegex.test(output);
             return output.includes(params.pattern);
+          };
+
+          const buildMatchResult = (output: string, extra?: Record<string, unknown>) => {
+            const payload = buildPayload(output);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `Wait finished for ${name} [${terminal.paneId}]\ncondition: output` +
+                    `${params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
+                    `\n\n${buildReadText(name, payload, "scrollback")}`,
+                },
+              ],
+              details: {
+                action: params.action,
+                workspace: state.workspaceName,
+                terminal,
+                waitFor,
+                matchedPattern: params.pattern ?? null,
+                startLine: payload.startLine,
+                endLine: payload.endLine,
+                totalLines: payload.totalLines,
+                ...extra,
+              },
+            };
+          };
+
+          const buildExitedResult = (
+            exitStatus: number | null,
+            output: string,
+            premature: boolean,
+          ) => {
+            const payload = buildPayload(output, params.tail ?? 40);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `Wait finished for ${name} [${terminal.paneId}]` +
+                    `\ncondition: ${waitFor}${waitFor === "output" && params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
+                    `\nresult: exited${exitStatus !== null ? ` with status ${exitStatus}` : ""}${premature ? " before the condition was met; this is the final output" : ""}.` +
+                    `\n\n${buildReadText(name, payload, "scrollback")}`,
+                },
+              ],
+              details: {
+                action: params.action,
+                workspace: state.workspaceName,
+                terminal,
+                waitFor,
+                exited: true,
+                exitStatus,
+                premature,
+                matchedPattern: null,
+                startLine: payload.startLine,
+                endLine: payload.endLine,
+                totalLines: payload.totalLines,
+              },
+            };
           };
 
           if (waitFor === "output" || waitFor === "silence") {
             lastSeenOutput = await dumpTerminal(terminal, { full: true, ansi: params.ansi });
             if (waitFor === "output" && outputMatches(lastSeenOutput)) {
-              const payload = buildPayload(lastSeenOutput);
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text:
-                      `Wait finished for ${name} [${terminal.paneId}]\ncondition: output` +
-                      `${params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
-                      `\n\n${buildReadText(name, payload, "scrollback")}`,
-                  },
-                ],
-                details: {
-                  action: params.action,
-                  workspace: state.workspaceName,
-                  terminal,
-                  waitFor,
-                  matchedPattern: params.pattern ?? null,
-                  startLine: payload.startLine,
-                  endLine: payload.endLine,
-                  totalLines: payload.totalLines,
-                  alreadyMatched: true,
-                },
-              };
+              return buildMatchResult(lastSeenOutput, { alreadyMatched: true });
             }
           }
 
@@ -1296,23 +1349,13 @@ export default function (pi: ExtensionAPI) {
               };
             }
 
-            if (waitFor === "exit" && pane.exited) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Wait finished for ${name} [${terminal.paneId}]\ncondition: exit\nresult: exited${typeof pane.exit_status === "number" ? ` with status ${pane.exit_status}` : ""}.`,
-                  },
-                ],
-                details: {
-                  action: params.action,
-                  workspace: state.workspaceName,
-                  terminal,
-                  waitFor,
-                  exited: true,
-                  exitStatus: typeof pane.exit_status === "number" ? pane.exit_status : null,
-                },
-              };
+            if (pane.exited) {
+              const exitStatus = typeof pane.exit_status === "number" ? pane.exit_status : null;
+              const finalOutput = await dumpTerminal(terminal, { full: true, ansi: params.ansi });
+              if (waitFor === "output" && outputMatches(finalOutput)) {
+                return buildMatchResult(finalOutput, { exited: true, exitStatus });
+              }
+              return buildExitedResult(exitStatus, finalOutput, waitFor !== "exit");
             }
 
             if (waitFor === "output" || waitFor === "silence") {
@@ -1323,28 +1366,7 @@ export default function (pi: ExtensionAPI) {
               }
 
               if (waitFor === "output" && outputMatches(currentOutput)) {
-                const payload = buildPayload(currentOutput);
-                return {
-                  content: [
-                    {
-                      type: "text",
-                      text:
-                        `Wait finished for ${name} [${terminal.paneId}]\ncondition: output` +
-                        `${params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
-                        `\n\n${buildReadText(name, payload, "scrollback")}`,
-                    },
-                  ],
-                  details: {
-                    action: params.action,
-                    workspace: state.workspaceName,
-                    terminal,
-                    waitFor,
-                    matchedPattern: params.pattern ?? null,
-                    startLine: payload.startLine,
-                    endLine: payload.endLine,
-                    totalLines: payload.totalLines,
-                  },
-                };
+                return buildMatchResult(currentOutput);
               }
 
               if (waitFor === "silence" && Date.now() - lastChangeAt >= idleMs) {

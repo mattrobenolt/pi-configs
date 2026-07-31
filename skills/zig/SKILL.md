@@ -241,6 +241,10 @@ NOT an error union — use `orelse .default` or `orelse return error.Malformed`,
 not `catch`. This is the safe alternative to `@enumFromInt` which panics on
 invalid bit patterns.
 
+`std.mem.copyForwards` / `std.mem.copyBackwards` are deprecated — use the
+`@memmove(dest, source)` builtin instead (overlapping slices allowed;
+ziglint Z011 flags the std.mem forms).
+
 ## Full Reference
 
 See [references/zig-0.15-migration.md](references/zig-0.15-migration.md) for complete migration details with all code examples, the new Writer/Reader VTable layout, signal handling patterns, format string changes, and allocator API updates.

@@ -3,6 +3,7 @@ name: scout
 description: Fast codebase reconnaissance - maps existing code, conventions, and patterns for a task
 tools: read, bash
 model: fireworks/accounts/fireworks/models/gpt-oss-120b
+thinking: low
 systemPromptMode: replace
 inheritProjectContext: false
 inheritSkills: false

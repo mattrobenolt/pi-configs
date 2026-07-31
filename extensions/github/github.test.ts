@@ -7,12 +7,21 @@ import {
   GitHubClient,
   loadPullChecks,
   normalizeInlineComment,
+  parseGitHubRemote,
   parseNumericRef,
   splitRepo,
   summarizeChecks,
   waitForPullChecks,
   type CheckSnapshot,
 } from "./core.ts";
+import { DEFAULT_CI_WATCH_CONFIG, type CiWatchConfig } from "./config.ts";
+import {
+  CiWatcher,
+  formatFailure,
+  makeGitProbe,
+  type GitProbe,
+  type WatchTarget,
+} from "./watch.ts";
 
 function jsonResponse(body: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(status === 204 ? null : JSON.stringify(body), {
@@ -399,10 +408,281 @@ test("waitForPullChecks stops when the PR head changes", async () => {
 
 test("extension registers four user-facing GitHub tools", () => {
   const names: string[] = [];
+  const commands: string[] = [];
   githubExtension({
     registerTool(tool: { name: string }) {
       names.push(tool.name);
     },
+    registerCommand(name: string) {
+      commands.push(name);
+    },
+    on() {},
   } as any);
   assert.deepEqual(names, ["github_pr", "github_review", "github_issue", "github_ci"]);
+  assert.deepEqual(commands, ["ci-watch"]);
+});
+
+test("parseGitHubRemote extracts owner/repo from common remote URL forms", () => {
+  assert.equal(parseGitHubRemote("git@github.com:planetscale/vitess.git"), "planetscale/vitess");
+  assert.equal(parseGitHubRemote("git@github.com:planetscale/vitess"), "planetscale/vitess");
+  assert.equal(
+    parseGitHubRemote("https://github.com/planetscale/vitess.git"),
+    "planetscale/vitess",
+  );
+  assert.equal(parseGitHubRemote("https://github.com/planetscale/vitess"), "planetscale/vitess");
+  assert.equal(
+    parseGitHubRemote("ssh://git@github.com/planetscale/vitess.git"),
+    "planetscale/vitess",
+  );
+  assert.equal(parseGitHubRemote("https://gitlab.com/planetscale/vitess.git"), undefined);
+  assert.equal(parseGitHubRemote("not a url"), undefined);
+});
+
+type WatcherHarness = {
+  watcher: CiWatcher;
+  reported: string[];
+  informed: string[];
+  notices: string[];
+  timers: Array<{ ms: number }>;
+  advance: (ms: number) => void;
+};
+
+function makeWatcher(
+  probe: GitProbe,
+  snapshots: CheckSnapshot[],
+  config: Partial<CiWatchConfig> = {},
+): WatcherHarness {
+  const reported: string[] = [];
+  const informed: string[] = [];
+  const notices: string[] = [];
+  const timers: Array<{ fn: () => void; ms: number }> = [];
+  let now = 1_000_000;
+  const watcher = new CiWatcher(
+    { ...DEFAULT_CI_WATCH_CONFIG, ...config },
+    {
+      probeGit: async () => probe,
+      loadChecks: async () => {
+        const next = snapshots.shift();
+        if (!next) throw new Error("script ran out of snapshots");
+        return next;
+      },
+      report: (text) => reported.push(text),
+      inform: (text) => informed.push(text),
+      notify: (text) => notices.push(text),
+      schedule: (fn, ms) => {
+        const timer = { fn, ms };
+        timers.push(timer);
+        return timer;
+      },
+      cancel: (handle) => {
+        const index = timers.indexOf(handle as (typeof timers)[number]);
+        if (index >= 0) timers.splice(index, 1);
+      },
+      now: () => now,
+    },
+  );
+  return { watcher, reported, informed, notices, timers, advance: (ms) => (now += ms) };
+}
+
+const pushedProbe: GitProbe = {
+  headSha: "deadbeefcafe",
+  branch: "main",
+  upstreamRef: "origin/main",
+  upstreamSha: "deadbeefcafe",
+  repo: "owner/repo",
+};
+
+const pendingSnapshot: CheckSnapshot = summarizeChecks(
+  [{ name: "unit", status: "in_progress" }],
+  [],
+);
+const failedSnapshot: CheckSnapshot = summarizeChecks(
+  [
+    {
+      name: "unit",
+      status: "completed",
+      conclusion: "failure",
+      html_url: "https://github.com/owner/repo/actions/runs/123/job/1",
+    },
+  ],
+  [],
+);
+const passedSnapshot: CheckSnapshot = summarizeChecks(
+  [{ name: "unit", status: "completed", conclusion: "success" }],
+  [],
+);
+
+test("ci watcher reports a failure seen in transition exactly once", async () => {
+  const harness = makeWatcher(pushedProbe, [pendingSnapshot, failedSnapshot]);
+  await harness.watcher.refresh();
+  assert.match(harness.watcher.status, /watching owner\/repo@deadbee/);
+
+  await harness.watcher.pollNow();
+  assert.equal(harness.reported.length, 0);
+  assert.equal(harness.timers.length, 1, "pending checks keep the poll timer alive");
+
+  await harness.watcher.pollNow();
+  assert.equal(harness.reported.length, 1);
+  assert.match(harness.reported[0], /CI failed for owner\/repo @ deadbee \(main\)/);
+  assert.match(harness.reported[0], /run 123/);
+  assert.equal(harness.informed.length, 0);
+  assert.equal(harness.timers.length, 0, "terminal failure stops polling");
+
+  // A repeat refresh for the same sha must not re-arm the watcher.
+  await harness.watcher.refresh();
+  assert.match(harness.watcher.status, /idle/);
+  assert.equal(harness.timers.length, 0);
+});
+
+test("ci watcher only informs when the first observation is already failed", async () => {
+  const harness = makeWatcher(pushedProbe, [failedSnapshot]);
+  await harness.watcher.refresh();
+  await harness.watcher.pollNow();
+  assert.equal(harness.reported.length, 0, "pre-broken heads never steer or wake the agent");
+  assert.equal(harness.informed.length, 1);
+  assert.match(harness.informed[0], /CI failed for owner\/repo @ deadbee/);
+});
+
+test("ci watcher goes quiet when checks pass", async () => {
+  const harness = makeWatcher(pushedProbe, [pendingSnapshot, passedSnapshot]);
+  await harness.watcher.refresh();
+  await harness.watcher.pollNow();
+  await harness.watcher.pollNow();
+  assert.equal(harness.reported.length, 0);
+  assert.equal(harness.informed.length, 0);
+  assert.match(harness.watcher.status, /idle/);
+});
+
+test("ci watcher ignores unpushed and non-GitHub heads", async () => {
+  const unpushed = makeWatcher({ ...pushedProbe, upstreamSha: "elsewhere" }, [failedSnapshot]);
+  await unpushed.watcher.refresh();
+  assert.match(unpushed.watcher.status, /idle/);
+  assert.equal(unpushed.timers.length, 0);
+
+  const noRemote = makeWatcher({ headSha: "deadbeefcafe", branch: "main" }, [failedSnapshot]);
+  await noRemote.watcher.refresh();
+  assert.match(noRemote.watcher.status, /idle/);
+  assert.equal(noRemote.timers.length, 0);
+});
+
+test("ci watcher drops heads whose checks never register", async () => {
+  const noChecks = summarizeChecks([], []);
+  const harness = makeWatcher(pushedProbe, [noChecks, noChecks], { discoveryGraceSeconds: 90 });
+  await harness.watcher.refresh();
+  await harness.watcher.pollNow();
+  assert.equal(harness.timers.length, 1, "still waiting for checks to register");
+
+  harness.advance(120_000);
+  await harness.watcher.pollNow();
+  assert.equal(harness.reported.length, 0);
+  assert.match(harness.watcher.status, /idle/);
+  assert.equal(harness.timers.length, 0);
+});
+
+test("ci watcher notifies and gives up after repeated poll errors", async () => {
+  const harness = makeWatcher(pushedProbe, [], { pollSeconds: 30 });
+  await harness.watcher.refresh();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await harness.watcher.pollNow();
+  }
+  assert.equal(harness.notices.length, 1);
+  assert.match(harness.notices[0], /stopped watching deadbee/);
+  assert.match(harness.watcher.status, /idle/);
+});
+
+test("makeGitProbe resolves the pushed head from the upstream remote", async () => {
+  const commands: string[] = [];
+  const probe = makeGitProbe(async (command, args) => {
+    commands.push(`${command} ${args.join(" ")}`);
+    const key = args.join(" ");
+    if (key === "rev-parse HEAD") return { stdout: "deadbeefcafe\n", stderr: "", code: 0 };
+    if (key === "symbolic-ref --quiet --short HEAD")
+      return { stdout: "main\n", stderr: "", code: 0 };
+    if (key === "rev-parse --abbrev-ref --symbolic-full-name @{upstream}")
+      return { stdout: "origin/main\n", stderr: "", code: 0 };
+    if (key === "rev-parse @{upstream}") return { stdout: "deadbeefcafe\n", stderr: "", code: 0 };
+    if (key === "remote get-url origin")
+      return { stdout: "git@github.com:owner/repo.git\n", stderr: "", code: 0 };
+    return { stdout: "", stderr: "unexpected", code: 1 };
+  });
+  assert.deepEqual(await probe(), pushedProbe);
+});
+
+test("makeGitProbe stays dormant outside a git repo", async () => {
+  const probe = makeGitProbe(async () => ({ stdout: "", stderr: "fatal", code: 128 }));
+  assert.deepEqual(await probe(), {});
+});
+
+test("formatFailure lists only the failing checks with run ids", () => {
+  const target: WatchTarget = {
+    repo: "owner/repo",
+    sha: "deadbeefcafe",
+    branch: "main",
+    startedAt: 0,
+    sawActivity: true,
+  };
+  const snapshot = summarizeChecks(
+    [
+      {
+        name: "unit",
+        status: "completed",
+        conclusion: "failure",
+        html_url: "https://github.com/owner/repo/actions/runs/123/job/1",
+      },
+      { name: "lint", status: "completed", conclusion: "success" },
+    ],
+    [],
+  );
+  const text = formatFailure(target, snapshot);
+  assert.match(text, /unit \[failure\] \(run 123\)/);
+  assert.doesNotMatch(text, /lint \[/);
+  assert.match(text, /github_ci failed_logs/);
+  assert.doesNotMatch(text, /resume the task/);
+});
+
+test("formatFailure includes resume instruction when resumeAfterFix is set", () => {
+  const target: WatchTarget = {
+    repo: "owner/repo",
+    sha: "deadbeefcafe",
+    branch: "main",
+    startedAt: 0,
+    sawActivity: true,
+  };
+  const snapshot = summarizeChecks(
+    [{ name: "unit", status: "completed", conclusion: "failure", run_id: 123 }],
+    [],
+  );
+  const text = formatFailure(target, snapshot, { resumeAfterFix: true });
+  assert.match(text, /resume the task you were working on/);
+});
+
+test("ci watcher includes resume instruction in steer path only", async () => {
+  const harness = makeWatcher(pushedProbe, [pendingSnapshot, failedSnapshot], {
+    resumeAfterFix: true,
+  });
+  await harness.watcher.refresh();
+  await harness.watcher.pollNow(); // pending
+  await harness.watcher.pollNow(); // failed → report (steer path)
+  assert.equal(harness.reported.length, 1);
+  assert.match(harness.reported[0], /resume the task you were working on/);
+  assert.equal(harness.informed.length, 0);
+});
+
+test("ci watcher omits resume instruction when resumeAfterFix is false", async () => {
+  const harness = makeWatcher(pushedProbe, [pendingSnapshot, failedSnapshot], {
+    resumeAfterFix: false,
+  });
+  await harness.watcher.refresh();
+  await harness.watcher.pollNow(); // pending
+  await harness.watcher.pollNow(); // failed → report (steer path)
+  assert.equal(harness.reported.length, 1);
+  assert.doesNotMatch(harness.reported[0], /resume the task/);
+});
+
+test("ci watcher never includes resume instruction in inform path", async () => {
+  const harness = makeWatcher(pushedProbe, [failedSnapshot], { resumeAfterFix: true });
+  await harness.watcher.refresh();
+  await harness.watcher.pollNow(); // already failed → inform path
+  assert.equal(harness.informed.length, 1);
+  assert.doesNotMatch(harness.informed[0], /resume the task/);
 });

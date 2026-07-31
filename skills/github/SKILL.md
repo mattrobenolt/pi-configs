@@ -25,8 +25,8 @@ These stories define the intended surface. Releases, merges, reactions, workflow
 ## Reviewing a pull request
 
 1. Call `github_pr` with `action: "inspect"` to get the PR's repository, base/head refs and SHAs, existing reviews, inline comments, conversation comments, and CI state.
-2. Reuse a matching local checkout when one already exists. Verify its remote matches the requested `owner/repo`.
-3. Never disturb a dirty working tree. Fetch the PR and create a detached worktree for the exact head SHA.
+2. If already inside a matching local checkout (verify the remote matches the requested `owner/repo`), review in place: `gh pr checkout <number>` fetches and checks out the PR's head branch, including from forks. This is a legitimate `gh` use — checkout is git work, not a covered tool operation. It requires a clean working tree.
+3. If the working tree is dirty, stop and use `ask_user` to ask how to proceed — offer stashing or committing the changes and checking out in place versus an isolated detached worktree. Never disturb uncommitted changes without explicit approval.
 4. If no checkout exists, clone the repository into temporary review space, then fetch the PR head. GitHub exposes PR heads from the base repository as `pull/<number>/head`.
 5. Verify `git rev-parse HEAD` equals the `head.sha` returned by `github_pr inspect`.
 6. Inspect the change locally with `git diff <base_sha>...<head_sha>`. Read surrounding code, callers, tests, configuration, and history as needed; do not stop at changed hunks.
@@ -35,15 +35,18 @@ These stories define the intended surface. Releases, merges, reactions, workflow
 9. Read existing review threads before reporting findings so you do not duplicate feedback.
 10. Submit through `github_review` with `expected_head_sha` set to the exact SHA reviewed locally. Batch precise line/range comments into the review, and use a standalone whole-file comment only when no honest line target exists. Do not put code-specific findings only in the summary. If the tool reports that the head changed, fetch and review the new head before posting.
 
-Typical isolated-checkout shape:
+Typical checkout shapes:
 
 ```bash
-# Existing clean clone, without touching its active worktree:
+# Already inside the repo with a clean tree — preferred:
+gh pr checkout <pr-number>
+
+# Dirty tree and the user chose an isolated worktree — leave the active tree alone:
 git fetch origin <base-ref>
 git fetch origin pull/<pr-number>/head
 git worktree add --detach <temporary-path> <head-sha>
 
-# In the review worktree:
+# In the review checkout:
 git rev-parse HEAD
 git diff <base-sha>...<head-sha>
 ```

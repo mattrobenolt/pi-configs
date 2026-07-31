@@ -3,6 +3,7 @@ name: plan-reviewer
 package: review
 description: Research-backed plan review specialist. Reviews a technical plan for feasibility, correctness, gaps, and risks, using web research to verify external claims (protocol specs, library capabilities, linking strategies).
 tools: read, grep, find, ls, bash, websearch, webfetch
+model: anthropic/claude-opus-5
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
