@@ -113,7 +113,7 @@ For dependent PR chains, use the `gh stack` CLI extension (`gh extension install
 
 The model: each branch maps to one PR whose base is the branch below it, rooted on trunk. Merge from any layer lands that PR plus everything below it, bottom-up; GitHub auto-rebases the remainder after partial merges; `gh stack sync` is the local counterpart. Stack only one cohesive story (foundational layers low, dependents high); ordering constraints that aren't code dependencies stay the operator's job. It's a private-preview platform feature — without it, everything degrades to an ordinary manual stack.
 
-Hard agent rules: every command non-interactive (`view --json`, `submit --auto`, positional branch names always). Adopt existing branch chains with `gh stack init <bottom>...<top>` — it links existing PRs without duplicating or rewriting them. `submit --auto` generates titles/bodies from commits; rewrite bodies with `github_pr update` per [references/pr-body.md](references/pr-body.md).
+Hard agent rules: every command non-interactive (`view --json`, `submit --auto`, positional branch names always). Adopt existing branch chains with `gh stack init <bottom>...<top>` — it links existing PRs without duplicating or rewriting them (titles/bodies survive). `submit --auto` generates titles/bodies from commits; rewrite bodies with `github_pr update` per [references/pr-body.md](references/pr-body.md). Creating the Stack disables auto-merge on member PRs — re-check after `submit`.
 
 Read [references/stacked-prs.md](references/stacked-prs.md) before building or managing a stack — layer planning, mid-stack changes, squash-merge recovery, exit codes, and the manual fallback.
 

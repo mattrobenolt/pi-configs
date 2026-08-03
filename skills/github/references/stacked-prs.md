@@ -18,8 +18,13 @@ against trunk at every layer.
   — the tool manages topology, not policy.
 - Every command non-interactive: `view --json`, `submit --auto`, branch names
   always positional. Bare invocations hang on prompts/TUIs.
-- `submit --auto` generates titles/bodies from commits — rewrite bodies after
-  with `github_pr update` (per pr-body.md).
+- `submit --auto` generates titles/bodies from commits for PRs it creates —
+  rewrite bodies after with `github_pr update` (per pr-body.md). For adopted
+  PRs that already exist, `submit` links them into the Stack and reports them
+  up to date; titles and bodies survive untouched.
+- Creating the Stack disables auto-merge on member PRs ("incompatible with
+  stacked PRs"). If a layer had auto-merge set before `submit`, re-enable it
+  deliberately afterward, knowing the merge now lands everything below too.
 - Need to change a lower layer? Navigate down (`gh stack down`/`checkout`),
   commit there, `gh stack rebase --upstack`, `gh stack push`. Never sneak a
   lower layer's change into the top branch — it lands in the wrong PR.
@@ -36,8 +41,9 @@ gh stack sync --prune            # routine: fetch, cascade-rebase, push, sync PR
 
 Rebase conflict → exit 3: resolve markers, `git add`, `gh stack rebase --continue`.
 Squash-merges are detected and replayed with `rebase --onto` automatically.
-Restructure (reorder/rename/remove a layer): `gh stack unstack` (PRs/branches
-survive), rearrange, re-`init`.
+Restructure (reorder/rename/remove a layer): `gh stack unstack` removes the
+GitHub-side Stack and local tracking (PRs/branches survive), rearrange,
+re-`init`.
 
 ## Caveats
 
