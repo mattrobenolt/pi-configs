@@ -51,4 +51,8 @@ Private preview: stack map/auto-rebase/merge-stack need the feature enabled on
 the repo (exit code 9 without it). Everything degrades to an ordinary manual
 stack — chain PR bases by hand and rebase each downstream branch after merges
 (`git rebase origin/main` + force-push + retarget; lazily, one branch per merge).
-Stacks are strictly linear, and merging happens in the GitHub UI, not the CLI.
+Stacks are strictly linear, and merging happens in the GitHub UI, not the CLI —
+`gh pr merge` and the synchronous REST merge endpoint both reject stacked PRs;
+the only API path is the async merge endpoint (`PUT /repos/o/r/pulls/N/merge-async`
+with an `sha` head pin, poll `GET .../merge-async/{uuid}`), which cancels if the
+head moves. Prefer the UI merge button.
