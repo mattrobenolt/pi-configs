@@ -1,6 +1,6 @@
 ---
 name: github
-description: "Use structured GitHub tools for pull requests, local code review, review/comment CRUD, issues, and CI. Trigger for GitHub PR/issue inspection or mutation, reviewing a PR, posting or editing comments/reviews, checking or waiting for CI, and managing stacked PRs (gh stack: dependent PR chains, stack rebase/sync, stacked-diff workflows). Clone or fetch repositories and review locally; never review from an API diff."
+description: "Use structured GitHub tools for pull requests, local code review, review/comment CRUD, thread resolution, issues, and CI. Trigger for GitHub PR/issue inspection or mutation, reviewing a PR, posting or editing comments/reviews, resolving review threads, checking or waiting for CI, and managing stacked PRs (gh stack: dependent PR chains, stack rebase/sync, stacked-diff workflows). Clone or fetch repositories and review locally; never review from an API diff."
 ---
 
 # GitHub Workflow
@@ -14,13 +14,14 @@ The tools handle GitHub metadata and communication. The local repository provide
 - **Inspect and review a PR:** gather metadata, discussion, exact refs/SHAs, and CI with `github_pr inspect`; clone or fetch the repository; inspect and test the change locally.
 - **Submit a coherent review:** use `github_review submit` for the verdict, full review body, and optional batched inline comments, pinned to the locally reviewed head SHA.
 - **Discuss code inline:** create a focused line/range/file comment, reply in its thread, and update or delete your own review comments without constructing API payloads.
+- **Resolve a conversation:** after addressing inline feedback, resolve (or reopen) the review thread with `github_review resolve_thread`/`unresolve_thread`, identified by any inline comment in the thread or by the thread node ID from `list_threads`; use `list_threads` to see which threads are still open.
 - **Manage the PR conversation:** create, update, or delete top-level PR comments with `github_pr`; prefer editing corrections over posting follow-up noise.
 - **Open or update a PR:** inspect the actual change, follow the repository template and [PR body guidance](references/pr-body.md), then use `github_pr create` or `update` so titles and Markdown bodies are transported exactly.
 - **Triage issues:** inspect/list, create/update, close/reopen, and manage issue comments with `github_issue`.
 - **Wait for CI:** use `github_ci status` with `wait: true`, pinned to the expected head SHA; inspect failed runs and logs without shell polling loops.
 - **Audit writes:** read the full body echoed in every create/update tool result. If it is wrong, edit that same object rather than posting a correction.
 
-These stories define the intended surface. Releases, merges, reactions, workflow mutation, thread resolution, and arbitrary REST/GraphQL calls are not implied.
+These stories define the intended surface. Releases, merges, reactions, workflow mutation, and arbitrary REST/GraphQL pass-through calls are not implied. Thread resolution is covered via `github_review` (see [Thread resolution](#thread-resolution)).
 
 ## Reviewing a pull request
 
@@ -62,6 +63,8 @@ Use `github_review` for review verdicts and inline code discussion:
 - `reply` responds in an existing inline review thread.
 - `update_review` edits the submitted review summary body.
 - `update_comment` and `delete_comment` manage inline review comments and replies.
+- `list_threads` lists every review thread with its GraphQL node ID (`PRRT_…`), resolved/outdated state, path, and comments.
+- `resolve_thread` and `unresolve_thread` mark a thread addressed or reopen it, identified by any inline comment in the thread (`comment`) or by thread node ID (`thread`); they do not pin a head SHA.
 
 Put findings on the most specific honest GitHub surface. Attach code-specific feedback to the relevant diff line or range; use a whole-file comment only for a genuinely file-wide concern. Keep the overall review body focused on the verdict, cross-cutting findings, scope, validation, and uncertainty. Put the exhaustive record of clean checks in a collapsed `<details><summary>Provenance: what was reviewed</summary>…</details>` block rather than flooding the visible review with praise or checklist narration. See [references/review-feedback.md](references/review-feedback.md) for the required format and examples.
 
@@ -72,6 +75,16 @@ Prefer editing an existing comment for corrections, formatting fixes, clarificat
 Create and read operations return comment/review IDs and URLs. Retain those handles and pass either the ID or GitHub URL to update/delete operations instead of searching with `gh api`.
 
 Every create/update result visibly echoes the complete submitted body. Check that output when correctness matters. If the content is wrong, update the same PR, issue, review, or comment; do not post a corrective follow-up.
+
+## Thread resolution
+
+GitHub exposes review-thread resolution only through its GraphQL API; the REST API cannot resolve a thread or report its resolved state. `github_review` wraps that for you — do not drop into `gh api graphql`.
+
+- `list_threads` returns every review thread on the PR with its GraphQL node ID (`PRRT_…`), `isResolved`, `isOutdated`, path, line range, and the inline comments it contains. Use it to see which threads are still open before resolving.
+- `resolve_thread` marks a thread addressed. Pass any inline review comment in the thread (`comment`: numeric ID or `#discussion_r…` URL) and the containing thread is resolved, or pass the thread node ID (`thread`) directly from a `list_threads` result. It does **not** require `expected_head_sha` — resolving is a conversation action, not code feedback pinned to a reviewed head.
+- `unresolve_thread` reopens a thread with the same identification options.
+
+Resolving an already-resolved thread is a no-op; you do not need to pre-check. Resolve a thread only after the feedback it raised has actually been addressed (code changed, question answered, or explicitly decided). Do not resolve threads to silence unresolved disagreement — leave those open or move them to a top-level PR conversation.
 
 ## Creating or updating a pull request
 
