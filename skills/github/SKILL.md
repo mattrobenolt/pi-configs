@@ -9,6 +9,10 @@ Use `github_pr`, `github_review`, `github_issue`, and `github_ci` for covered Gi
 
 The tools handle GitHub metadata and communication. The local repository provides the code. Never review a pull request from an API-provided diff or remote file listing.
 
+## Writing style
+
+All text posted to GitHub — PR titles and bodies, review summaries, inline comments, replies, and issue comments — follows [references/writing-style.md](references/writing-style.md): simplified technical English (ASD-STE100) adapted for review discussion. Read it before drafting anything that lands on GitHub. The rules with the most leverage: sentences stay under 20 words for instructions and 25 for explanations; the only modals are can, will, and must; no contractions, present perfect, "-ing" verb forms, or semicolons; identifiers and quoted errors stay untouched in backticks.
+
 ## Supported user stories
 
 - **Inspect and review a PR:** gather metadata, discussion, exact refs/SHAs, and CI with `github_pr inspect`; clone or fetch the repository; inspect and test the change locally.

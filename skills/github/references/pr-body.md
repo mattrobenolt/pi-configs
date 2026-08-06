@@ -11,6 +11,9 @@ Write for reviewers now and code archaeologists later. Keep the body concise;
 it is context, not a narrated diff, CI transcript, or proof that the author was
 busy. Do not restate information GitHub already displays clearly.
 
+Write the title and body in the style defined by
+[writing-style.md](writing-style.md).
+
 ## Read before writing
 
 Read the repository's PR template and contribution guidance first. Preserve
@@ -115,8 +118,8 @@ Describe the validation *shape* only when it adds information. For example:
 ```markdown
 ## Validation
 
-The regression test reproduces an acknowledged timeout and asserts that retrying
-commits only one write.
+The regression test reproduces an acknowledged timeout and asserts that a
+retry commits only one write.
 ```
 
 Mention a command only when it is not represented by ordinary CI, gives the
@@ -268,7 +271,7 @@ Call out review focus when specialized attention would materially improve the
 review, for example:
 
 - `Review focus: retry ordering and duplicate-write behavior.`
-- `The schema migration has been reviewed separately in owner/repo#123.`
+- `The schema migration was reviewed separately in owner/repo#123.`
 
 Do not ask for generic "thoughts" or narrate every implementation choice.
 Inline author comments are better for a specific non-obvious line; the PR body

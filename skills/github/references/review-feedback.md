@@ -14,6 +14,16 @@ Prefer demonstrated behavior, project conventions, and documented requirements
 over personal preference. When multiple approaches are equally valid, accept
 the author's choice.
 
+## Writing style
+
+Write all review text — the summary, inline comments, replies, and provenance —
+in the style defined by [writing-style.md](writing-style.md). The short
+version: sentences stay under 20 words for instructions and 25 for
+explanations; can, will, and must are the only modals; no contractions,
+present perfect, "-ing" verb forms, or semicolons. The banned modals do real
+work here: a finding that needs "could" or "might" is missing its condition,
+which means it is missing evidence.
+
 ## Start with the premise and design
 
 Before reviewing individual lines, step back and ask whether the change is the
@@ -222,21 +232,21 @@ that looked correct is provenance, not feedback.
 
 Examples:
 
-> **Blocking:** This acknowledges the operation before the write is durable.
-> If the process exits between `ack()` and `flush()`, the caller observes
-> success but the data is lost.
+> **Blocking:** `ack()` returns before the write is durable. If the process
+> exits between `ack()` and `flush()`, the caller observes success but the
+> data is lost.
 >
-> Acknowledgement needs to happen only after the durable write completes. The
-> exact structure is up to you; preserving that ordering is the requirement.
+> Acknowledge only after the durable write completes. The exact structure is
+> up to you. That ordering is the requirement.
 
-> **Non-blocking:** These parsing branches duplicate the same validation.
-> Extracting it would make future format changes harder to apply
-> inconsistently, but the current behavior is correct.
+> **Non-blocking:** These parsing branches duplicate the same validation. One
+> shared validation function keeps future format changes consistent. The
+> current behavior is correct.
 
-> **Question:** Is `items` guaranteed to remain sorted after `merge()`? I could
-> not find that invariant in the implementation or tests. If it is not
-> guaranteed, the binary search below can miss an existing item and this
-> becomes blocking.
+> **Question:** Is `items` guaranteed to remain sorted after `merge()`? I did
+> not find that invariant in the implementation or the tests. If it is not
+> guaranteed, the binary search below can miss an existing item. That case is
+> blocking.
 
 ## Put feedback in the right GitHub surface
 
@@ -320,8 +330,8 @@ line-specific feedback.]
 For a review with blockers, lead with the blocker count or central conclusion:
 
 ```markdown
-**Request changes.** One blocking correctness issue remains in the retry path;
-the inline comment describes the duplicate-write sequence.
+**Request changes.** One blocking correctness issue remains in the retry
+path. The inline comment describes the duplicate-write sequence.
 
 <details>
 <summary>Provenance: what was reviewed</summary>
