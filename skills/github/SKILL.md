@@ -1,6 +1,6 @@
 ---
 name: github
-description: "Use structured GitHub tools for pull requests, local code review, review/comment CRUD, thread resolution, issues, and CI. Trigger for GitHub PR/issue inspection or mutation, reviewing a PR, posting or editing comments/reviews, resolving review threads, checking or waiting for CI, and managing stacked PRs (gh stack: dependent PR chains, stack rebase/sync, stacked-diff workflows). Clone or fetch repositories and review locally; never review from an API diff."
+description: "Use structured GitHub tools for pull requests, local code review, review/comment CRUD, thread resolution, issues, and CI. Trigger for GitHub PR/issue inspection or mutation, reviewing a PR, posting or editing comments/reviews, resolving review threads, checking or waiting for CI, and managing stacked PRs (gh stack: dependent PR chains, stack rebase/sync/merge, stacked-diff workflows). Clone or fetch repositories and review locally; never review from an API diff."
 ---
 
 # GitHub Workflow
@@ -130,9 +130,9 @@ For dependent PR chains, use the `gh stack` CLI extension (`gh extension install
 
 The model: each branch maps to one PR whose base is the branch below it, rooted on trunk. Merge from any layer lands that PR plus everything below it, bottom-up; GitHub auto-rebases the remainder after partial merges; `gh stack sync` is the local counterpart. Stack only one cohesive story (foundational layers low, dependents high); ordering constraints that aren't code dependencies stay the operator's job. It's a private-preview platform feature — without it, everything degrades to an ordinary manual stack.
 
-Hard agent rules: every command non-interactive (`view --json`, `submit --auto`, positional branch names always). Adopt existing branch chains with `gh stack init <bottom>...<top>` — it links existing PRs without duplicating or rewriting them (titles/bodies survive). `submit --auto` generates titles/bodies from commits; rewrite bodies with `github_pr update` per [references/pr-body.md](references/pr-body.md). Creating the Stack disables auto-merge on member PRs — re-check after `submit`.
+Hard agent rules: `gh stack` branches on whether stdout is a TTY, so never run commands bare — `view --json`, `submit --auto`, `merge <target> --yes`, positional branch names always; `switch` and `modify` are TUI-only with no non-interactive path. Adopt existing branch chains with `gh stack init <bottom>...<top>` — it links existing PRs without duplicating or rewriting them (titles/bodies survive). `submit --auto` creates draft PRs (`--open` for ready-for-review) with titles generated from commits; rewrite titles and bodies with `github_pr update` per [references/pr-body.md](references/pr-body.md). Merge with `gh stack merge <pr|stack> --yes` — `gh pr merge` cannot merge a stack.
 
-Read [references/stacked-prs.md](references/stacked-prs.md) before building or managing a stack — layer planning, mid-stack changes, squash-merge recovery, exit codes, and the manual fallback.
+Read [references/stacked-prs.md](references/stacked-prs.md) before building or managing a stack — layer planning, mid-stack changes, merging, sync traps, exit codes, restructuring, and the manual fallback.
 
 ## Cross-repository references
 
