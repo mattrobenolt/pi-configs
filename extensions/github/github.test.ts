@@ -237,6 +237,334 @@ test("review submit rejects a stale head before writing", async () => {
   assert.equal(postCalls, 0);
 });
 
+test("GitHubClient.graphql surfaces GraphQL errors from a 200 body", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () => jsonResponse({ errors: [{ message: "Field 'bogus' doesn't exist" }] }),
+  });
+  await assert.rejects(
+    () => client.graphql("query { bogus }", {}),
+    /GitHub GraphQL error: Field 'bogus' doesn't exist/,
+  );
+});
+
+test("github_review list_threads renders thread node ids and resolution state", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () =>
+      jsonResponse({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [
+                  {
+                    id: "PRRT_kwDO_AAA",
+                    isResolved: true,
+                    isOutdated: false,
+                    isCollapsed: false,
+                    path: "src/a.ts",
+                    line: 12,
+                    startLine: 10,
+                    diffSide: "RIGHT",
+                    comments: {
+                      nodes: [
+                        {
+                          databaseId: 555,
+                          id: "PRRC_1",
+                          body: "fix this",
+                          author: { login: "alice" },
+                          createdAt: "x",
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    id: "PRRT_kwDO_BBB",
+                    isResolved: false,
+                    isOutdated: true,
+                    isCollapsed: false,
+                    path: "src/b.ts",
+                    line: 5,
+                    startLine: null,
+                    diffSide: "LEFT",
+                    comments: {
+                      nodes: [
+                        {
+                          databaseId: 666,
+                          id: "PRRC_2",
+                          body: "nit",
+                          author: { login: "bob" },
+                          createdAt: "x",
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }),
+  });
+
+  const result = await executeReview(client, { action: "list_threads", repo: "o/r", pr_number: 7 });
+  const text = result.content[0].text;
+  assert.match(text, /Review threads \(2\):/);
+  assert.match(text, /PRRT_kwDO_AAA \[resolved\] src\/a\.ts:10-12 \(RIGHT\)/);
+  assert.match(text, /PRRT_kwDO_BBB \[unresolved outdated\] src\/b\.ts:5 \(LEFT\)/);
+  assert.match(text, /comment 555 alice: fix this/);
+  const details = result.details as any;
+  assert.equal(details.threads.length, 2);
+  assert.equal(details.threads[0].id, "PRRT_kwDO_AAA");
+  assert.equal(details.threads[1].comments[0].databaseId, 666);
+});
+
+test("github_review resolve_thread by comment id looks up the thread then mutates", async () => {
+  const calls: Array<{ query: string; variables: any }> = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      calls.push({ query: body.query, variables: body.variables });
+      if (body.query.includes("reviewThreads")) {
+        return jsonResponse({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    {
+                      id: "PRRT_kwDO_AAA",
+                      isResolved: false,
+                      isOutdated: false,
+                      isCollapsed: false,
+                      path: "src/a.ts",
+                      line: 12,
+                      startLine: 10,
+                      diffSide: "RIGHT",
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 555,
+                            id: "PRRC_1",
+                            body: "fix",
+                            author: { login: "alice" },
+                            createdAt: "x",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
+      return jsonResponse({
+        data: {
+          resolveReviewThread: {
+            thread: {
+              id: "PRRT_kwDO_AAA",
+              isResolved: true,
+              isOutdated: false,
+              path: "src/a.ts",
+              line: 12,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  const result = await executeReview(client, {
+    action: "resolve_thread",
+    repo: "o/r",
+    pr_number: 7,
+    comment: 555,
+  });
+
+  assert.match(
+    result.content[0].text,
+    /Resolved thread PRRT_kwDO_AAA — src\/a\.ts:12 \(was unresolved\)\. isResolved=true/,
+  );
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].query, /reviewThreads/);
+  assert.match(calls[1].query, /resolveReviewThread/);
+  assert.equal(calls[1].variables.threadId, "PRRT_kwDO_AAA");
+});
+
+test("github_review resolve_thread accepts a #discussion_r comment URL", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("reviewThreads")) {
+        return jsonResponse({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    {
+                      id: "PRRT_kwDO_AAA",
+                      isResolved: false,
+                      isOutdated: false,
+                      isCollapsed: false,
+                      path: "src/a.ts",
+                      line: 12,
+                      startLine: null,
+                      diffSide: "RIGHT",
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 555,
+                            id: "PRRC_1",
+                            body: "x",
+                            author: { login: "a" },
+                            createdAt: "x",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
+      return jsonResponse({
+        data: {
+          resolveReviewThread: {
+            thread: {
+              id: "PRRT_kwDO_AAA",
+              isResolved: true,
+              isOutdated: false,
+              path: "src/a.ts",
+              line: 12,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  const result = await executeReview(client, {
+    action: "resolve_thread",
+    repo: "o/r",
+    pr_number: 7,
+    comment: "https://github.com/o/r/pull/7#discussion_r555",
+  });
+  assert.match(result.content[0].text, /Resolved thread PRRT_kwDO_AAA/);
+});
+
+test("github_review resolve_thread by thread node id skips the lookup", async () => {
+  const calls: Array<{ query: string; variables: any }> = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      calls.push({ query: body.query, variables: body.variables });
+      return jsonResponse({
+        data: {
+          resolveReviewThread: {
+            thread: {
+              id: "PRRT_kwDO_AAA",
+              isResolved: true,
+              isOutdated: false,
+              path: "src/a.ts",
+              line: 12,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  const result = await executeReview(client, {
+    action: "resolve_thread",
+    repo: "o/r",
+    pr_number: 7,
+    thread: "PRRT_kwDO_AAA",
+  });
+  assert.match(result.content[0].text, /Resolved thread PRRT_kwDO_AAA/);
+  assert.equal(calls.length, 1, "thread node id must skip the reviewThreads lookup");
+  assert.match(calls[0].query, /resolveReviewThread/);
+  assert.equal(calls[0].variables.threadId, "PRRT_kwDO_AAA");
+});
+
+test("github_review unresolve_thread uses the unresolve mutation", async () => {
+  const calls: Array<{ query: string; variables: any }> = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      calls.push({ query: body.query, variables: body.variables });
+      return jsonResponse({
+        data: {
+          unresolveReviewThread: {
+            thread: {
+              id: "PRRT_kwDO_AAA",
+              isResolved: false,
+              isOutdated: false,
+              path: "src/a.ts",
+              line: 12,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  const result = await executeReview(client, {
+    action: "unresolve_thread",
+    repo: "o/r",
+    pr_number: 7,
+    thread: "PRRT_kwDO_AAA",
+  });
+  assert.match(result.content[0].text, /Unresolved thread PRRT_kwDO_AAA.*isResolved=false/);
+  assert.match(calls[0].query, /unresolveReviewThread/);
+});
+
+test("github_review resolve_thread throws when the comment is not in any thread", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () =>
+      jsonResponse({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+            },
+          },
+        },
+      }),
+  });
+
+  await assert.rejects(
+    () =>
+      executeReview(client, { action: "resolve_thread", repo: "o/r", pr_number: 7, comment: 999 }),
+    /No review thread contains inline comment 999/,
+  );
+});
+
+test("github_review resolve_thread requires a comment or thread", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () => jsonResponse({ data: {} }),
+  });
+
+  await assert.rejects(
+    () => executeReview(client, { action: "resolve_thread", repo: "o/r", pr_number: 7 }),
+    /inline review comment ID is required/,
+  );
+});
+
 test("summarizeChecks combines check runs and commit statuses", () => {
   const snapshot = summarizeChecks(
     [

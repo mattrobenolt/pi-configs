@@ -18,6 +18,7 @@ import path from "node:path";
 import { snappyUncompress } from "hysnappy";
 import { markdownToMrkdwn } from "./mrkdwn.js";
 import { validateSlackSearchDate, validateSlackSearchQuery } from "./search-query.js";
+import { classifySlackTarget, strictSlackUserMatch } from "./target.js";
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const DEFAULT_USER_LOOKUP_LIMIT = 10;
@@ -1397,6 +1398,205 @@ async function resolveChannelName(
 
   channelNamePromiseCache.set(cacheKey, promise);
   return promise;
+}
+
+type PostTarget = {
+  channelId: string;
+  label: string;
+  isDm: boolean;
+  dmUserId?: string;
+};
+
+function describePostTarget(target: PostTarget): string {
+  return target.isDm ? `DM with ${target.label}` : `#${target.label}`;
+}
+
+function describeSlackUser(user: SlackUser): string {
+  const display = user.displayName ?? user.realName ?? user.name ?? user.id;
+  const parts = [display];
+  if (user.email) parts.push(`<${user.email}>`);
+  parts.push(`<${user.id}>`);
+  return parts.join(" ");
+}
+
+/**
+ * Resolve a user for DM delivery by exact identity only. User IDs and
+ * emails are unambiguous (Slack-enforced uniqueness); everything else
+ * requires an exact whole-string match. Partial or ambiguous references fail
+ * with candidates instead of guessing, so "nick" can never silently
+ * resolve to the wrong Nick.
+ */
+async function resolveUserStrict(
+  query: string,
+  workspaceUrl: string,
+  options?: ToolExecutionOptions,
+): Promise<SlackUser> {
+  const trimmed = query.trim();
+  if (!trimmed) throw new Error("Slack user query is empty");
+
+  if (/^U[A-Z0-9]{8,}$/.test(trimmed)) {
+    const user = await getSlackUser(trimmed, workspaceUrl, options?.signal);
+    if (!user || user.deleted || user.isBot) {
+      throw new Error(`No Slack user found with ID: ${trimmed}`);
+    }
+    return user;
+  }
+
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) {
+    let user: SlackUser | undefined;
+    try {
+      const response = await slackApiCall(
+        "users.lookupByEmail",
+        { email: trimmed },
+        { workspaceUrl, signal: options?.signal },
+      );
+      const raw = isRecord(response.user) ? response.user : undefined;
+      user = raw ? slackUserFromApi(raw) : undefined;
+    } catch {
+      // fall through to the full scan
+    }
+    if (user && !user.deleted && !user.isBot) return user;
+  }
+
+  const all: SlackUser[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const response = await slackApiCall(
+      "users.list",
+      { limit: 200, cursor },
+      { workspaceUrl, signal: options?.signal },
+    );
+    for (const member of asArray(response.members).filter(isRecord)) {
+      const user = slackUserFromApi(member);
+      if (!user.id || user.deleted || user.isBot) continue;
+      all.push(user);
+    }
+    const meta = isRecord(response.response_metadata) ? response.response_metadata : undefined;
+    const nextCursor = meta ? getString(meta.next_cursor) : undefined;
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+
+  const { matches, closest } = strictSlackUserMatch(all, trimmed);
+  const isHandle = trimmed.startsWith("@");
+  if (matches.length === 0) {
+    const hint = closest.slice(0, 3).map(describeSlackUser).join("; ");
+    throw new Error(
+      `No ${isHandle ? "Slack user with that handle" : "exact Slack user match"} for '${trimmed}'.` +
+        (hint ? ` Closest: ${hint}.` : "") +
+        ` Pass a user ID (U...) for unambiguous addressing.`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `Multiple Slack users match '${trimmed}': ${matches.map(describeSlackUser).join("; ")}. ` +
+        `Pass a user ID (U...) to disambiguate.`,
+    );
+  }
+  return matches[0]!;
+}
+
+async function openDmForUser(
+  query: string,
+  workspaceUrl: string,
+  options?: ToolExecutionOptions,
+): Promise<PostTarget> {
+  const user = await resolveUserStrict(query, workspaceUrl, options);
+
+  const response = await slackApiCall(
+    "conversations.open",
+    { users: user.id },
+    { workspaceUrl, signal: options?.signal },
+  );
+  const channel = isRecord(response.channel) ? response.channel : undefined;
+  const channelId = channel ? getString(channel.id) : undefined;
+  if (!channelId) {
+    throw new Error(`Failed to open DM with ${user.realName ?? user.name ?? query}`);
+  }
+
+  return {
+    channelId,
+    label: user.displayName ?? user.realName ?? user.name ?? user.id,
+    isDm: true,
+    dmUserId: user.id,
+  };
+}
+
+async function resolveDmDisplayName(
+  channelId: string,
+  workspaceUrl: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  try {
+    const authTestResponse = await slackApiCall("auth.test", {}, { workspaceUrl, signal });
+    const myUserId = getString(authTestResponse.user_id);
+    const info = await slackApiCall(
+      "conversations.info",
+      { channel: channelId },
+      { workspaceUrl, signal },
+    );
+    const ch = isRecord(info.channel) ? info.channel : undefined;
+    const members = ch ? asArray(ch.members).filter((m): m is string => typeof m === "string") : [];
+    const otherId = myUserId ? members.find((m) => m !== myUserId) : undefined;
+    if (otherId) return resolveUserName(otherId, undefined, workspaceUrl, signal);
+  } catch {
+    // fall through to channelId
+  }
+  return channelId;
+}
+
+/**
+ * Resolve a post target to a channel or DM. Accepts channel names/IDs and
+ * user references ('@handle', U-ID, exact name, email); user references
+ * open the DM automatically and must match exactly. Bare tokens resolve as
+ * a channel first, then as a user.
+ */
+async function resolvePostTarget(
+  channel: string,
+  workspaceUrl: string,
+  options?: ToolExecutionOptions,
+): Promise<PostTarget> {
+  const target = classifySlackTarget(channel);
+
+  if (target.kind === "channel-id") {
+    if (target.value.startsWith("D")) {
+      return {
+        channelId: target.value,
+        label: await resolveDmDisplayName(target.value, workspaceUrl, options?.signal),
+        isDm: true,
+      };
+    }
+    return {
+      channelId: target.value,
+      label: await resolveChannelName(target.value, workspaceUrl, options?.signal),
+      isDm: false,
+    };
+  }
+
+  if (target.kind === "channel-name") {
+    return {
+      channelId: await resolveChannelId(channel, workspaceUrl, options?.signal),
+      label: target.value,
+      isDm: false,
+    };
+  }
+
+  if (target.kind === "handle" || target.kind === "user-id") {
+    return openDmForUser(channel, workspaceUrl, options);
+  }
+
+  try {
+    const channelId = await resolveChannelId(target.value, workspaceUrl, options?.signal);
+    return { channelId, label: target.value, isDm: false };
+  } catch {
+    try {
+      return await openDmForUser(channel, workspaceUrl, options);
+    } catch (userError) {
+      throw new Error(
+        `Could not resolve '${target.value}' as a channel or a Slack user. ${errorMessage(userError)}`,
+      );
+    }
+  }
 }
 
 function slackUserFromApi(raw: Record<string, unknown>): SlackUser {
@@ -3141,7 +3341,7 @@ async function slackDeleteMessage(
 const SlackPostParams = Type.Object({
   channel: Type.String({
     description:
-      "Channel name like '#general' or a channel ID like 'C123...'. Also accepts DM channel IDs from SlackOpenDM.",
+      "Channel name like '#general' or a channel ID like 'C123...'. For a DM, pass a user ID like 'U123...', an exact '@handle', an exact name, or an email - the DM opens automatically. Names must match exactly; ambiguous or partial names error instead of guessing. DM channel IDs like 'D123...' also work.",
   }),
   text: Type.String({
     description: "Message text to post.",
@@ -3168,16 +3368,22 @@ async function slackPost(
 ): Promise<SlackPostResult> {
   const format = getOutputFormat(input.format);
   const workspaceUrl = await getConfiguredWorkspaceUrl(options?.cwd);
-  const channelId = await resolveChannelId(input.channel, workspaceUrl, options?.signal);
-  const channelName = await resolveChannelName(channelId, workspaceUrl, options?.signal);
+  const target = await resolvePostTarget(input.channel, workspaceUrl, options);
 
   if (input.dryRun) {
-    const details = { format, dryRun: true, workspaceUrl, channelId, channelName };
+    const details = {
+      format,
+      dryRun: true,
+      workspaceUrl,
+      channelId: target.channelId,
+      channelName: target.label,
+      ...(target.isDm ? { dmUserId: target.dmUserId } : {}),
+    };
     return {
       text:
         format === "json"
           ? renderJsonDocument({ tool: "slack_post", ...details, text: input.text })
-          : `[dry run] Would post to #${channelName}\n\n${normalizeText(input.text)}`,
+          : `[dry run] Would post to ${describePostTarget(target)}\n\n${normalizeText(input.text)}`,
       details,
     };
   }
@@ -3186,11 +3392,11 @@ async function slackPost(
 
   const response = await slackApiCall(
     "chat.postMessage",
-    { channel: channelId, text: preparedText },
+    { channel: target.channelId, text: preparedText },
     { workspaceUrl, signal: options?.signal },
   );
 
-  const postedChannelId = getString(response.channel) ?? channelId;
+  const postedChannelId = getString(response.channel) ?? target.channelId;
   const ts = getString(response.ts);
   const permalink = ts ? buildSlackPermalink(workspaceUrl, postedChannelId, ts) : undefined;
   const details = {
@@ -3198,7 +3404,8 @@ async function slackPost(
     dryRun: false,
     workspaceUrl,
     channelId: postedChannelId,
-    channelName,
+    channelName: target.label,
+    ...(target.isDm ? { dmUserId: target.dmUserId } : {}),
     ts,
     permalink,
   };
@@ -3208,7 +3415,7 @@ async function slackPost(
       format === "json"
         ? renderJsonDocument({ tool: "slack_post", ...details, response })
         : [
-            `Message posted to #${channelName}`,
+            `Message posted to ${describePostTarget(target)}`,
             permalink ?? `${workspaceUrl} · ${postedChannelId} · ${ts ?? "unknown ts"}`,
             "",
             normalizeText(input.text),
@@ -3269,7 +3476,7 @@ export async function slackUserLookup(
 const SlackOpenDMParams = Type.Object({
   user: Type.String({
     description:
-      "User to open a DM with. Accepts a name, handle, display name, real name, email, or user ID.",
+      "User to open a DM with. Exact handle, display name, real name, email, or user ID (U...). Names must match exactly; ambiguous or partial names fail with candidates. Prefer the user ID.",
   }),
   format: OutputFormatParam,
   outputFile: OutputFileParam,
@@ -3282,18 +3489,14 @@ type SlackOpenDMResult = {
   details: Record<string, unknown>;
 };
 
-async function slackOpenDM(
+export async function slackOpenDM(
   input: SlackOpenDMInput,
   options?: ToolExecutionOptions,
 ): Promise<SlackOpenDMResult> {
   const format = getOutputFormat(input.format);
   const workspaceUrl = await getConfiguredWorkspaceUrl(options?.cwd);
 
-  const users = await lookupSlackUsers({ query: input.user, limit: 1 }, options);
-  if (users.length === 0) {
-    throw new Error(`No Slack user found matching: ${input.user}`);
-  }
-  const user = users[0]!;
+  const user = await resolveUserStrict(input.user, workspaceUrl, options);
 
   const response = await slackApiCall(
     "conversations.open",
@@ -3369,7 +3572,9 @@ function makeConversationResourceLoader(systemContext: string): ResourceLoader {
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
     getSystemPrompt: () => systemContext,
+    getSystemPromptSource: () => undefined,
     getAppendSystemPrompt: () => [],
+    getAppendSystemPromptSources: () => [],
     extendResources: () => {},
     reload: async () => {},
   };
@@ -3696,7 +3901,12 @@ export default function (pi: ExtensionAPI) {
     name: "slack_post",
     label: "Slack Post",
     description: "Post a new top-level Slack message to a channel or DM.",
-    promptSnippet: "Post a fresh Slack message. Use <@USERID> for mentions.",
+    promptSnippet:
+      "Post a fresh Slack message to a channel or DM. For a DM, pass the user ID ('U...') from a mention or slack_user_lookup, or an exact @handle/name - the DM opens automatically, no slack_open_dm needed. Use <@USERID> for mentions.",
+    promptGuidelines: [
+      "For a DM, prefer the user ID ('U...') - extract it from <@U...> mentions in message reads or from slack_user_lookup results. Names must match exactly; ambiguous or partial names fail with candidates instead of guessing who you meant.",
+      "The result labels DMs as 'DM with <name>', channels as '#name'.",
+    ],
     parameters: SlackPostParams,
     async execute(_toolCallId, params: SlackPostInput, signal, onUpdate, ctx) {
       onUpdate?.({
@@ -3761,7 +3971,11 @@ export default function (pi: ExtensionAPI) {
     name: "slack_open_dm",
     label: "Slack Open DM",
     description: "Open or find a DM channel with a Slack user.",
-    promptSnippet: "Open or find a Slack DM and return the channel ID.",
+    promptSnippet:
+      "Open or find a Slack DM and return the channel ID. Pass an exact user ID (U...) or exact name.",
+    promptGuidelines: [
+      "Pass the user ID (U...) when known; names must match exactly (handle, display name, or email) or the call fails with candidates instead of guessing.",
+    ],
     parameters: SlackOpenDMParams,
     async execute(_toolCallId, params: SlackOpenDMInput, signal, onUpdate, ctx) {
       onUpdate?.({

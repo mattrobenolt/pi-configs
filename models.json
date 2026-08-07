@@ -322,6 +322,35 @@
             "high": "high",
             "xhigh": "max"
           }
+        },
+        {
+          "id": "accounts/fireworks/models/deepseek-v4-flash-0731",
+          "name": "DeepSeek V4 Flash 0731 (OpenAI path, max-capable)",
+          "api": "openai-completions",
+          "baseUrl": "https://api.fireworks.ai/inference/v1",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "cost": {
+            "input": 0.14,
+            "output": 0.28,
+            "cacheRead": 0.028,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "sendSessionAffinityHeaders": true
+          },
+          "thinkingLevelMap": {
+            "off": null,
+            "low": "low",
+            "high": "high",
+            "max": "max"
+          }
         }
       ]
     }

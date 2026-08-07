@@ -584,8 +584,8 @@ function validateModeNameOrError(
 ): string | null {
   if (!name) return "Mode name cannot be empty";
   if (/\s/.test(name)) return "Mode name cannot contain whitespace";
-  if (isReservedModeName(name)) return `Mode name \"${name}\" is reserved`;
-  if (!opts?.allowExisting && existing[name]) return `Mode \"${name}\" already exists`;
+  if (isReservedModeName(name)) return `Mode name "${name}" is reserved`;
+  if (!opts?.allowExisting && existing[name]) return `Mode "${name}" already exists`;
   return null;
 }
 
@@ -597,7 +597,7 @@ async function handleModeChoiceUI(
   // Special behavior: when we're in "custom" and select another mode,
   // offer to either *use* it (switch) or *store* the current custom selection into it.
   if (runtime.currentMode === CUSTOM_MODE_NAME && choice !== CUSTOM_MODE_NAME) {
-    const action = await ctx.ui.select(`Mode \"${choice}\"`, ["use", "store"]);
+    const action = await ctx.ui.select(`Mode "${choice}"`, ["use", "store"]);
     if (!action) return;
 
     if (action === "use") {
@@ -610,7 +610,7 @@ async function handleModeChoiceUI(
     const overlay = customOverlay ?? getCurrentSelectionSpec(pi, ctx);
     await storeSelectionIntoMode(pi, ctx, choice, overlay);
     await applyMode(pi, ctx, choice);
-    ctx.ui.notify(`Stored ${CUSTOM_MODE_NAME} into \"${choice}\"`, "info");
+    ctx.ui.notify(`Stored ${CUSTOM_MODE_NAME} into "${choice}"`, "info");
     return;
   }
 
@@ -683,7 +683,7 @@ async function addModeUI(pi: ExtensionAPI, ctx: ExtensionContext): Promise<strin
       thinkingLevel: selection.thinkingLevel,
     };
     await persistRuntime(pi, ctx);
-    ctx.ui.notify(`Added mode \"${name}\"`, "info");
+    ctx.ui.notify(`Added mode "${name}"`, "info");
     return name;
   }
 }
@@ -707,7 +707,7 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
     actions.push(MODE_UI_BACK);
 
     const action = await ctx.ui.select(
-      `Edit mode \"${modeName}\"  model: ${modelLabel}  thinking: ${thinkingLabel}`,
+      `Edit mode "${modeName}"  model: ${modelLabel}  thinking: ${thinkingLabel}`,
       actions,
     );
     if (!action || action === MODE_UI_BACK) return;
@@ -725,7 +725,7 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
       spec.modelId = selected.modelId;
       runtime.data.modes[modeName] = spec;
       await persistRuntime(pi, ctx);
-      ctx.ui.notify(`Updated model for \"${modeName}\"`, "info");
+      ctx.ui.notify(`Updated model for "${modeName}"`, "info");
 
       if (runtime.currentMode === modeName) {
         await applyMode(pi, ctx, modeName);
@@ -745,7 +745,7 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
 
       runtime.data.modes[modeName] = spec;
       await persistRuntime(pi, ctx);
-      ctx.ui.notify(`Updated thinking level for \"${modeName}\"`, "info");
+      ctx.ui.notify(`Updated thinking level for "${modeName}"`, "info");
 
       if (runtime.currentMode === modeName) {
         await applyMode(pi, ctx, modeName);
@@ -754,7 +754,7 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
     }
 
     if (action === "Delete mode") {
-      const ok = await ctx.ui.confirm("Delete mode", `Delete mode \"${modeName}\"?`);
+      const ok = await ctx.ui.confirm("Delete mode", `Delete mode "${modeName}"?`);
       if (!ok) continue;
 
       delete runtime.data.modes[modeName];
@@ -768,7 +768,7 @@ async function editModeUI(pi: ExtensionAPI, ctx: ExtensionContext, mode: string)
         runtime.lastRealMode = "default";
       }
       requestEditorRender?.();
-      ctx.ui.notify(`Deleted mode \"${modeName}\"`, "info");
+      ctx.ui.notify(`Deleted mode "${modeName}"`, "info");
       return;
     }
   }
@@ -795,14 +795,14 @@ async function renameModeUI(
   if (!ctx.hasUI) return undefined;
 
   if (isDefaultModeName(oldName)) {
-    ctx.ui.notify(`Cannot rename default mode \"${oldName}\"`, "warning");
+    ctx.ui.notify(`Cannot rename default mode "${oldName}"`, "warning");
     return oldName;
   }
 
   await ensureRuntime(pi, ctx);
 
   while (true) {
-    const raw = await ctx.ui.input(`Rename mode \"${oldName}\"`, oldName);
+    const raw = await ctx.ui.input(`Rename mode "${oldName}"`, oldName);
     if (raw === undefined) return undefined;
 
     const newName = normalizeModeNameInput(raw);
@@ -821,7 +821,7 @@ async function renameModeUI(
     if (runtime.lastRealMode === oldName) runtime.lastRealMode = newName;
     requestEditorRender?.();
 
-    ctx.ui.notify(`Renamed \"${oldName}\" → \"${newName}\"`, "info");
+    ctx.ui.notify(`Renamed "${oldName}" → "${newName}"`, "info");
     return newName;
   }
 }
@@ -939,7 +939,7 @@ class PromptEditor extends CustomEditor {
     const mode = this.modeLabelProvider?.();
     if (!mode) return lines;
 
-    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    const stripAnsi = (s: string) => s.replace(/\u001b\[[0-9;]*m/g, ""); // eslint-disable-line no-control-regex
     const topPlain = stripAnsi(lines[0] ?? "");
 
     // If the editor is scrolled, the built-in editor renders a scroll indicator on the top border.

@@ -106,7 +106,17 @@ const InlineCommentParams = Type.Object({
 
 const ReviewParams = Type.Object({
   action: StringEnum(
-    ["submit", "comment", "reply", "update_review", "update_comment", "delete_comment"] as const,
+    [
+      "submit",
+      "comment",
+      "reply",
+      "update_review",
+      "update_comment",
+      "delete_comment",
+      "list_threads",
+      "resolve_thread",
+      "unresolve_thread",
+    ] as const,
     { description: "Pull request review operation." },
   ),
   repo: RepoParam,
@@ -144,6 +154,12 @@ const ReviewParams = Type.Object({
   start_side: Type.Optional(StringEnum(["LEFT", "RIGHT"] as const)),
   comment: Type.Optional(ReviewCommentRefParam),
   review: Type.Optional(ReviewRefParam),
+  thread: Type.Optional(
+    Type.String({
+      description:
+        "PullRequestReviewThread GraphQL node ID (PRRT_...) for resolve_thread/unresolve_thread. If omitted, pass comment (any inline review comment in the thread) and the containing thread is resolved.",
+    }),
+  ),
 });
 
 type ReviewInput = Static<typeof ReviewParams>;
@@ -321,6 +337,153 @@ function renderSubmittedReview(summary: string, payload: GitHubJson): string {
     sections.push(`Inline comments (${comments.length}):\n${comments.join("\n\n")}`);
   }
   return sections.join("\n\n");
+}
+
+type ReviewThreadComment = {
+  databaseId: number;
+  id: string;
+  body: string;
+  author: string;
+  createdAt: string;
+};
+
+type ReviewThread = {
+  id: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  isCollapsed: boolean;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  diffSide: string;
+  comments: ReviewThreadComment[];
+};
+
+// reviewThreads is GraphQL-only: the REST API neither lists threads nor
+// exposes isResolved. Each thread's comment.databaseId is the REST numeric id
+// our other actions use, so a comment ref maps to its containing thread.
+const REVIEW_THREADS_QUERY = `
+  query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 50, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id
+            isResolved
+            isOutdated
+            isCollapsed
+            path
+            line
+            startLine
+            diffSide
+            comments(first: 100) {
+              nodes {
+                databaseId
+                id
+                body
+                author { login }
+                createdAt
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+async function loadReviewThreads(
+  client: GitHubClient,
+  repo: string,
+  pullNumber: number,
+  signal?: AbortSignal,
+): Promise<ReviewThread[]> {
+  const { owner, name } = splitRepo(repo);
+  const threads: ReviewThread[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const data = await client.graphql<{
+      repository?: {
+        pullRequest?: {
+          reviewThreads: {
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            nodes: Array<{
+              id: string;
+              isResolved: boolean;
+              isOutdated: boolean;
+              isCollapsed: boolean;
+              path: string;
+              line: number | null;
+              startLine: number | null;
+              diffSide: string;
+              comments?: {
+                nodes?: Array<{
+                  databaseId: number;
+                  id: string;
+                  body: string;
+                  author?: { login?: string };
+                  createdAt: string;
+                }>;
+              };
+            }>;
+          };
+        };
+      };
+    }>(REVIEW_THREADS_QUERY, { owner, name, pr: pullNumber, cursor }, { signal });
+    const reviewThreads = data.repository?.pullRequest?.reviewThreads;
+    if (!reviewThreads) {
+      throw new Error(`GitHub GraphQL returned no reviewThreads for ${repo}#${pullNumber}`);
+    }
+    for (const node of reviewThreads.nodes) {
+      threads.push({
+        id: node.id,
+        isResolved: node.isResolved,
+        isOutdated: node.isOutdated,
+        isCollapsed: node.isCollapsed,
+        path: node.path,
+        line: node.line,
+        startLine: node.startLine,
+        diffSide: node.diffSide,
+        comments: (node.comments?.nodes ?? []).map((comment) => ({
+          databaseId: comment.databaseId,
+          id: comment.id,
+          body: comment.body,
+          author: comment.author?.login ?? "unknown",
+          createdAt: comment.createdAt,
+        })),
+      });
+    }
+    if (!reviewThreads.pageInfo.hasNextPage) break;
+    cursor = reviewThreads.pageInfo.endCursor ?? undefined;
+  }
+  return threads;
+}
+
+function threadRange(thread: ReviewThread): string {
+  if (thread.startLine != null && thread.line != null) return `${thread.startLine}-${thread.line}`;
+  return thread.line != null ? String(thread.line) : "file";
+}
+
+function renderThreads(threads: ReviewThread[]): string {
+  if (!threads.length) return "No review threads found.";
+  const lines = [`Review threads (${threads.length}):`];
+  for (const thread of threads) {
+    const flags = [
+      thread.isResolved ? "resolved" : "unresolved",
+      thread.isOutdated ? "outdated" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    lines.push(
+      `- thread ${thread.id} [${flags}] ${thread.path}:${threadRange(thread)} (${thread.diffSide})`,
+    );
+    for (const comment of thread.comments) {
+      const excerpt = comment.body.replace(/\s+/g, " ").trim().slice(0, 160);
+      lines.push(`  - comment ${comment.databaseId} ${comment.author}: ${excerpt}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 async function spillOutput(text: string, prefix: string): Promise<string> {
@@ -657,6 +820,60 @@ export async function executeReview(
         repo: params.repo,
         review,
       },
+    );
+  }
+
+  if (params.action === "list_threads") {
+    const number = prNumber(params.pr_number);
+    const threads = await loadReviewThreads(client, params.repo, number, signal);
+    return toolResult(renderThreads(threads), {
+      action: params.action,
+      repo: params.repo,
+      threads,
+    });
+  }
+
+  if (params.action === "resolve_thread" || params.action === "unresolve_thread") {
+    const number = prNumber(params.pr_number);
+    const resolve = params.action === "resolve_thread";
+    let threadId = params.thread?.trim();
+    let prior: ReviewThread | undefined;
+    if (!threadId) {
+      const commentId = parseNumericRef(params.comment, "inline review comment ID", [
+        "review_comment",
+      ]);
+      const threads = await loadReviewThreads(client, params.repo, number, signal);
+      prior = threads.find((thread) =>
+        thread.comments.some((comment) => comment.databaseId === commentId),
+      );
+      if (!prior) {
+        throw new Error(
+          `No review thread contains inline comment ${commentId} on ${params.repo}#${number}. It may be a top-level PR conversation comment (use github_pr) or an already-resolved thread filtered out by GitHub.`,
+        );
+      }
+      threadId = prior.id;
+    }
+    const mutation = resolve
+      ? "mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved isOutdated path line } } }"
+      : "mutation($threadId: ID!) { unresolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved isOutdated path line } } }";
+    const data = await client.graphql<{
+      [key: string]: {
+        thread?: {
+          id: string;
+          isResolved: boolean;
+          isOutdated: boolean;
+          path: string;
+          line: number | null;
+        };
+      };
+    }>(mutation, { threadId }, { signal });
+    const thread = data[resolve ? "resolveReviewThread" : "unresolveReviewThread"]?.thread;
+    if (!thread) throw new Error(`GitHub GraphQL returned no thread for ${params.action}`);
+    const verb = resolve ? "Resolved" : "Unresolved";
+    const priorNote = prior ? ` (was ${prior.isResolved ? "resolved" : "unresolved"})` : "";
+    return toolResult(
+      `${verb} thread ${thread.id} — ${thread.path}:${thread.line ?? "file"}${priorNote}. isResolved=${thread.isResolved}`,
+      { action: params.action, repo: params.repo, thread, prior },
     );
   }
 
@@ -998,12 +1215,13 @@ export default function githubExtension(pi: ExtensionAPI) {
     name: "github_review",
     label: "GitHub Review",
     description:
-      "Submit PR reviews and create, reply to, update, or delete inline review comments. Review writes are pinned to the exact head SHA inspected locally.",
+      "Submit PR reviews and create, reply to, update, or delete inline review comments, and list, resolve, or unresolve review threads. Review verdicts and inline comments are pinned to the exact head SHA inspected locally; thread resolution is a conversation lifecycle action and does not require a head pin.",
     promptSnippet:
-      "Submit GitHub PR reviews and manage inline review comments/replies with stale-head protection.",
+      "Submit GitHub PR reviews, manage inline review comments/replies with stale-head protection, and resolve/unresolve review threads.",
     promptGuidelines: [
       "Use github_review for review verdicts and inline code discussion; use github_pr for top-level PR conversation comments.",
-      "github_review submit and comment require expected_head_sha from the locally reviewed checkout and reject stale reviews when the PR head changes.",
+      "github_review submit and comment require expected_head_sha from the locally reviewed checkout and reject stale reviews when the PR head changes. resolve_thread and unresolve_thread do not pin a head — resolving is a conversation action, not code feedback.",
+      "Resolve a thread after addressing its feedback with resolve_thread, passing any inline comment in the thread (comment ID or #discussion_r URL) or the thread node ID from list_threads. Use list_threads to see which threads are still open before resolving.",
       "Prefer github_review update_comment or update_review for corrections and formatting fixes. Reply when the discussion genuinely advances; delete only accidental or misplaced comments.",
     ],
     parameters: ReviewParams,

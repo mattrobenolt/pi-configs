@@ -184,6 +184,35 @@ export class GitHubClient {
 
     return payload as T;
   }
+
+  /**
+   * Run a GitHub GraphQL query against /graphql. The REST API cannot resolve
+   * review threads or report their resolved state, so thread operations use
+   * this. GraphQL returns 200 with an `errors` array for query-level errors;
+   * those are surfaced as a thrown Error. Auth/transport errors still raise
+   * GitHubApiError via request().
+   */
+  async graphql<T = GitHubJson>(
+    query: string,
+    variables: Record<string, unknown> = {},
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
+  ): Promise<T> {
+    const response = await this.request<{
+      data?: GitHubJson;
+      errors?: Array<{ message?: string; path?: Array<string | number> }>;
+    }>("POST", "/graphql", {
+      body: { query, variables },
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+    });
+    if (response.errors?.length) {
+      const messages = response.errors
+        .map((error) => (typeof error.message === "string" ? error.message : "unknown error"))
+        .join("; ");
+      throw new Error(`GitHub GraphQL error: ${messages}`);
+    }
+    return (response.data ?? {}) as T;
+  }
 }
 
 export function splitRepo(repo: string): { owner: string; name: string; path: string } {

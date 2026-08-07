@@ -9,9 +9,9 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --experimental-strip-types --test index.test.ts",
-    "fmt": "oxfmt index.ts mrkdwn.ts search-query.ts index.test.ts",
-    "fmt:check": "oxfmt index.ts mrkdwn.ts search-query.ts index.test.ts --check",
-    "lint": "oxlint index.ts mrkdwn.ts search-query.ts index.test.ts"
+    "fmt": "oxfmt index.ts mrkdwn.ts search-query.ts target.ts index.test.ts",
+    "fmt:check": "oxfmt index.ts mrkdwn.ts search-query.ts target.ts index.test.ts --check",
+    "lint": "oxlint index.ts mrkdwn.ts search-query.ts target.ts index.test.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "catalog:",

@@ -8,6 +8,15 @@ disable-model-invocation: true
 
 You are running in non-interactive mode via `pi --print`. Process each memory file systematically with tools, then stop. Do not ask for confirmation — just do the work. Do not summarize, discuss, or describe what you would do — execute every step with `read`, `bash`, `find`, and `write`. Your final stdout line **must** be the `curation complete` marker described at the bottom; the launchd wrapper gates its success check on that line appearing verbatim, so if you omit it the run is treated as a failure and retried next hour.
 
+## Hard filesystem scope
+
+This skill runs under launchd with no macOS file-access grants. Reading inside `~/Desktop`, `~/Documents`, `~/Downloads`, `~/Pictures`, `~/Movies`, or `~/Music` triggers permission prompts on Matt's screen. Follow these rules without exception:
+
+- Never run `find`, `grep`, or `ls` on `/`, `~`, or any path outside the allowed roots. Pass an explicit scoped path to every command.
+- Never call the `find` tool without an explicit `path` argument.
+- Allowed roots: `~/.pi/agent`, `~/.claude/projects`, and project checkouts resolved in Step 3.
+- Resolve project directories only via the two methods in Step 3. If both fail, skip the project. Never search the disk for it.
+
 ## Files to curate
 
 Process in this order:

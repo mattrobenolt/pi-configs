@@ -197,10 +197,6 @@ class WorkspaceState {
   }
 }
 
-function sanitizeName(name: string): string {
-  return name.trim().replace(/[^a-zA-Z0-9._-]+/g, "-");
-}
-
 function shortId(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }

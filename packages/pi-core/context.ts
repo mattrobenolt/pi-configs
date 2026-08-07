@@ -7,20 +7,6 @@ type RoleMessage = TimestampedMessage & {
   content?: unknown;
 };
 
-type CustomContextMessage = {
-  role: "custom";
-  customType: string;
-  content: string;
-  display: false;
-  timestamp: number;
-};
-
-type UserContextMessage = {
-  role: "user";
-  content: string;
-  timestamp: number;
-};
-
 export function getMessageTimestamp(message: TimestampedMessage): number {
   const { timestamp } = message;
   if (typeof timestamp === "number") return timestamp;

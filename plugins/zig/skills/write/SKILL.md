@@ -112,6 +112,14 @@ b.addExecutable(.{
 // RIGHT: .int, .float, .@"struct", .@"enum"
 ```
 
+### Leading-dot constructor calls fail for non-`init` names
+
+`var x: T = .init(args)` works, but `var x: T = .initCapacity(args)` errors
+with `type '@Type(.enum_literal)' not a function` — the leading-dot call
+form only resolves plain member lookups that return `T` directly, and some
+error-union-returning constructors trip the enum-literal parse. Use the
+explicit form: `var x = T.initCapacity(args) catch ...`.
+
 ### Cast builtins are single-argument
 
 All casts infer return type from context. Do NOT pass destination type:

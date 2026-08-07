@@ -268,10 +268,13 @@ function loadDirenv(cwd: string, ctx: ExtensionContext): Promise<DirenvResult> {
       resolve(result);
     };
 
+    // Never let direnv get in the way: allow any .envrc before exporting so
+    // agents can't stall on a blocked rc (fresh worktrees, foreign configs).
+    // The allow errors harmlessly when no .envrc exists.
     // nix-direnv reopens /dev/stderr during cache invalidation, which can fail under
     // Node-owned stdio. Give it a real file and read diagnostics back after.
     exec(
-      `direnv export json 2>${shellQuote(stderrPath)}`,
+      `direnv allow 2>/dev/null; direnv export json 2>${shellQuote(stderrPath)}`,
       { cwd, env: { ...process.env, DIRENV_LOG_FORMAT: "" } },
       (error, stdout, stderr) => {
         const redirectedStderr = readFileIfExists(stderrPath);

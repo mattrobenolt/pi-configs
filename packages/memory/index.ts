@@ -42,7 +42,6 @@ import { Type } from "typebox";
 const DEFAULT_MEMORY_DIR =
   process.env.PI_MEMORY_DIR ?? path.join(process.env.HOME ?? "~", ".pi", "agent", "memory");
 const DEFAULT_PROJECTS_DIR = path.join(process.env.HOME ?? "~", ".pi", "agent", "projects");
-const SESSIONS_DIR = path.join(process.env.HOME ?? "~", ".pi", "agent", "sessions");
 const SESSIONS_INDEX_DIR = path.join(process.env.HOME ?? "~", ".pi", "agent", "sessions-index");
 
 let MEMORY_DIR = DEFAULT_MEMORY_DIR;
@@ -750,10 +749,9 @@ function formatRelevantMemoryResults(results: QmdSearchResult[]): string {
 function stripAnsi(text: string): string {
   // qmd may emit spinners/progress bars even with --json, especially on first model download.
   // Strip ANSI CSI/OSC sequences so we can reliably find and parse JSON payloads.
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escape sequences
   return text
-    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
-    .replace(/\u001b\][^\u0007]*(\u0007|\u001b\\)/g, "");
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "") // eslint-disable-line no-control-regex
+    .replace(/\u001b\][^\u0007]*(\u0007|\u001b\\)/g, ""); // eslint-disable-line no-control-regex
 }
 
 function parseQmdJson(stdout: string): unknown {
@@ -1111,8 +1109,7 @@ export async function searchRelevantMemories(prompt: string): Promise<RelevantMe
 
   // Sanitize: strip control chars, limit to 200 chars for the search query
   const sanitized = prompt
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: we intentionally strip control chars.
-    .replace(/[\x00-\x1f\x7f]/g, " ")
+    .replace(/[\x00-\x1f\x7f]/g, " ") // eslint-disable-line no-control-regex
     .trim()
     .slice(0, 200);
   if (!sanitized) return null;

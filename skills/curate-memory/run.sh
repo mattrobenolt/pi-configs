@@ -2,6 +2,11 @@
 # Memory curation wrapper — called hourly by launchd.
 # Decides whether to actually curate based on time elapsed and session activity.
 
+# launchd starts agents with cwd=/, and pi's find/ls tools default to cwd.
+# Pin the process inside the agent dir so nothing traverses the whole disk
+# (traversing ~/Desktop, ~/Pictures, etc. triggers macOS TCC prompts).
+cd ($env.HOME | path join ".pi/agent")
+
 const DEFAULT_QMD_DAEMON_URL = "http://localhost:8181"
 const QMD_READY_ATTEMPTS = 10
 const QMD_READY_DELAY = 300ms

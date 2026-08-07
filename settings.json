@@ -11,8 +11,7 @@
     "git:github.com/nicobailon/pi-subagents",
     "git:github.com/nicobailon/pi-mcp-adapter",
     "git:github.com/HazAT/pi-ghostty",
-    "git:github.com/championswimmer/pi-cache-graph",
-    "git:github.com/dbachelder/pi-btw"
+    "git:github.com/championswimmer/pi-cache-graph"
   ],
   "lastChangelogVersion": "0.82.0",
   "defaultProvider": "openai-codex",

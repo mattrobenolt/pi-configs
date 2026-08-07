@@ -3,8 +3,8 @@ profiles/
 modes.json
 sessions/
 sessions-index/
-memory/
-projects/
+/memory/
+/projects/
 planetscale-knowledge/
 pi-crash.log
 git/
