@@ -8,6 +8,7 @@
     "./context": "./context.ts",
     "./files": "./files.ts",
     "./preview": "./preview.ts",
+    "./terminal-focus": "./terminal-focus.ts",
     "./tool-output": "./tool-output.ts"
   },
   "scripts": {

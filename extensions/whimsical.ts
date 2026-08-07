@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { onTerminalFocusChange } from "@mattrobenolt/pi-core/terminal-focus";
 
 const messages = [
   // Claude Code-ish single-word list
@@ -466,15 +467,31 @@ function rainbowShimmer(
 export default function (pi: ExtensionAPI) {
   let timer: ReturnType<typeof setInterval> | undefined;
   let turnCount = 0;
+  let focused = true;
+  let frame: { render(): void; intervalMs: number } | undefined;
 
-  function stop(ctx: { ui: { setWorkingMessage(message?: string): void } }): void {
+  function stopTicking(): void {
     if (timer) clearInterval(timer);
     timer = undefined;
-    ctx.ui.setWorkingMessage();
   }
 
+  function startTicking(): void {
+    if (!frame || !focused || timer) return;
+    frame.render();
+    timer = setInterval(frame.render, frame.intervalMs);
+  }
+
+  onTerminalFocusChange(pi, (next) => {
+    focused = next;
+    if (focused) {
+      startTicking();
+    } else {
+      stopTicking();
+    }
+  });
+
   pi.on("turn_start", async (_event, ctx) => {
-    if (timer) clearInterval(timer);
+    stopTicking();
 
     const message = pickRandom();
     turnCount += 1;
@@ -488,16 +505,17 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.setWorkingMessage(renderMessage());
       } catch {
         // ctx is stale after session replacement/reload — stop the timer.
-        if (timer) clearInterval(timer);
-        timer = undefined;
+        stopTicking();
       }
     };
 
-    render();
-    timer = setInterval(render, useRainbow ? 90 : 80);
+    frame = { render, intervalMs: useRainbow ? 90 : 80 };
+    startTicking();
   });
 
   pi.on("turn_end", async (_event, ctx) => {
-    stop(ctx);
+    stopTicking();
+    frame = undefined;
+    ctx.ui.setWorkingMessage();
   });
 }

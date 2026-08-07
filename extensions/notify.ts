@@ -9,16 +9,14 @@
 import { spawn } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { onTerminalFocusChange } from "@mattrobenolt/pi-core/terminal-focus";
 
-const enableFocusEvents = "\x1b[?1004h";
-const disableFocusEvents = "\x1b[?1004l";
-const focusIn = "\x1b[I";
-const focusOut = "\x1b[O";
 const soundPlayer = "/usr/bin/afplay";
 const soundPath = "/System/Library/Sounds/Glass.aiff";
 
 let focused = true;
 let enabled = false;
+let unsubscribe: (() => void) | undefined;
 
 const hasInteractiveTerminal = (): boolean =>
   process.stdin.isTTY === true && process.stdout.isTTY === true;
@@ -45,18 +43,6 @@ const playSound = (): void => {
   child.unref();
 };
 
-const handleStdin = (chunk: Buffer | string): void => {
-  const text = chunk.toString("utf8");
-
-  if (text.includes(focusIn)) {
-    focused = true;
-  }
-
-  if (text.includes(focusOut)) {
-    focused = false;
-  }
-};
-
 const notify = (): void => {
   if (focused) {
     return;
@@ -67,24 +53,19 @@ const notify = (): void => {
 };
 
 export default function (pi: ExtensionAPI) {
+  // Register at factory time so the producer's session_start snapshot is
+  // delivered before any turn can finish.
+  unsubscribe = onTerminalFocusChange(pi, (next) => {
+    focused = next;
+  });
+
   pi.on("session_start", async () => {
     enabled = hasInteractiveTerminal();
-
-    if (!enabled) {
-      return;
-    }
-
-    process.stdout.write(enableFocusEvents);
-    process.stdin.on("data", handleStdin);
   });
 
   pi.on("session_shutdown", async () => {
-    if (!enabled) {
-      return;
-    }
-
-    process.stdin.off("data", handleStdin);
-    process.stdout.write(disableFocusEvents);
+    unsubscribe?.();
+    unsubscribe = undefined;
     enabled = false;
   });
 
