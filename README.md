@@ -27,20 +27,20 @@ The portability boundary is intentional:
 
 Extensions are loaded automatically from the `extensions/` directory on session start.
 
-| Extension              | What it does                                                                                                                                                    |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `compaction-model.ts`  | Uses a local llamacpp model for compaction when the active model is local                                                                                       |
-| `cost.ts`              | `/cost [days]` — token usage summary broken down by date, project, and model                                                                                    |
-| `devshell.ts`          | `/cd` and `/direnv`; wraps shell commands with direnv, rewrites via rtk, and resolves file tools relative to the current cwd                                     |
-| `execute-command.ts`   | `execute_command` tool — lets the agent queue a slash command or message to fire after its current turn ends                                                    |
-| `notify.ts`            | Sends a native desktop notification (OSC 777) when the agent finishes a turn — requires Ghostty with `desktop-notifications = true`                             |
-| `prompt-editor.ts`     | Named "modes" for model + thinking combinations — cycle with `Ctrl+Space`, pick with `/mode` or `Ctrl+Shift+M`                                                 |
-| `provider-params.ts`   | Injects per-model provider params (e.g. temperature) before requests via `before_provider_request` hook; reads from `provider-params.json`                      |
-| `setup.ts`             | Session defaults: activates `grep`, `find`, `ls`; auto-expands tool outputs; registers `get_system_prompt`, `get_tools`, `get_last_payload` introspection tools |
-| `statusline.ts`        | Footer showing repo/directory, branch, dirty state, current time, extension statuses, model, thinking level, and token usage                                    |
-| `temporal-context.ts`  | Injects hidden temporal context only after long pauses, currently gaps of 30+ minutes between user/assistant messages                                           |
-| `tools.ts`             | `/tools` command and status widget — interactive TUI for enabling/disabling tools per session                                                                   |
-| `whimsical.ts`         | Animated loading messages with shimmer effect. Purely cosmetic.                                                                                                 |
+| Extension             | What it does                                                                                                                                                                                                                                             |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compaction-model.ts` | Uses a local llamacpp model for compaction when the active model is local                                                                                                                                                                                |
+| `cost.ts`             | `/cost [days]` — token usage summary broken down by date, project, and model                                                                                                                                                                             |
+| `devshell.ts`         | `/cd` and `/direnv`; owns the bash tool — refreshes direnv, rewrites via rtk, pins cwd, strips direnv logs, and ships a custom description steering agents away from self-culling output with head/tail; resolves file tools relative to the current cwd |
+| `execute-command.ts`  | `execute_command` tool — lets the agent queue a slash command or message to fire after its current turn ends                                                                                                                                             |
+| `notify.ts`           | Sends a native desktop notification (OSC 777) when the agent finishes a turn — requires Ghostty with `desktop-notifications = true`                                                                                                                      |
+| `prompt-editor.ts`    | Named "modes" for model + thinking combinations — cycle with `Ctrl+Space`, pick with `/mode` or `Ctrl+Shift+M`                                                                                                                                           |
+| `provider-params.ts`  | Injects per-model provider params (e.g. temperature) before requests via `before_provider_request` hook; reads from `provider-params.json`                                                                                                               |
+| `setup.ts`            | Session defaults: activates `grep`, `find`, `ls`; auto-expands tool outputs; registers `get_system_prompt`, `get_tools`, `get_last_payload` introspection tools                                                                                          |
+| `statusline.ts`       | Footer showing repo/directory, branch, dirty state, current time, extension statuses, model, thinking level, and token usage                                                                                                                             |
+| `temporal-context.ts` | Injects hidden temporal context only after long pauses, currently gaps of 30+ minutes between user/assistant messages                                                                                                                                    |
+| `tools.ts`            | `/tools` command and status widget — interactive TUI for enabling/disabling tools per session                                                                                                                                                            |
+| `whimsical.ts`        | Animated loading messages with shimmer effect. Purely cosmetic.                                                                                                                                                                                          |
 
 ## Agents
 

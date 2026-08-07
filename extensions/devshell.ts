@@ -1,6 +1,6 @@
 import { expandHome } from "@mattrobenolt/pi-core/files";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isBashToolResult, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { exec, type ExecException, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { watch, type FSWatcher } from "node:fs";
@@ -491,32 +491,40 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("tool_result", (event) => {
-    if (!isBashToolResult(event)) return;
-
-    const content = event.content.map((block) => {
-      if (block.type !== "text") return block;
-      return { ...block, text: stripLeadingDirenvLogs(block.text) };
-    });
-
-    return { content };
-  });
-
-  pi.on("tool_call", async (event) => {
-    if (isToolCallEventType("bash", event)) {
+  // Replace the built-in bash tool by name (extension tools overwrite built-ins
+  // in the registry) so the model sees a description that steers it away from
+  // self-culling output with head/tail — truncation keeps the tail, so `| head`
+  // drops exactly what the harness would have preserved. execute() keeps the
+  // existing behavior: direnv refresh, rtk rewrite, cwd pin, direnv log strip.
+  const stockBash = createBashToolDefinition(process.cwd());
+  pi.registerTool({
+    ...stockBash,
+    description: `Execute a bash command in the current working directory. stdout and stderr are merged into one stream. The harness manages output size for you: it keeps the last 2000 lines or 50KB (whichever hits first) and writes the full output to a temp file when truncation occurs, returning the path in a footer. Do not pipe through head, tail, sed -n, or similar to self-limit — truncation keeps the tail, so | head discards exactly the part that would have been preserved (errors, exit info, the final result) and keeps the part that would have been dropped. | tail is redundant. Run commands unfiltered; if the result is truncated, read or grep the temp file path in the footer for the dropped head. Optionally provide a timeout in seconds.`,
+    promptGuidelines: stockBash.promptGuidelines,
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
       const cwd = process.cwd();
       const direnvResult = await refreshDirenvIfChanged(cwd, "watched files changed before bash");
       if (direnvResult.status === "blocked" || direnvResult.status === "error") {
-        return {
-          block: true,
-          reason: direnvResult.detail ?? direnvResult.summary ?? "direnv failed to load",
-        };
+        throw new Error(direnvResult.detail ?? direnvResult.summary ?? "direnv failed to load");
       }
-      const rewritten = await rewriteWithRtk(pi, event.input.command);
-      event.input.command = wrapForCwd(rewritten, cwd);
-      return;
-    }
+      const rewritten = await rewriteWithRtk(pi, params.command);
+      const result = await stockBash.execute(
+        toolCallId,
+        { ...params, command: wrapForCwd(rewritten, cwd) },
+        signal,
+        onUpdate,
+        ctx,
+      );
+      return {
+        ...result,
+        content: result.content.map((block) =>
+          block.type === "text" ? { ...block, text: stripLeadingDirenvLogs(block.text) } : block,
+        ),
+      };
+    },
+  });
 
+  pi.on("tool_call", async (event) => {
     if (isToolCallEventType("read", event)) {
       event.input.path = resolveToolPath(event.input.path);
       return;

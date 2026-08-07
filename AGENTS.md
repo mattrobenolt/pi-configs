@@ -45,6 +45,7 @@ When adding or editing extensions:
 
 - Prefer small single-purpose files.
 - Keep tool schemas tight and descriptions useful.
+- `pi.registerTool({ name: <builtin> })` replaces the built-in tool by name (extension tools overwrite built-ins in the registry). Use this when you need to change a built-in tool’s description or execute, not just wrap its behavior.
 - Return structured details when they help debugging, but don’t overdo it.
 - Avoid hidden side effects on session start unless the behavior is clearly intentional.
 - If enabling tools globally, be explicit about which tools and why.
