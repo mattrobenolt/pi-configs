@@ -5,7 +5,9 @@ sessions/
 sessions-index/
 /memory/
 /projects/
-planetscale-knowledge/
+/planetscale-knowledge/
+# seed config references internal PlanetScale source repos
+packages/planetscale-knowledge/seed/sources.json
 pi-crash.log
 git/
 node_modules/

@@ -1,0 +1,26 @@
+{
+  "name": "planetscale-knowledge",
+  "version": "0.0.0",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test index.test.ts",
+    "fmt": "oxfmt index.ts index.test.ts",
+    "fmt:check": "oxfmt index.ts index.test.ts --check",
+    "lint": "oxlint index.ts index.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "catalog:",
+    "@earendil-works/pi-coding-agent": "catalog:",
+    "typebox": "catalog:"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
