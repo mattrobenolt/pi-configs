@@ -14,8 +14,17 @@
       ];
 
       perSystem =
-        { pkgs, ... }:
+        { pkgs, self', system, ... }:
         {
+          # firectl ships as a closed-source binary; allow just that one.
+          _module.args.pkgs = import inputs.nixpkgs {
+            inherit system;
+            config.allowUnfreePredicate =
+              pkg: builtins.elem (inputs.nixpkgs.lib.getName pkg) [ "firectl" ];
+          };
+
+          packages.firectl = pkgs.callPackage ./nix/firectl.nix { };
+
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               nodejs
@@ -24,6 +33,7 @@
               jq
               gh
               pnpm
+              self'.packages.firectl
             ];
             env.NPM_CONFIG_MIN_RELEASE_AGE = "0";
           };
