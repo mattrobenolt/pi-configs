@@ -120,7 +120,11 @@ const ReviewParams = Type.Object({
     { description: "Pull request review operation." },
   ),
   repo: RepoParam,
-  pr_number: Type.Optional(PositiveIntegerParam("Pull request number.")),
+  pr_number: Type.Optional(
+    PositiveIntegerParam(
+      "Pull request number. Required for submit/comment/list_threads; optional for resolve_thread/unresolve_thread (not needed when passing a thread node ID, and looked up automatically from the comment when resolving by comment).",
+    ),
+  ),
   expected_head_sha: Type.Optional(
     Type.String({
       description:
@@ -458,6 +462,38 @@ async function loadReviewThreads(
     cursor = reviewThreads.pageInfo.endCursor ?? undefined;
   }
   return threads;
+}
+
+// resolve_thread/unresolve_thread identify a thread by either a thread node ID
+// (which needs no PR number for the GraphQL mutation) or by an inline comment
+// (which needs the PR number only to load that PR's review threads). When the
+// caller omits pr_number, resolve it from the review comment via one REST call
+// (GET /repos/{owner}/{repo}/pulls/comments/{id} returns pull_request_url).
+async function resolvePrNumber(
+  client: GitHubClient,
+  repo: string,
+  prNumberValue: number | undefined,
+  commentId: number,
+  signal?: AbortSignal,
+): Promise<number> {
+  if (prNumberValue !== undefined) {
+    return positiveInteger(prNumberValue, "pr_number");
+  }
+  const basePath = endpoint(repo);
+  const comment = await client.request<GitHubJson>(
+    "GET",
+    `${basePath}/pulls/comments/${commentId}`,
+    { signal },
+  );
+  const url = comment.pull_request_url;
+  const match = typeof url === "string" ? url.match(/\/pulls\/(\d+)(?:$|[/?#])/) : null;
+  const number = match ? Number(match[1]) : NaN;
+  if (!Number.isSafeInteger(number) || number <= 0) {
+    throw new Error(
+      `Could not resolve PR number from review comment ${commentId} on ${repo} (pull_request_url: ${String(url)}). Pass pr_number explicitly.`,
+    );
+  }
+  return number;
 }
 
 function threadRange(thread: ReviewThread): string {
@@ -834,7 +870,6 @@ export async function executeReview(
   }
 
   if (params.action === "resolve_thread" || params.action === "unresolve_thread") {
-    const number = prNumber(params.pr_number);
     const resolve = params.action === "resolve_thread";
     let threadId = params.thread?.trim();
     let prior: ReviewThread | undefined;
@@ -842,6 +877,13 @@ export async function executeReview(
       const commentId = parseNumericRef(params.comment, "inline review comment ID", [
         "review_comment",
       ]);
+      const number = await resolvePrNumber(
+        client,
+        params.repo,
+        params.pr_number,
+        commentId,
+        signal,
+      );
       const threads = await loadReviewThreads(client, params.repo, number, signal);
       prior = threads.find((thread) =>
         thread.comments.some((comment) => comment.databaseId === commentId),
@@ -1221,7 +1263,7 @@ export default function githubExtension(pi: ExtensionAPI) {
     promptGuidelines: [
       "Use github_review for review verdicts and inline code discussion; use github_pr for top-level PR conversation comments.",
       "github_review submit and comment require expected_head_sha from the locally reviewed checkout and reject stale reviews when the PR head changes. resolve_thread and unresolve_thread do not pin a head — resolving is a conversation action, not code feedback.",
-      "Resolve a thread after addressing its feedback with resolve_thread, passing any inline comment in the thread (comment ID or #discussion_r URL) or the thread node ID from list_threads. Use list_threads to see which threads are still open before resolving.",
+      "Resolve a thread after addressing its feedback with resolve_thread, passing any inline comment in the thread (comment ID or #discussion_r URL) or the thread node ID from list_threads. Use list_threads to see which threads are still open before resolving. pr_number is optional for resolve_thread/unresolve_thread: omit it with a thread node ID, or omit it when resolving by comment (the PR is looked up automatically).",
       "Prefer github_review update_comment or update_review for corrections and formatting fixes. Reply when the discussion genuinely advances; delete only accidental or misplaced comments.",
     ],
     parameters: ReviewParams,

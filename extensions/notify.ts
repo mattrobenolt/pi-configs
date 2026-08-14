@@ -14,6 +14,9 @@ import { onTerminalFocusChange } from "@mattrobenolt/pi-core/terminal-focus";
 const soundPlayer = "/usr/bin/afplay";
 const soundPath = "/System/Library/Sounds/Glass.aiff";
 
+// herdr plays its own attention sound; skip ours to avoid double-dinging.
+const inHerdr = "HERDR_ENV" in process.env;
+
 let focused = true;
 let enabled = false;
 let unsubscribe: (() => void) | undefined;
@@ -28,6 +31,10 @@ const bell = (): void => {
 };
 
 const playSound = (): void => {
+  if (inHerdr) {
+    return;
+  }
+
   try {
     accessSync(soundPlayer, constants.X_OK);
   } catch {

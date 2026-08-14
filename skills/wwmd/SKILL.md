@@ -29,6 +29,14 @@ The cardinal failure is overconfidence — and it's structural, not incidental. 
 
 This is the spine. Several prescribed questions below — sure-or-guessing, verify-it, objective-verification, don't-infer-what-you-can-ask — are facets of one rule: **calibrate to reality, not to your own fluency.**
 
+### The circuit-breaker: three diagnostics, no new information
+
+Debugging spirals have a signature: three probes in, the hypothesis hasn't changed, and each test is confirming the same frame harder. Stop. Before any fourth diagnostic:
+
+- **Enumerate what differs between the working and broken environments — including inputs.** Generated files, lockfiles, manifests, caches. (2026-08-09: a stale `bun.nix` — not dead IPv6 — wedged a host deploy for an hour. The local smoke build had already falsified the network frame by succeeding; the differentiator was a generated manifest nobody regenerated.)
+- **A verified-true fact adjacent to the claim is not evidence for the claim.** "IPv6 is dead on this host" was true and irrelevant. Verify the mechanism, not its neighbor.
+- **When a generated artifact misbehaves, suspect its generation before the environment around it.** The stale lefthook dispatcher named its own poison — a deleted `/private/tmp` install path — in the first read, and the correct fix (`bun run prepare`) took ten seconds once someone looked at the artifact instead of the PATH theory.
+
 ## The lens — run it on the artifact AND on your own plan
 
 Run it *hardest* on the framing you set yourself. Scope, medium, and approach you chose are the blind spot — you don't question what you authored. (The deslop-PR miss: the two weirdest things in the artifact were both my own setup, so I never flagged them.) Step back to altitude before AND after you dispatch.

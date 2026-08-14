@@ -565,6 +565,137 @@ test("github_review resolve_thread requires a comment or thread", async () => {
   );
 });
 
+test("github_review resolve_thread by thread node id omits pr_number", async () => {
+  const calls: Array<{ method: string; url: string; query?: string; variables?: any }> = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      calls.push({
+        method,
+        url: String(input),
+        query: body.query,
+        variables: body.variables,
+      });
+      return jsonResponse({
+        data: {
+          resolveReviewThread: {
+            thread: {
+              id: "PRRT_kwDO_AAA",
+              isResolved: true,
+              isOutdated: false,
+              path: "src/a.ts",
+              line: 12,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  const result = await executeReview(client, {
+    action: "resolve_thread",
+    repo: "o/r",
+    thread: "PRRT_kwDO_AAA",
+  });
+  assert.match(result.content[0].text, /Resolved thread PRRT_kwDO_AAA/);
+  assert.equal(
+    calls.length,
+    1,
+    "thread node id must skip the reviewThreads lookup and need no pr_number",
+  );
+  assert.match(calls[0].query ?? "", /resolveReviewThread/);
+  assert.equal(calls[0].variables.threadId, "PRRT_kwDO_AAA");
+});
+
+test("github_review resolve_thread by comment omits pr_number and resolves it via REST", async () => {
+  const calls: Array<{ method: string; url: string; query?: string; variables?: any }> = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const method = init?.method ?? "GET";
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      calls.push({ method, url, query: body.query, variables: body.variables });
+      // REST: resolve the PR number from the review comment.
+      if (method === "GET" && url.includes("/pulls/comments/555")) {
+        return jsonResponse({
+          pull_request_url: "https://api.github.com/repos/o/r/pulls/7",
+        });
+      }
+      // GraphQL: load review threads for the resolved PR.
+      if (body.query?.includes("reviewThreads")) {
+        return jsonResponse({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    {
+                      id: "PRRT_kwDO_AAA",
+                      isResolved: false,
+                      isOutdated: false,
+                      isCollapsed: false,
+                      path: "src/a.ts",
+                      line: 12,
+                      startLine: null,
+                      diffSide: "RIGHT",
+                      comments: {
+                        nodes: [
+                          {
+                            databaseId: 555,
+                            id: "PRRC_1",
+                            body: "fix",
+                            author: { login: "alice" },
+                            createdAt: "x",
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
+      // GraphQL: resolve the thread.
+      return jsonResponse({
+        data: {
+          resolveReviewThread: {
+            thread: {
+              id: "PRRT_kwDO_AAA",
+              isResolved: true,
+              isOutdated: false,
+              path: "src/a.ts",
+              line: 12,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  const result = await executeReview(client, {
+    action: "resolve_thread",
+    repo: "o/r",
+    comment: 555,
+  });
+  assert.match(
+    result.content[0].text,
+    /Resolved thread PRRT_kwDO_AAA — src\/a\.ts:12 \(was unresolved\)/,
+  );
+  assert.equal(calls.length, 3, "REST comment lookup + reviewThreads + resolve mutation");
+  assert.equal(calls[0].method, "GET");
+  assert.match(calls[0].url, /\/pulls\/comments\/555$/);
+  assert.match(calls[1].query ?? "", /reviewThreads/);
+  assert.equal(calls[1].variables.pr, 7, "PR number resolved from the REST comment lookup");
+  assert.match(calls[2].query ?? "", /resolveReviewThread/);
+  assert.equal(calls[2].variables.threadId, "PRRT_kwDO_AAA");
+});
+
 test("summarizeChecks combines check runs and commit statuses", () => {
   const snapshot = summarizeChecks(
     [

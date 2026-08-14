@@ -10,6 +10,7 @@
  *     MEMORY.md              — global long-term memory (personal prefs, env setup, pi config)
  *     SCRATCHPAD.md          — checklist of things to keep in mind / fix later
  *     daily/YYYY-MM-DD.md    — daily append-only log (today + yesterday loaded at session start)
+ *     backups/*.bak          — pre-overwrite snapshots (kept out of qmd via the .bak suffix)
  *
  *   ~/.pi/agent/projects/
  *     git/github.com/org/repo/MEMORY.md   — per-project memory (keyed by git remote)
@@ -184,6 +185,22 @@ export function readFileSafe(filePath: string): string | null {
 
 export function dailyPath(date: string): string {
   return path.join(DAILY_DIR, `${date}.md`);
+}
+
+/**
+ * Snapshot a file into a sibling backups/ dir before an overwrite.
+ * Uses a .bak suffix so backups stay out of the qmd markdown collections.
+ * Returns the backup path, or null if there was nothing to back up.
+ */
+export function backupFile(filePath: string): string | null {
+  const existing = readFileSafe(filePath);
+  if (existing === null) return null;
+  const backupDir = path.join(path.dirname(filePath), "backups");
+  fs.mkdirSync(backupDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = path.join(backupDir, `${path.basename(filePath)}.${stamp}.bak`);
+  fs.writeFileSync(backupPath, existing, "utf-8");
+  return backupPath;
 }
 
 interface SessionEntry {
@@ -1373,7 +1390,9 @@ export default function (pi: ExtensionAPI) {
         const filePath = target === "self" ? SELF_FILE : USER_FILE;
         const label = target === "self" ? "SELF.md" : "USER.md";
         const existing = readFileSafe(filePath) ?? "";
+        let backupPath: string | null = null;
         if (mode === "overwrite") {
+          backupPath = backupFile(filePath);
           fs.writeFileSync(filePath, `<!-- last updated: ${ts} [${sid}] -->\n${content}`, "utf-8");
         } else {
           const separator = existing.trim() ? "\n\n" : "";
@@ -1389,7 +1408,7 @@ export default function (pi: ExtensionAPI) {
           content: [
             {
               type: "text",
-              text: `${mode === "overwrite" ? "Overwrote" : "Appended to"} ${label}`,
+              text: `${mode === "overwrite" ? "Overwrote" : "Appended to"} ${label}${backupPath ? ` (backup: ${backupPath})` : ""}`,
             },
           ],
           details: {
@@ -1398,6 +1417,7 @@ export default function (pi: ExtensionAPI) {
             mode: mode ?? "append",
             sessionId: sid,
             timestamp: ts,
+            backup: backupPath,
           },
         };
       }
@@ -1472,6 +1492,7 @@ export default function (pi: ExtensionAPI) {
           : "\n\nProject memory was empty.";
 
         if (mode === "overwrite") {
+          const backupPath = backupFile(filePath);
           const stamped = `<!-- last updated: ${ts} [${sid}] -->\n${content}`;
           // Re-apply frontmatter on top of the new content.
           const final = gitRoot ? upsertProjectFrontmatter(stamped, hostname, gitRoot) : stamped;
@@ -1489,6 +1510,7 @@ export default function (pi: ExtensionAPI) {
               projectKey,
               sessionId: sid,
               timestamp: ts,
+              backup: backupPath,
             },
           };
         }
@@ -1528,6 +1550,7 @@ export default function (pi: ExtensionAPI) {
         : "\n\nMEMORY.md was empty.";
 
       if (mode === "overwrite") {
+        const backupPath = backupFile(MEMORY_FILE);
         const stamped = `<!-- last updated: ${ts} [${sid}] -->\n${content}`;
         fs.writeFileSync(MEMORY_FILE, stamped, "utf-8");
         await ensureQmdAvailableForUpdate();
@@ -1542,6 +1565,7 @@ export default function (pi: ExtensionAPI) {
             timestamp: ts,
             qmdUpdateMode: getQmdUpdateMode(),
             existingPreview,
+            backup: backupPath,
           },
         };
       }

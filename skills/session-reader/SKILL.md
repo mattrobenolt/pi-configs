@@ -90,3 +90,21 @@ If you need to understand the raw JSONL format (for custom parsing), read:
 `${CLAUDE_SKILL_ROOT}/references/session-format.md`
 
 The critical thing to know: message content is nested at `line.message.content`, NOT `line.content`. Content is always an array of typed objects (`text`, `toolCall`, `thinking`). Tool results are separate message entries with `role: "toolResult"`.
+
+## Drew production sessions (R2): two traps
+
+Drew's production sessions live in the `drew-sessions` R2 bucket as
+`sessions/{repositoryId}/pr-{N}.jsonl` (or `issue-{N}` where split). Two
+artifacts of the export path corrupt naive reads:
+
+1. **Duplicated blocks.** A `session` marker can recur mid-file with the
+   same session id + timestamp, followed by byte-identical messages (same
+   message ids, same token/cost numbers). Dedupe by message `id` before
+   summing turns/cost — raw totals overstate by up to ~46%. The GitHub side
+   effects were still created exactly once; the duplication is the export,
+   not the work. (planetscale/drew issue #424.)
+2. **Subagent artifacts are separate files.** The parent's subagent runs
+   land at `sessions/{repositoryId}/artifacts/{parentRunId}-subagent-{N}.jsonl`.
+   The parent file shows the dispatch call, not the child's reasoning — for
+   "what did the subagent actually do", pull the artifact siblings. List the
+   bucket with prefix `sessions/{repositoryId}/artifacts/` to find them.

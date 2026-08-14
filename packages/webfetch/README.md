@@ -166,3 +166,23 @@ pnpm --filter @mattrobenolt/pi-webfetch eval:search -- --limit 50 --concurrency 
 ```
 
 `eval` measures page extraction against `eval-corpus.json`. `eval:search` mines historical Pi sessions for user turns containing exactly one search followed by fetched URLs, uses those URLs as implicit relevance labels, runs a deterministic stratified sample against Exa and Jina, and reports exact/domain recall, reciprocal rank, latency, failures, result overlap, and a clearly labeled rank-heuristic comparison. Search eval output defaults to a timestamped JSON file under the system temp directory.
+
+## Publishing
+
+Publish with pnpm, never npm. The manifest uses pnpm `catalog:` dependency references, and only pnpm rewrites them to real versions at pack time. `npm publish` ships the literal `catalog:` strings, and every consumer's install fails with `EUNSUPPORTEDPROTOCOL`.
+
+Bump `version` in `package.json`, then from this directory:
+
+```sh
+pnpm publish --no-git-checks
+```
+
+Verify the published manifest before telling anyone it works:
+
+```sh
+npm view @mattrobenolt/pi-webfetch dependencies
+```
+
+The output must show resolved semver ranges, not `catalog:`.
+
+One known gap: the workspace patches `defuddle@0.19.2` (see `patches/` at the repo root) to fix a crash on elements whose `id` contains quotes or backslashes. pnpm patches do not travel with the published package, so consumers run stock defuddle until the fix lands upstream.

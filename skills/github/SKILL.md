@@ -85,8 +85,8 @@ Every create/update result visibly echoes the complete submitted body. Check tha
 GitHub exposes review-thread resolution only through its GraphQL API; the REST API cannot resolve a thread or report its resolved state. `github_review` wraps that for you — do not drop into `gh api graphql`.
 
 - `list_threads` returns every review thread on the PR with its GraphQL node ID (`PRRT_…`), `isResolved`, `isOutdated`, path, line range, and the inline comments it contains. Use it to see which threads are still open before resolving.
-- `resolve_thread` marks a thread addressed. Pass any inline review comment in the thread (`comment`: numeric ID or `#discussion_r…` URL) and the containing thread is resolved, or pass the thread node ID (`thread`) directly from a `list_threads` result. It does **not** require `expected_head_sha` — resolving is a conversation action, not code feedback pinned to a reviewed head.
-- `unresolve_thread` reopens a thread with the same identification options.
+- `resolve_thread` marks a thread addressed. Pass any inline review comment in the thread (`comment`: numeric ID or `#discussion_r…` URL) and the containing thread is resolved, or pass the thread node ID (`thread`) directly from a `list_threads` result. It does **not** require `expected_head_sha` — resolving is a conversation action, not code feedback pinned to a reviewed head. `pr_number` is also optional: omit it when passing a `thread` node ID, or omit it when resolving by `comment` (the PR is looked up automatically from the comment).
+- `unresolve_thread` reopens a thread with the same identification options (`comment` or `thread`; `pr_number` optional).
 
 Resolving an already-resolved thread is a no-op; you do not need to pre-check. Resolve a thread only after the feedback it raised has actually been addressed (code changed, question answered, or explicitly decided). Do not resolve threads to silence unresolved disagreement — leave those open or move them to a top-level PR conversation.
 

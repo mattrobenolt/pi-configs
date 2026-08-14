@@ -1,5 +1,7 @@
 # AGENTS.md
 
+**Canonical path: `~/.pi/agent/`.** `~/.pi/agent-work/` is a compatibility layer of per-entry symlinks into this directory — every top-level entry there (`skills/`, `extensions/`, `models.json`, even `.git`) points back here. Edits through `agent-work/` paths land correctly (the symlinks resolve), but **always run git from `~/.pi/agent/`**: from `agent-work/`, git does not follow the symlinked directories, so `git status` shows every tracked file under them as deleted and the whole tree as typechanged. This has confused agents before — when in doubt, `cd ~/.pi/agent` first.
+
 This directory is a personal `pi` config/workbench. Treat it like an experimental but intentional codebase: small, readable changes, minimal ceremony, and no cargo-cult scaffolding.
 
 ## What lives here
