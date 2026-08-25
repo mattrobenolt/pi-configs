@@ -7,24 +7,39 @@
     "./packages/webfetch",
     "./packages/term",
     "./packages/todos",
+    "./packages/planetscale-knowledge",
     "git:github.com/ocodista/pi-token-bloat",
-    "git:github.com/nicobailon/pi-subagents",
     "git:github.com/nicobailon/pi-mcp-adapter",
     "git:github.com/HazAT/pi-ghostty",
-    "git:github.com/championswimmer/pi-cache-graph"
+    "git:github.com/championswimmer/pi-cache-graph",
+    "git:github.com/nicobailon/pi-subagents"
   ],
-  "lastChangelogVersion": "0.82.0",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
-  "defaultThinkingLevel": "high",
+  "lastChangelogVersion": "0.84.3",
+  "defaultProvider": "xai",
+  "defaultModel": "grok-4.6",
+  "defaultThinkingLevel": "xhigh",
   "theme": "dracula",
   "transport": "sse",
   "compaction": {
-    "enabled": true,
-    "reserveTokens": 8192,
-    "keepRecentTokens": 16000
+    "enabled": true
   },
-  "enabledModels": [],
+  "enabledModels": [
+    "anthropic/claude-fable-5",
+    "anthropic/claude-haiku-4-5",
+    "anthropic/claude-opus-5",
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-sonnet-5",
+    "fireworks/accounts/fireworks/models/deepseek-v4-flash-0731",
+    "fireworks/accounts/fireworks/models/deepseek-v4-pro-0813",
+    "fireworks/accounts/fireworks/models/glm-5p2",
+    "fireworks/accounts/fireworks/models/gpt-oss-120b",
+    "fireworks/accounts/fireworks/models/kimi-k3",
+    "fireworks/accounts/fireworks/models/minimax-m3",
+    "fireworks/accounts/fireworks/models/qwen3p8-max",
+    "openai-codex/gpt-5.6-luna",
+    "openai-codex/gpt-5.6-sol",
+    "xai/grok-4.6"
+  ],
   "steeringMode": "all",
   "quietStartup": true,
   "editorPaddingX": 1,
@@ -41,9 +56,17 @@
   "webfetch": {
     "objectiveModel": "fireworks/accounts/fireworks/models/gpt-oss-120b"
   },
-  "github": {
-    "ciWatch": {
-      "enabled": true
-    }
-  }
+  "skills": [
+    "-skills/curate-memory/SKILL.md",
+    "-skills/mcp-builder/SKILL.md",
+    "-skills/nix-devshell/SKILL.md",
+    "-skills/commit/SKILL.md",
+    "-skills/deslop/SKILL.md",
+    "-skills/nushell/SKILL.md",
+    "-skills/simplify/SKILL.md",
+    "-skills/skill-creator/SKILL.md"
+  ],
+  "showCacheMissNotices": true,
+  "hideThinkingBlock": false,
+  "tuiMode": "fullscreen"
 }

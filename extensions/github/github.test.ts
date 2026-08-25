@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import githubExtension, { executeCI, executeIssue, executeReview } from "./index.ts";
+import githubExtension, { executeCI, executeIssue, executePull, executeReview } from "./index.ts";
 import {
   GitHubApiError,
   GitHubClient,
@@ -786,6 +786,111 @@ test("issue list paginates past pull requests before applying limit", async () =
   const resultDetails = result.details as any;
   assert.equal(resultDetails.issues.length, 1);
   assert.equal(resultDetails.issues[0].number, 101);
+});
+
+test("issue search pins repo/type qualifiers, requests text matches, renders fragments", async () => {
+  let seen: { url: string; init?: RequestInit } | undefined;
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      seen = { url: String(input), init };
+      return jsonResponse({
+        total_count: 2,
+        incomplete_results: false,
+        items: [
+          {
+            number: 256,
+            title: "Storage: shared-cache env wiring for remaining PMs",
+            state: "open",
+            html_url: "https://github.com/o/r/issues/256",
+            text_matches: [{ property: "body", fragment: "the  shared-cache\nvolume wiring" }],
+          },
+          {
+            number: 255,
+            title: "Storage: cache volume + virtiofs export wiring",
+            state: "open",
+            html_url: "https://github.com/o/r/issues/255",
+          },
+        ],
+      });
+    },
+  });
+
+  const result = await executeIssue(client, {
+    action: "search",
+    repo: "o/r",
+    query: "cache in:title",
+  });
+
+  assert.ok(seen);
+  const url = new URL(seen.url);
+  assert.equal(url.pathname, "/search/issues");
+  assert.equal(url.searchParams.get("q"), "cache in:title repo:o/r is:issue");
+  assert.equal(url.searchParams.get("per_page"), "30");
+  const headers = seen.init?.headers as Record<string, string>;
+  assert.equal(headers.Accept, "application/vnd.github.text-match+json");
+
+  const text = (result.content[0] as any).text;
+  assert.match(text, /^2 matches for: cache in:title repo:o\/r is:issue/);
+  assert.match(text, /#256 \[open\] Storage: shared-cache env wiring/);
+  assert.match(text, /#255 \[open\] Storage: cache volume/);
+  // The body fragment renders whitespace-collapsed under its issue.
+  assert.match(text, /› the shared-cache volume wiring/);
+  const details = result.details as any;
+  assert.equal(details.total_count, 2);
+  assert.equal(details.items.length, 2);
+});
+
+test("issue search defaults to all states, applies state filter, requires query", async () => {
+  const seen: string[] = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input) => {
+      seen.push(String(input));
+      return jsonResponse({ total_count: 0, items: [] });
+    },
+  });
+
+  const empty = await executeIssue(client, { action: "search", repo: "o/r", query: "flaky" });
+  assert.equal(new URL(seen[0]).searchParams.get("q"), "flaky repo:o/r is:issue");
+  assert.match((empty.content[0] as any).text, /^No matches for: flaky repo:o\/r is:issue$/);
+
+  await executeIssue(client, { action: "search", repo: "o/r", query: "flaky", state: "closed" });
+  assert.equal(new URL(seen[1]).searchParams.get("q"), "flaky repo:o/r is:issue state:closed");
+
+  await assert.rejects(
+    () => executeIssue(client, { action: "search", repo: "o/r" }),
+    /query is required/,
+  );
+});
+
+test("pull request search pins is:pr and shows draft/closed state", async () => {
+  let seenUrl = "";
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input) => {
+      seenUrl = String(input);
+      return jsonResponse({
+        total_count: 1,
+        items: [
+          {
+            number: 42,
+            title: "Add search",
+            state: "closed",
+            draft: false,
+            html_url: "https://github.com/o/r/pull/42",
+          },
+        ],
+      });
+    },
+  });
+
+  const result = await executePull(client, { action: "search", repo: "o/r", query: "search" });
+  assert.equal(new URL(seenUrl).searchParams.get("q"), "search repo:o/r is:pr");
+  assert.match(
+    (result.content[0] as any).text,
+    /#42 \[closed\] Add search — https:\/\/github.com\/o\/r\/pull\/42/,
+  );
 });
 
 test("CI run view paginates workflow jobs", async () => {

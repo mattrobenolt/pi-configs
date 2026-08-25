@@ -1,7 +1,7 @@
 {
   "providers": {
     "omlx": {
-      "baseUrl": "http://host.orb.internal:8000/v1",
+      "baseUrl": "http://127.0.0.1:8000/v1",
       "api": "openai-completions",
       "apiKey": "none",
       "authHeader": true,
@@ -12,26 +12,14 @@
       },
       "models": [
         {
-          "id": "Qwen3.6-35B-A3B-4bit",
-          "name": "Qwen3.6-35B-A3B-4bit",
-          "reasoning": false,
+          "id": "Ornith-1.5-35B-A3B-MLX-4bit",
+          "name": "Ornith 1.5 35B (local)",
+          "reasoning": true,
           "input": [
             "text"
           ],
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cacheRead": 0,
-            "cacheWrite": 0
-          }
-        },
-        {
-          "id": "FastContext-1.0-4B-SFT-mlx-bf16",
-          "name": "FastContext-1.0-4B-SFT-mlx-bf16",
-          "reasoning": false,
-          "input": [
-            "text"
-          ],
+          "contextWindow": 262144,
+          "maxTokens": 32768,
           "cost": {
             "input": 0,
             "output": 0,

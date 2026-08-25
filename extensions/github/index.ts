@@ -55,6 +55,7 @@ const PullRequestParams = Type.Object({
       "view",
       "inspect",
       "list",
+      "search",
       "create",
       "update",
       "comment",
@@ -67,7 +68,14 @@ const PullRequestParams = Type.Object({
   pr_number: Type.Optional(PositiveIntegerParam("Pull request number.")),
   state: Type.Optional(
     StringEnum(["open", "closed", "all"] as const, {
-      description: "State filter for list, or new state for update (open/closed only).",
+      description:
+        "State filter for list or search, or new state for update (open/closed only). Search defaults to all states.",
+    }),
+  ),
+  query: Type.Optional(
+    Type.String({
+      description:
+        "Search query for action=search. GitHub search syntax passes through (e.g. `cache in:title`, `label:bug`); the tool pins repo: and is:pr itself.",
     }),
   ),
   limit: Type.Optional(
@@ -173,6 +181,7 @@ const IssueParams = Type.Object({
     [
       "view",
       "list",
+      "search",
       "create",
       "update",
       "close",
@@ -187,7 +196,13 @@ const IssueParams = Type.Object({
   issue_number: Type.Optional(PositiveIntegerParam("Issue number.")),
   state: Type.Optional(
     StringEnum(["open", "closed", "all"] as const, {
-      description: "Issue state filter for list.",
+      description: "State filter for list or search. Search defaults to all states.",
+    }),
+  ),
+  query: Type.Optional(
+    Type.String({
+      description:
+        "Search query for action=search. GitHub search syntax passes through (e.g. `cache in:title`, `label:bug`); the tool pins repo: and is:issue itself.",
     }),
   ),
   limit: Type.Optional(
@@ -550,6 +565,68 @@ async function toolResult(
   };
 }
 
+type SearchType = "issue" | "pr";
+
+/**
+ * Shared backend for github_issue search and github_pr search. Both hit
+ * /search/issues; the tool pins repo: and the is: type qualifier, the caller's
+ * query passes through verbatim so GitHub qualifiers (in:title, label:,
+ * author:, …) keep working. Duplicates hide in closed issues, so search
+ * defaults to all states — unlike list, which defaults to open. The
+ * text-match media type asks GitHub for the matched body fragment, which is
+ * what reveals a title miss actually matched the body.
+ */
+async function executeSearch(
+  client: GitHubClient,
+  params: { repo: string; query?: string; state?: "open" | "closed" | "all"; limit?: number },
+  type: SearchType,
+  signal?: AbortSignal,
+) {
+  const { owner, name } = splitRepo(params.repo);
+  const terms = [requireString(params.query, "query").trim()];
+  terms.push(`repo:${owner}/${name}`, `is:${type}`);
+  if (params.state && params.state !== "all") terms.push(`state:${params.state}`);
+  const q = terms.join(" ");
+  const limit = params.limit ?? 30;
+  const searchParams = new URLSearchParams({ q, per_page: String(limit) });
+  const result = await client.request<GitHubJson>("GET", `/search/issues?${searchParams}`, {
+    accept: "application/vnd.github.text-match+json",
+    signal,
+  });
+  const items = (result.items ?? []) as GitHubJson[];
+  const total = typeof result.total_count === "number" ? result.total_count : items.length;
+  if (!items.length) {
+    return toolResult(`No matches for: ${q}`, {
+      action: "search",
+      repo: params.repo,
+      query: q,
+      total_count: total,
+      items,
+    });
+  }
+  const lines = [
+    `${total} match${total === 1 ? "" : "es"} for: ${q}${items.length < total ? ` (showing ${items.length})` : ""}`,
+  ];
+  for (const item of items) {
+    lines.push(
+      `#${item.number} [${item.state}${item.draft ? ", draft" : ""}] ${item.title} — ${item.html_url}`,
+    );
+    const fragment = item.text_matches?.[0]?.fragment;
+    if (typeof fragment === "string" && fragment.trim()) {
+      const collapsed = fragment.replace(/\s+/g, " ").trim();
+      lines.push(`  › ${collapsed.length > 200 ? `${collapsed.slice(0, 200)}…` : collapsed}`);
+    }
+  }
+  return toolResult(lines.join("\n"), {
+    action: "search",
+    repo: params.repo,
+    query: q,
+    total_count: total,
+    incomplete_results: result.incomplete_results === true,
+    items,
+  });
+}
+
 export async function executePull(
   client: GitHubClient,
   params: PullRequestInput,
@@ -627,6 +704,10 @@ export async function executePull(
         )
         .join("\n") || "No pull requests found.";
     return toolResult(text, { action: params.action, repo: params.repo, pulls });
+  }
+
+  if (params.action === "search") {
+    return executeSearch(client, params, "pr", signal);
   }
 
   if (params.action === "create") {
@@ -1007,6 +1088,10 @@ export async function executeIssue(client: GitHubClient, params: IssueInput, sig
     return toolResult(text, { action: params.action, repo: params.repo, issues: limitedIssues });
   }
 
+  if (params.action === "search") {
+    return executeSearch(client, params, "issue", signal);
+  }
+
   if (params.action === "create") {
     const payload: GitHubJson = { title: requireString(params.title, "title") };
     if (params.body !== undefined) payload.body = params.body;
@@ -1239,11 +1324,12 @@ export default function githubExtension(pi: ExtensionAPI) {
     name: "github_pr",
     label: "GitHub Pull Request",
     description:
-      "Inspect and manage pull requests and their top-level conversation comments. This tool intentionally does not return diffs: clone/fetch the repository and review changes locally.",
+      "Inspect and manage pull requests and their top-level conversation comments, and search pull requests by keyword across all states. This tool intentionally does not return diffs: clone/fetch the repository and review changes locally.",
     promptSnippet:
-      "Inspect/manage GitHub PR metadata and conversation comments. Clone/fetch locally for code review; do not request API diffs.",
+      "Inspect/search/manage GitHub PR metadata and conversation comments. Clone/fetch locally for code review; do not request API diffs.",
     promptGuidelines: [
       "Use github_pr for pull request metadata, creation, updates, and top-level PR conversation comments.",
+      "Use github_pr search to find pull requests by keyword; search spans open and closed states by default.",
       "Do not review code from API diffs. Use github_pr inspect for refs, SHAs, discussion, and CI context, then clone or fetch the repository and diff locally.",
       "Prefer github_pr update_comment over posting a corrective follow-up when fixing your own PR conversation comment.",
     ],
@@ -1276,10 +1362,11 @@ export default function githubExtension(pi: ExtensionAPI) {
     name: "github_issue",
     label: "GitHub Issue",
     description:
-      "Inspect and manage GitHub issues and their comments, including comment editing and deletion.",
-    promptSnippet: "Inspect/manage GitHub issues and issue comments.",
+      "Inspect and manage GitHub issues and their comments, including comment editing and deletion, and search issues by keyword. Search matches title, body, and comments via GitHub's issue search and spans open and closed issues by default.",
+    promptSnippet: "Inspect/search/manage GitHub issues and issue comments.",
     promptGuidelines: [
       "Use github_issue for issue lifecycle and discussion; use github_pr for pull requests even though GitHub stores PR conversation comments as issue comments internally.",
+      "Use github_issue search to find issues by keyword before creating one — duplicates hide in closed issues, and search spans open and closed by default.",
       "Prefer github_issue update_comment over posting a corrective follow-up when fixing your own issue comment.",
     ],
     parameters: IssueParams,
