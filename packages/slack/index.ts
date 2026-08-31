@@ -29,6 +29,7 @@ const MAX_CHANNEL_HISTORY_LIMIT = 200;
 const SEARCH_PAGE_SIZE = 20;
 const USER_AGENT = "pi-slack-extension/0.1";
 const GLOBAL_SETTINGS_PATH = path.join(os.homedir(), ".pi", "agent", "settings.json");
+const AUTH_JSON_PATH = path.join(os.homedir(), ".pi", "agent", "auth.json");
 const PROJECT_SETTINGS_PATH = path.join(".pi", "settings.json");
 const LEVELDB_MAGIC = Buffer.from([0x57, 0xfb, 0x80, 0x8b, 0x24, 0x75, 0x47, 0xdb]);
 const COMPRESSION_NONE = 0;
@@ -636,9 +637,69 @@ export async function getSlackAuth(workspaceUrl: string, signal?: AbortSignal): 
   return promise;
 }
 
+// auth.json holds Slack credentials under a "slack" key, mirroring the other
+// provider entries: { "slack": { "token": "xoxc-...", "cookieD": "xoxd-..." } }.
+// On macOS this file is a cache: first use extracts from Slack.app and writes
+// it here, and a stale entry falls back to re-extraction. On Linux it is the
+// only auth path (Keychain + sqlite Cookies do not exist), so either fill it
+// in by hand or let it arrive via the auth.json Syncthing sync.
+async function loadSlackAuthFromFile(): Promise<SlackAuth | undefined> {
+  const raw = await readJsonIfExists(AUTH_JSON_PATH);
+  const entry = isRecord(raw) && isRecord(raw.slack) ? raw.slack : undefined;
+  const token = entry ? getString(entry.token) : undefined;
+  const cookieD = entry ? getString(entry.cookieD) : undefined;
+  if (!token && !cookieD) return undefined;
+  if (!token || !cookieD) {
+    throw new Error(`Slack auth in ${AUTH_JSON_PATH} needs both "token" and "cookieD".`);
+  }
+  // The d cookie is sometimes stored URL-encoded; decode tolerantly.
+  let decodedCookie = cookieD;
+  try {
+    decodedCookie = decodeURIComponent(cookieD);
+  } catch {
+    // already decoded
+  }
+  return { kind: "browser", token, cookieD: decodedCookie };
+}
+
+async function cacheSlackAuthToFile(auth: SlackAuth): Promise<void> {
+  try {
+    const raw = await readJsonIfExists(AUTH_JSON_PATH);
+    const doc = isRecord(raw) ? raw : {};
+    await fs.writeFile(
+      AUTH_JSON_PATH,
+      `${JSON.stringify({ ...doc, slack: { token: auth.token, cookieD: auth.cookieD } }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  } catch {
+    // Cache write is best-effort; the extraction above already succeeded.
+  }
+}
+
 async function loadSlackAuth(workspaceUrl: string, signal?: AbortSignal): Promise<SlackAuth> {
+  const fileAuth = await loadSlackAuthFromFile();
+  if (fileAuth) {
+    try {
+      const result = await slackApiCall("auth.test", {}, { auth: fileAuth, workspaceUrl, signal });
+      const resultUrl = getString(result.url);
+      const actualUrl = resultUrl ? normalizeWorkspaceUrl(resultUrl) : undefined;
+      if (actualUrl && actualUrl !== workspaceUrl) {
+        throw new Error(
+          `Slack token from ${AUTH_JSON_PATH} belongs to ${actualUrl}, not ${workspaceUrl}.`,
+        );
+      }
+      return fileAuth;
+    } catch (error) {
+      if (process.platform !== "darwin") throw error;
+      // Cached credentials went stale (Slack rotates xoxc/xoxd); fall through
+      // to a fresh Slack.app extraction and overwrite the cache.
+    }
+  }
+
   if (process.platform !== "darwin") {
-    throw new Error("Slack desktop auth currently only supports macOS Slack.app.");
+    throw new Error(
+      `Slack auth not found. Add { "slack": { "token": "xoxc-...", "cookieD": "xoxd-..." } } to ${AUTH_JSON_PATH} (Slack.app desktop extraction requires macOS).`,
+    );
   }
 
   cachedDesktopCredentialsPromise ??= extractSlackDesktopCredentials().catch((error) => {
@@ -675,6 +736,8 @@ async function loadSlackAuth(workspaceUrl: string, signal?: AbortSignal): Promis
       signal,
     },
   );
+
+  await cacheSlackAuthToFile(auth);
 
   return auth;
 }
