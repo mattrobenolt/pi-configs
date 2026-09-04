@@ -126,6 +126,12 @@ explicit form: `var x = T.initCapacity(args) catch ...`.
 
 ### Cast builtins are single-argument
 
+See below.
+
+### Plain structs and arrays have no `==` in 0.15
+
+`==`/`!=` compile-fail on struct and array types (including small ones like `Ip4Address`). Use `std.meta.eql(a, b)` for structural equality; for slices also consider `std.mem.eql`.
+
 All casts infer return type from context. Do NOT pass destination type:
 ```zig
 // WRONG: @ptrCast(DestType, ptr)

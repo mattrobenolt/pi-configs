@@ -34,6 +34,7 @@
     "fireworks/accounts/fireworks/models/qwen3p8-max",
     "openai-codex/gpt-5.6-luna",
     "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-6-astra",
     "fireworks/accounts/fireworks/models/glm-5p3",
     "fireworks/accounts/fireworks/models/glm-5p3-flash",
     "google/gemini-3.7-flash"
@@ -65,6 +66,6 @@
     "-skills/skill-creator/SKILL.md"
   ],
   "showCacheMissNotices": true,
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "tuiMode": "fullscreen"
 }
