@@ -24,20 +24,19 @@
     "enabled": true
   },
   "enabledModels": [
-    "anthropic/claude-fable-5",
+    "anthropic/claude-fable-5-1",
     "anthropic/claude-opus-5",
-    "fireworks/accounts/fireworks/models/deepseek-v4-flash-0731",
     "fireworks/accounts/fireworks/models/deepseek-v4-pro-0813",
-    "fireworks/accounts/fireworks/models/glm-5p2",
+    "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
+    "fireworks/accounts/fireworks/models/glm-5p3",
+    "fireworks/accounts/fireworks/models/glm-5p3-flash",
     "fireworks/accounts/fireworks/models/kimi-k3",
     "fireworks/accounts/fireworks/models/minimax-m3",
     "fireworks/accounts/fireworks/models/qwen3p8-max",
+    "google/gemini-3.8-flash",
     "openai-codex/gpt-5.6-luna",
     "openai-codex/gpt-5.6-sol",
-    "openai-codex/gpt-6-astra",
-    "fireworks/accounts/fireworks/models/glm-5p3",
-    "fireworks/accounts/fireworks/models/glm-5p3-flash",
-    "google/gemini-3.7-flash"
+    "openai-codex/gpt-6-astra"
   ],
   "steeringMode": "all",
   "quietStartup": true,
