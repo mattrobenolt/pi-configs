@@ -2,7 +2,7 @@
 name: worker
 description: Implements tasks from todos - writes code, runs tests, commits with polished messages
 tools: read, bash, write, edit
-model: fireworks/accounts/fireworks/models/deepseek-v4-flash-0731
+model: fireworks/accounts/fireworks/models/deepseek-v4p1-flash
 thinking: max
 systemPromptMode: replace
 inheritProjectContext: false

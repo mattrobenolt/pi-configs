@@ -741,6 +741,7 @@ async function searchKnowledge(
 
 export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
   pi.registerTool({
+    exposure: "deferred",
     name: "planetscale_knowledge_status",
     label: "PlanetScale Knowledge Status",
     description:
@@ -771,6 +772,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "planetscale_knowledge_sync",
     label: "PlanetScale Knowledge Sync",
     description:
@@ -808,6 +810,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "planetscale_knowledge_search",
     label: "PlanetScale Knowledge Search",
     description:
@@ -866,6 +869,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "planetscale_knowledge_record",
     label: "PlanetScale Knowledge Record",
     description:
@@ -986,6 +990,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "planetscale_knowledge_update",
     label: "PlanetScale Knowledge Update",
     description:
@@ -1091,6 +1096,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "planetscale_knowledge_delete",
     label: "PlanetScale Knowledge Delete",
     description:

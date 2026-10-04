@@ -11,7 +11,9 @@ The tools handle GitHub metadata and communication. The local repository provide
 
 ## Writing style
 
-All text posted to GitHub — PR titles and bodies, review summaries, inline comments, replies, and issue comments — follows [references/writing-style.md](references/writing-style.md): simplified technical English (ASD-STE100) adapted for review discussion. Read it before drafting anything that lands on GitHub. The rules with the most leverage: sentences stay under 20 words for instructions and 25 for explanations; the only modals are can, will, and must; no contractions, present perfect, "-ing" verb forms, or semicolons; identifiers and quoted errors stay untouched in backticks.
+All text posted to GitHub — PR titles and bodies, review summaries, inline comments, replies, and issue comments — follows [references/writing-style.md](references/writing-style.md): simplified technical English (ASD-STE100) adapted for review discussion. Read it before drafting anything that lands on GitHub.
+
+The reference files are long (170–420 lines). Read each one to the end before drafting. The sections that correct agent failure modes sit in the second half, so a partial read produces exactly the bodies those sections prohibit. The rules with the most leverage: sentences stay under 20 words for instructions and 25 for explanations; the only modals are can, will, and must; no contractions, present perfect, "-ing" verb forms, or semicolons; identifiers and quoted errors stay untouched in backticks.
 
 ## Supported user stories
 
@@ -94,7 +96,7 @@ Resolving an already-resolved thread is a no-op; you do not need to pre-check. R
 
 1. Read the local diff, commits, linked issue or decision record, and validation results. Do not generate the PR story from filenames or commit subjects alone.
 2. Find and follow the repository's PR template and contribution guidance. Preserve required sections and checklists.
-3. Read [references/pr-body.md](references/pr-body.md) before drafting the title or body. Explain why, summarize the behavioral change, and surface material risk without narrating the diff. Run its LLM-specific compression and claim-verification pass: do not repeat routine test counts, lint/build status, or other CI facts in the body.
+3. Read [references/pr-body.md](references/pr-body.md) and [references/writing-style.md](references/writing-style.md) completely before drafting the title or body. Explain why, summarize the behavioral change, and surface material risk without narrating the diff. Run the LLM-specific compression and claim-verification pass from pr-body.md: do not repeat routine test counts, lint/build status, or other CI facts in the body.
 4. Use GitHub's draft state for intentionally incomplete work instead of putting `[WIP]` in the title.
 5. Create or update through `github_pr`, passing the complete Markdown body. Use `owner/repo#number` references and issue-closing keywords deliberately.
 6. Read the full title and body echoed by the tool. If either is wrong or stale, update that same PR rather than adding a corrective conversation comment.
@@ -112,6 +114,8 @@ Pass `repo: "owner/repo"` explicitly for writes. Preserve the IDs and URLs retur
 ## CI
 
 Use `github_ci` with `action: "status"` for PR checks. Set `wait: true` to wait until checks finish instead of writing shell polling or sleep loops. Pass `expected_head_sha` when CI must correspond to code inspected locally.
+
+For commits outside a PR (a branch just pushed to, a tag, an arbitrary SHA), pass `ref` instead of `pr_number`. The ref is re-resolved on every poll, so a branch that moves mid-wait reports `head_changed` when pinned to `expected_head_sha`.
 
 The wait result is one of:
 

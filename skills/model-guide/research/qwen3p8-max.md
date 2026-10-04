@@ -17,11 +17,7 @@ xhigh**; `preserve_thinking` on by default. $2.00/$6.00 per 1M, implicit cache h
 (10% of input), explicit cache $2.50 write / $0.17 read — **flat rate across the full 1M
 window** (no tiered context pricing; unusual vs Gemini 3.1 Pro / Sol).
 
-**Open weights: promised, not shipped.** Alibaba committed to weights for Qwen3.8-Max and a
-new Qwen3.8-27B "the week of August 10" (HF + ModelScope). As of 2026-08-11/12 neither
-repository exists and no license has been named; AA classifies the model proprietary.
-Precedent is Apache-2.0 (Qwen3.6-27B) — likely, not confirmed. At 2.4T the checkpoint is a
-multi-node datacenter artifact regardless; the 27B is the practically interesting sibling.
+**Open weights: shipped 2026-08-12** (correction recorded 2026-09-16). `Qwen/Qwen3.8-2.4T-A95B` landed on HF — the Max core itself, not a cheaper sibling: Qwen's card calls Max "the official version based on Qwen3.8-2.4T-A95B" adding vision input, non-thinking support, 1M-default context, and built-in tools. The checkpoint: 2.4T/95B (512 experts, 10+1 active, Gated DeltaNet + Gated Attention hybrid, MTP draft weights), 262K native extensible to 1,010K, BF16 4.89 TB + official FP8 2.50 TB, **text-only, thinking locked on** (`enable_thinking: True` "should not be turned off"), `reasoning_effort` xhigh/medium/low. **Custom `qwen3.8-max` license** — MIT-style grant; attribution gate at >100M MAU or >$20M/mo; separate license required for MaaS or "AI Work Assistant" businesses above $50M/12mo (explicitly covers AI-coding/office-assistant products; K3's gate is $20M/MaaS-only); internal use exempt; no geographic restriction. The 27B sibling shipped Apache 2.0 on 2026-08-13/14 (vision-language on Fireworks). **Divergence since: a 2026-09-02 hosted-Max post-training refresh (`Qwen3.8-Max-0902`, API-only — Code Arena WebDev #1 that week) is absent from the open checkpoint**; the weights are frozen at the Aug-12 state. Fireworks serves the open core as `qwen3p8-2p4t-a95b` ($2/$6 — same price as `qwen3p8-max`, redundant for our routing since the max route also allows thinking-off); which build Fireworks' `qwen3p8-max` serves (pre- or post-0902) is unverified.
 
 ## Vendor claims & methodology
 

@@ -132,6 +132,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "get_system_prompt",
     label: "Get System Prompt",
     description: "Returns the current system prompt so the LLM can inspect it",
@@ -145,6 +146,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "get_tools",
     label: "Get Tools",
     description: "Returns all registered tool definitions as seen by the LLM",
@@ -161,6 +163,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "get_last_payload",
     label: "Get Last Payload",
     description: "Returns the last raw API request payload sent to the provider",

@@ -13,9 +13,11 @@
     "lint": "oxlint index.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "catalog:",
-    "@mattrobenolt/pi-core": "workspace:*",
-    "typebox": "catalog:"
+    "@mattrobenolt/pi-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": [

@@ -17,6 +17,7 @@ import {
   assertPullHead,
   checkProgressText,
   loadPullChecks,
+  loadRefChecks,
   normalizeInlineComment,
   paginateList,
   paginateObjectItems,
@@ -24,7 +25,7 @@ import {
   positiveInteger,
   requireString,
   splitRepo,
-  waitForPullChecks,
+  waitForChecks,
   type CheckSnapshot,
   type GitHubJson,
 } from "./core.ts";
@@ -225,10 +226,18 @@ const CIParams = Type.Object({
     description: "CI/check operation.",
   }),
   repo: RepoParam,
-  pr_number: Type.Optional(PositiveIntegerParam("Pull request number for status.")),
+  pr_number: Type.Optional(
+    PositiveIntegerParam("Pull request number for status. Required unless ref is provided."),
+  ),
+  ref: Type.Optional(
+    Type.String({
+      description:
+        "Git ref (branch, tag, or SHA) for status on a commit outside a PR. Mutually exclusive with pr_number.",
+    }),
+  ),
   expected_head_sha: Type.Optional(
     Type.String({
-      description: "Optional head SHA pin. Waiting stops with head_changed if the PR moves.",
+      description: "Optional head SHA pin. Waiting stops with head_changed if the head moves.",
     }),
   ),
   wait: Type.Optional(
@@ -1210,10 +1219,19 @@ export async function executeCI(
   const basePath = endpoint(params.repo);
 
   if (params.action === "status") {
-    const number = prNumber(params.pr_number);
+    if (params.pr_number !== undefined && params.ref !== undefined) {
+      throw new Error("Pass either pr_number or ref for status, not both.");
+    }
+    if (params.pr_number === undefined && params.ref === undefined) {
+      throw new Error("status requires pr_number or ref (branch, tag, or commit SHA).");
+    }
+    const load =
+      params.ref !== undefined
+        ? () => loadRefChecks(client, params.repo, requireString(params.ref, "ref"), signal)
+        : () => loadPullChecks(client, params.repo, prNumber(params.pr_number), signal);
     if (params.wait) {
-      const result = await waitForPullChecks({
-        load: () => loadPullChecks(client, params.repo, number, signal),
+      const result = await waitForChecks({
+        load,
         expectedHeadSha: params.expected_head_sha,
         timeoutMs: (params.timeout_minutes ?? 30) * 60_000,
         signal,
@@ -1227,7 +1245,7 @@ export async function executeCI(
       );
     }
 
-    const current = await loadPullChecks(client, params.repo, number, signal);
+    const current = await load();
     const status =
       params.expected_head_sha && current.head_sha !== params.expected_head_sha
         ? "head_changed"
@@ -1379,10 +1397,11 @@ export default function githubExtension(pi: ExtensionAPI) {
     name: "github_ci",
     label: "GitHub CI",
     description:
-      "Read PR checks and GitHub Actions runs, wait for checks to finish, and retrieve failed logs. Waiting is cancellable and can be pinned to an expected PR head SHA.",
+      "Read commit checks (by PR number or git ref) and GitHub Actions runs, wait for checks to finish, and retrieve failed logs. Waiting is cancellable and can be pinned to an expected head SHA.",
     promptSnippet: "Read or wait for GitHub CI checks and inspect failed workflow logs.",
     promptGuidelines: [
       "Use github_ci status with wait=true instead of writing shell sleep/poll loops.",
+      "Pass ref (branch, tag, or SHA) instead of pr_number for status on commits outside a PR, such as CI on a branch just pushed to.",
       "Pass expected_head_sha when waiting on reviewed code. If github_ci returns head_changed, fetch and inspect the new head before proceeding.",
       "After github_ci reports failed checks, use github_ci failed_logs with the returned run ID.",
     ],

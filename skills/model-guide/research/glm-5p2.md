@@ -172,3 +172,16 @@ GLM-5.2 is pi's default agent model, and the neutral evidence mostly supports th
 - https://presenc.ai/research/lmsys-chatbot-arena-elo-rankings-may-2026
 - https://github.com/dakshjain-1616/-Independent-Evaluation-Report-GLM-5.2-vs-Kimi-k-2.6
 - https://news.ycombinator.com/item?id=48567759
+
+
+---
+
+## Archived findings log (from MODEL_GUIDE.md, removed 2026-09-16 when GLM 5.2 was retired)
+
+**Findings log.**
+- *2026-07-09:* Initial research. AA Index 51 (highest open-weight). Terminal-Bench 2.1 81.0, SWE-bench Pro 62.1, FrontierSWE 74.4, AIME 2026 99.2%. $1.40/$4.40, MIT, 1M context, text-only.
+- *2026-07-09:* Deep teardown (researcher brief). Vendor table more honest than M3 but headline cherry-picks — GPT-5.5 beats it on DeepSWE by 23.8pts on its own table; SWE-bench Verified conspicuously omitted. DeepSWE 44-46% independently corroborated (no collapse — different trust profile from M3). SWE-bench Pro > GPT-5.5 survives neutral Scale SEAL harness. Per-task cost ~$0.46 (verbosity 2-2.7x GPT-5.5) shrinks the 1/6 per-token advantage. Silent under-counting failure mode (independent GLM-vs-Kimi audit). "Zero failed runs" + "bench-maxxed" both unverified. Verdict: default holds for routine text coding; escalate for hardest/longest/vision/verification.
+- *2026-07-27:* K3 comparison update. GLM is no longer the highest-AA open-weight model (K3 57 vs 51) and trails K3 on common-harness DeepSWE (44% ±2 vs 69% ±5), but remains the everyday default: $3.92 vs $4.65 per DeepSWE attempt and $0.32 vs $0.94 on AA's broad weighted workload, with simpler thinking/history semantics. K3 is additive hard-task/vision escalation, not a default replacement.
+- *2026-08-28:* GLM 5.3 shipped on Fireworks (same price, same arch, thinking no longer disableable). Matt note recorded: he never ran 5.2 below `xhigh` in practice — the "prefer `high`" guidance above is pack-measured only. 5.2 stays in `models.json` as the fallback route and keeps Drew's review pipeline; 5.3 gets the provisional marathon-heir slot (see its section).
+- *2026-08-07:* Rescoped to long-horizon marathons; default slot went to DeepSeek V4 Flash 0731. Local pi-harness duel (6 Matt-shaped coding tasks × 2 reps, both thinking levels): 12/12 vs 12/12 — no capability separation — with DeepSeek ~4x cheaper per task at `high` and ~12x at `max`-vs-`xhigh` (GLM's `xhigh` cost 2.7x its own `high` arm for zero pass gain). Retrieval/exact-wording clean for both to ~925K tokens. GLM keeps marathons (DeepSeek's long-horizon error-compounding risk untested) and is the fallback route.
+

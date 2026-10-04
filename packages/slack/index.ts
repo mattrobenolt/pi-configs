@@ -3843,6 +3843,7 @@ async function generateAndSendReply(
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_read",
     label: "Slack Read",
     description: "Read a Slack message or thread.",
@@ -3872,6 +3873,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_search",
     label: "Slack Search",
     description:
@@ -3906,6 +3908,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_channel_history",
     label: "Slack Channel History",
     description: "List channel messages chronologically.",
@@ -3935,6 +3938,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_delete_message",
     label: "Slack Delete Message",
     description: "Delete one of your Slack messages.",
@@ -3961,6 +3965,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_post",
     label: "Slack Post",
     description: "Post a new top-level Slack message to a channel or DM.",
@@ -3997,6 +4002,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_reply",
     label: "Slack Reply",
     description: "Reply in a Slack thread.",
@@ -4031,6 +4037,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_open_dm",
     label: "Slack Open DM",
     description: "Open or find a DM channel with a Slack user.",
@@ -4064,6 +4071,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_user_lookup",
     label: "Slack User Lookup",
     description: "Look up Slack users.",
@@ -4093,6 +4101,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_file",
     label: "Slack File",
     description:
@@ -4115,6 +4124,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_start_conversation",
     label: "Slack Start Conversation",
     description: "Start a background Slack conversation loop for a channel or DM.",
@@ -4311,6 +4321,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_stop_conversation",
     label: "Slack Stop Conversation",
     description: "Stop an active Slack conversation loop.",
@@ -4384,6 +4395,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_conversation_steer",
     label: "Slack Conversation Steer",
     description: "Add persistent context for an active conversation loop.",
@@ -4443,6 +4455,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "slack_conversation_interject",
     label: "Slack Conversation Interject",
     description: "Interrupt an active conversation turn or save context if it is idle.",

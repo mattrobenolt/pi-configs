@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { complete, type Model } from "@earendil-works/pi-ai/compat";
+import type { ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ModelSpec } from "./config.ts";
 
 const PREFERRED_NARROWING_MODEL = { provider: "openai-codex", id: "gpt-5.4-mini" } as const;
@@ -251,7 +252,7 @@ export function resolveNarrowingModel(
   );
   if (preferred) return preferred as Model<string>;
 
-  return ctx.model ?? null;
+  return (ctx.model as Model<string> | undefined) ?? null;
 }
 
 async function runExtractionPrompt(
@@ -259,7 +260,7 @@ async function runExtractionPrompt(
   promptText: string,
   model: Model<string>,
   apiKey: string,
-  headers: Record<string, string> | undefined,
+  headers: ProviderHeaders | undefined,
   signal: AbortSignal,
   completeFn: CompleteFn,
 ): Promise<string | null> {
@@ -298,7 +299,7 @@ async function extractSection(
   objective: string,
   model: Model<string>,
   apiKey: string,
-  headers: Record<string, string> | undefined,
+  headers: ProviderHeaders | undefined,
   signal: AbortSignal,
   completeFn: CompleteFn,
 ): Promise<string | null> {
@@ -319,7 +320,7 @@ async function reduceCandidates(
   objective: string,
   model: Model<string>,
   apiKey: string,
-  headers: Record<string, string> | undefined,
+  headers: ProviderHeaders | undefined,
   signal: AbortSignal,
   completeFn: CompleteFn,
 ): Promise<string | null> {

@@ -92,15 +92,11 @@ Work through requirements **one topic at a time**:
 4. **Success criteria** — How do we know it's done?
 
 **How to ask:**
-- Group related questions — then **always run `/answer`** for a clean Q&A interface:
-  ```
-  [list your questions]
-  execute_command(command="/answer", reason="Opening Q&A for requirements")
-  ```
+- Group related questions into one message
 - Prefer multiple choice when possible
 - Share what you already know from context — don't re-ask obvious things
 
-**Don't move to Phase 3 until requirements are clear. Ask, run `/answer`, then STOP and wait.**
+**Don't move to Phase 3 until requirements are clear. Ask, then STOP and wait.**
 
 ---
 

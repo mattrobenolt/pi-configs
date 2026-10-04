@@ -14,11 +14,13 @@
     "lint": "oxlint index.ts mrkdwn.ts search-query.ts target.ts index.test.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "catalog:",
     "@mattrobenolt/pi-core": "workspace:*",
     "hysnappy": "catalog:",
-    "marked": "catalog:",
-    "typebox": "catalog:"
+    "marked": "catalog:"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": [

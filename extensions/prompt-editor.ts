@@ -2,11 +2,7 @@ import { atomicWriteUtf8, expandHome, readTail, withFileLock } from "@mattrobeno
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-import {
-  CustomEditor,
-  ModelSelectorComponent,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { CustomEditor, ModelSelectorComponent } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
@@ -832,7 +828,6 @@ async function pickModelForModeUI(
 ): Promise<{ provider: string; modelId: string } | undefined> {
   if (!ctx.hasUI) return undefined;
 
-  const settingsManager = SettingsManager.inMemory();
   const currentModel =
     spec.provider && spec.modelId ? ctx.modelRegistry.find(spec.provider, spec.modelId) : ctx.model;
 
@@ -843,7 +838,6 @@ async function pickModelForModeUI(
       const selector = new ModelSelectorComponent(
         tui,
         currentModel,
-        settingsManager,
         ctx.modelRegistry as any,
         scopedModels as any,
         (model) => done({ provider: model.provider, modelId: model.id }),

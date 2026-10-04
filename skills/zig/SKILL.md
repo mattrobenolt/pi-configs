@@ -1,264 +1,154 @@
 ---
 name: zig
-description: "Write correct, idiomatic Zig 0.15 code. Use when writing new Zig code, editing existing Zig files, debugging Zig compilation errors, reviewing Zig code, or working with build.zig files. Triggers on any task involving .zig files. Critical: LLM training data contains outdated Zig patterns (0.11-0.13) that will produce broken code — this skill provides the current 0.15 patterns."
+description: "Write correct, idiomatic Zig 0.16 code. Use when writing new Zig code, editing existing Zig files, debugging Zig compilation errors, reviewing Zig code, or working with build.zig files. Triggers on any task involving .zig files. Critical: LLM training data contains outdated Zig patterns (0.11-0.15) that will produce broken code — this skill provides the current 0.16 patterns."
 ---
 
-# Zig 0.15
+# Zig 0.16
 
-LLM training data is based on Zig 0.11-0.13. Zig 0.15 has massive breaking changes. ALWAYS consult [references/zig-0.15-migration.md](references/zig-0.15-migration.md) before writing Zig code.
+LLM training data covers Zig 0.11-0.15 at best. Zig 0.16 has massive breaking changes. ALWAYS consult [references/zig-0.16-changes.md](references/zig-0.16-changes.md) before writing Zig code.
 
-## Tools
+Rule zero: verify APIs against the pinned toolchain, not memory.
 
-Always available — use these before guessing at APIs:
+```bash
+zigdoc std.Io.File          # API discovery, toolchain-aware
+zig env                     # .std_dir = actual std source for THIS zig
+ziglint src/                # style + correctness lint
+```
 
-- **`zigdoc`** — Discover current APIs for std and third-party deps. Use before writing any code involving unfamiliar APIs.
-  ```bash
-  zigdoc std.fs
-  zigdoc std.posix.getuid
-  zigdoc vaxis.Window
-  ```
-- **`ziglint`** — Lint Zig code for style and correctness issues.
+`zig env` prints `.std_dir` — grep that tree when a signature matters. It is the source of truth, and it is cheap.
 
-## Critical Changes You Will Get Wrong
+## "Removed" usually means "moved" — grep before you hand-roll
 
-### std.io → std.Io (the I/O overhaul)
+0.16 relocated huge API surfaces without renaming the capability. When the
+release notes say a type or function was removed, ask where it went before
+writing your own:
 
-`std.io.getStdOut().writer()` is GONE. The entire I/O system was redesigned:
+- `std.posix.ucontext_t` removed → signal-frame parsing lives in `std.debug.cpu_context.fromPosixSignalContext` (gives `getPc`/`getFp` per arch).
+- `std.net` DNS "gone" → `std.Io.net.HostName.lookup` / `HostName.connect` is the resolver; `Io.Threaded` implements it. `IpAddress.parse` being literal-only is about parsing, not resolution.
+- `std.time.Timer`/`Instant`/`*Timestamp` removed → `std.Io.Timestamp` (below).
+
+All three were relearned the hard way by hand-rolling something std already had. A vtable grep (`grep -n 'netLookup\|pub fn' std/Io.zig`) takes ten seconds.
+
+## Juicy Main — `main` takes `std.process.Init`
 
 ```zig
-// WRONG (old):
-const stdout = std.io.getStdOut().writer();
-try stdout.print("hello\n", .{});
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;                          // general purpose allocator, threadsafe
+    const io = init.io;                            // default Io implementation
+    const arena: std.mem.Allocator = init.arena.allocator();  // process-lifetime, threadsafe
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    // init.environ_map: *Environ.Map — env vars are NOT global anymore
+}
+```
 
-// RIGHT (0.15):
+- argv and environ exist **only** through this parameter. Global argv/env access is gone.
+- `std.process.Init.Minimal` is the smaller variant (argv + environ only, no gpa/io).
+- Use `std.testing.io` in tests, like `std.testing.allocator`. `std.testing.environ` for env.
+
+## I/O as an interface — everything takes `Io`
+
+`std.fs.File` → `std.Io.File`. `std.fs.Dir` → `std.Io.Dir`. `std.fs.cwd()` → `std.Io.Dir.cwd()`. `file.close()` → `file.close(io)`.
+
+```zig
+// stdout, buffered:
 var buf: [4096]u8 = undefined;
-var writer = std.fs.File.stdout().writer(&buf);
+var writer: std.Io.File.Writer = .init(.stdout(), io, &buf);
 defer writer.interface.flush() catch {};
 try writer.interface.print("hello {s}\n", .{"world"});
+
+// one-shot:
+try std.Io.File.stdout().writeStreamingAll(io, "Hello, world!\n");
+
+// reading:
+var file_reader = file.reader(io, &.{});          // &.{} = empty buffer, unbuffered
+const contents = try file_reader.interface.allocRemaining(allocator, .limited(max));
+
+// FixedBufferStream is gone:
+var writer: std.Io.Writer = .fixed(buffer);
+var reader: std.Io.Reader = .fixed(data);
 ```
 
-- `std.io.Writer` → `std.Io.Writer`
-- `std.io.Reader` → `std.Io.Reader`
-- `std.io.AnyWriter`/`AnyReader`/`GenericWriter`/`GenericReader` → `std.Io.Writer`/`std.Io.Reader`
-- `std.io.BufferedWriter`/`BufferedReader` → REMOVED (buffering is in the interface now)
-- Functions accepting writers: use `*std.Io.Writer` parameter type
-- ALL buffered output requires explicit `flush()`
+- No `Io` at hand: `var threaded: std.Io.Threaded = .init_single_threaded; const io = threaded.io();` — a workaround, not a pattern; thread `Io` through instead.
+- `Io.Threaded` is complete (the default `init.io`). `Io.Evented`/`Io.Uring`/`Io.Kqueue` are WIP.
+- Style: alias `const Io = std.Io;` per file, and use the method form (`io.random(&buf)`, `io.sleep(...)`, `futex.futexWake(io)`), never `Io.random(io, ...)`.
 
-**Allocating writer** (writes to allocated memory):
-```zig
-var writer: std.Io.Writer.Allocating = .init(allocator);
-defer writer.deinit();
-try writer.writer.print("hello {s}", .{"world"});
-const output = try writer.toOwnedSlice();
-```
+## Clock and randomness in 0.16
 
-**JSON writing:**
-```zig
-var buf: [4096]u8 = undefined;
-var writer = std.fs.File.stdout().writer(&buf);
-defer writer.interface.flush() catch {};
+`std.time` is unit constants plus `std.time.epoch` — **no clock functions at all**. A `std.time.microTimestamp()` call compiles only when lazy analysis never reaches it (see the landmine section).
 
-var jw: std.json.Stringify = .{
-    .writer = &writer.interface,
-    .options = .{ .whitespace = .indent_2 },
-};
-try jw.write(my_struct);
-```
+- Time reads: `std.Io.Timestamp.now(io, .awake)` (monotonic) or `.now(io, .real)` (wall). `Io.Timestamp` is a plain value type: `.{ .nanoseconds = n }` constructs one with no io, and `durationTo`/`addDuration`/`toSeconds`/`toMilliseconds` are pure value math. Many projects wrap a `timex` module around the raw clock syscall instead of threading io just for time — that is a legitimate pattern.
+- Randomness: `io.random(&buf)` for bytes (`io.randomSecure` for secrets). For a `std.Random` interface, seed a `std.Random.DefaultPrng` once per thread from `io.random` and keep it — preferred over `std.Random.IoSource`, whose returned `Random` borrows the IoSource struct: return it from a helper and the borrow dangles. `std.Random.DefaultCsprng` (ChaCha) when the stream should stay unpredictable.
+- Tests: `var prng: Random.DefaultPrng = .init(testing.random_seed);` inline at the test site, then `prng.random()`. No helper that vends a `Random` — it needs a fn-local static to keep the borrow alive, which is machinery for a two-line problem.
 
-### ArrayList and HashMap — allocator per call
+## The lazy-analysis landmine
 
-```zig
-// WRONG (old):
-var list = std.ArrayList(i32).init(allocator);
-try list.append(42);
+Zig analyzes lazily. A `switch` on a comptime-known build option never analyzes dead arms, so a call to a removed API can sit in a pruned arm and survive every green build — until someone builds the other flag combination. Same for code paths only reachable under a different `-D` option.
 
-// RIGHT (0.15) — initialize with .empty, pass allocator to every mutating op:
-var list: std.ArrayList(u32) = .empty;
-defer list.deinit(allocator);
-try list.append(allocator, 42);
-```
+Defense: build the option matrix, not just the default. Run BOTH `zig build test` AND `zig build` (a green test build with a broken `run()` is a real observed failure mode), and any non-default build flags the project ships.
 
-**HashMap/StringHashMap** (same pattern — default to unmanaged):
-```zig
-var map: std.StringHashMapUnmanaged(u32) = .empty;
-defer map.deinit(allocator);
-try map.put(allocator, "key", 42);
-```
+## `std.posix` was gutted
 
-Initialize with `.empty`, NOT `.init()` or `.{}`.
+The medium layer is gone. Survivors include `read`, `setsockopt`, `mmap`/`munmap`, `kill`/`raise`, `openat`, `sched_getaffinity`, signal-set helpers, `sigaltstack`. Everything else: go **higher** (`std.Io`) or **lower** (`std.posix.system` — `std.os.linux` without libc, `std.c` with libc).
 
-### MemoryPool alignment is stronger than item alignment
+**setsockopt landmine:** `std.posix.setsockopt` maps `EINVAL` to `unreachable` — UB in ReleaseFast. For any option where EINVAL is a legitimate runtime failure, use the raw layer and decode errno yourself. See [references/linux-raw-layer.md](references/linux-raw-layer.md).
 
-`std.heap.MemoryPoolAligned` floors `item_alignment` at `@alignOf(*anyopaque)` because freed items store a linked-list node. A pool configured below pointer alignment therefore returns over-aligned slots. When casting a byte pointer back to the pool item type for `destroy`, use `Pool.item_alignment`, not the requested alignment.
+## `std.mem` renames — "index of" is now "find"
 
-### Build system
+`indexOf` → `find`, `indexOfScalar` → `findScalar`, `indexOfAny` → `findAny`, `lastIndexOf` → `findLast`, `indexOfPos` → `findPosLinear` family. Emitting `std.mem.indexOf*` is a compile error now.
 
-```zig
-b.addExecutable(.{
-    .name = "foo",
-    .root_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    }),
-});
-```
+## Other 0.16 breaks, one line each
 
-- `addStaticLibrary()` → `addLibrary(.{ .linkage = .static })`
-- Use `b.createModule()` for root modules
-- `.root_source_file = .{ .path = "..." }` → `.root_source_file = b.path("...")`
-- Path strings → `LazyPath`: `.{ .cwd_relative = path }`
+- `@Type` removed → `@Int`, `@Struct`, `@Union`, `@Enum`, `@Pointer`, `@Fn`, `@Tuple`, `@EnumLiteral()`.
+- `@cImport` deprecated (still compiles, no warning) → `b.addTranslateC` in build.zig + `const c = @import("c")`. Recipe: [Migrating off @cImport](references/zig-0.16-changes.md#migrating-off-cimport).
+- Sync primitives moved: `Thread.ResetEvent`→`Io.Event`, `WaitGroup`→`Io.Group`, `Futex`→`Io.Futex`, `Mutex`→`Io.Mutex`, `Condition`→`Io.Condition`, `Semaphore`→`Io.Semaphore`. `std.once` and `Thread.Pool` removed. `ArenaAllocator` is threadsafe/lock-free; `ThreadSafeAllocator` removed.
+- `std.crypto.random` gone → `io.random(&buf)` / `io.randomSecure(&buf)`.
+- `{D}` format specifier removed → `{f}` with `std.Io.Duration`.
+- `std.ArrayList` is unmanaged: init `.empty`, allocator per mutating call. `ArrayListUnmanaged` is a deprecated alias.
+- Managed containers removed (`AutoArrayHashMap` → `array_hash_map.Auto`, etc.); `PriorityQueue`/`PriorityDequeue` lost their allocator field.
+- Cast builtins are single-argument, return type inferred: `const x: DestType = @ptrCast(ptr);`
+- Type reflection tags lowercase: `.int`, `.float`, `.@"struct"`, `.@"enum"`.
+- Structs/arrays have no `==`; use `std.meta.eql` / `std.mem.eql`.
+- Returning the address of a local is a compile error ("expired local variable").
+- Pointers are forbidden in `packed struct`/`packed union`. `extern` enums/packed types need explicit backing ints.
+- Runtime vector indexing is forbidden — coerce to array first.
+- Error renames: `RenameAcrossMountPoints`/`NotSameFileSystem`→`CrossDevice`, `SharingViolation`→`FileBusy`, `EnvironmentVariableNotFound`→`EnvironmentVariableMissing`.
+- Child processes: `std.process.spawn(io, .{ ... })`, `std.process.run(allocator, io, .{...})`.
+- `std.meta.intToEnum` → `std.enums.fromInt` (returns `?Enum`, not an error union — `orelse`, not `catch`).
+- `std.mem.copyForwards`/`copyBackwards` → the `@memmove` builtin.
 
-### Type reflection tags are lowercase
+Build system: `b.addExecutable(.{ .name, .root_module = b.createModule(.{ .root_source_file = b.path("src/main.zig"), .target, .optimize }) })`; `addStaticLibrary()` → `addLibrary(.{ .linkage = .static })`; path strings → `b.path(...)` LazyPaths.
+
+## Security footgun: narrow-type arithmetic in bounds checks
+
+Zig evaluates `narrow_type + comptime_int` in the narrow type **before** widening for the comparison:
 
 ```zig
-// WRONG: .Int, .Float, .Struct, .Enum
-// RIGHT: .int, .float, .@"struct", .@"enum"
+const len = r.assumeRead(u16);           // attacker-controlled length
+if (remaining < len + 5) return error.UnexpectedEof;   // BUG: len + 5 overflows u16
 ```
 
-### Leading-dot constructor calls fail for non-`init` names
-
-`var x: T = .init(args)` works, but `var x: T = .initCapacity(args)` errors
-with `type '@Type(.enum_literal)' not a function` — the leading-dot call
-form only resolves plain member lookups that return `T` directly, and some
-error-union-returning constructors trip the enum-literal parse. Use the
-explicit form: `var x = T.initCapacity(args) catch ...`.
-
-### Cast builtins are single-argument
-
-See below.
-
-### Plain structs and arrays have no `==` in 0.15
-
-`==`/`!=` compile-fail on struct and array types (including small ones like `Ip4Address`). Use `std.meta.eql(a, b)` for structural equality; for slices also consider `std.mem.eql`.
-
-All casts infer return type from context. Do NOT pass destination type:
-```zig
-// WRONG: @ptrCast(DestType, ptr)
-// RIGHT: const result: DestType = @ptrCast(ptr);
-```
-
-Same for `@bitCast`, `@truncate`, `@floatFromInt`, `@intFromFloat`, `@enumFromInt`, `@ptrFromInt`.
-
-### Other renames
-
-- `@intToPtr`→`@ptrFromInt`, `@ptrToInt`→`@intFromPtr`
-- `@intToFloat`→`@floatFromInt`, `@floatToInt`→`@intFromFloat`
-- `@intToEnum`→`@enumFromInt`, `@enumToInt`→`@intFromEnum`
-- `@errSetCast`→`@errorCast`
-- `@fieldParentPtr(T, "f", ptr)` → `@fieldParentPtr(ptr, .field_name)`
-- `@setCold(true)` → `@branchHint(.cold)`
-- `@export(fn, ...)` → `@export(&fn, ...)`
-- `std.os` → `std.posix`
-- `std.rand` → `std.Random`
-- `std.TailQueue` → `std.DoublyLinkedList`
-- `callconv(.C)` → `callconv(.c)`
-- `async`/`await` → REMOVED
-
-## Zig Style
-
-- `camelCase` for functions/methods
-- `snake_case` for variables, parameters, constants
-- `PascalCase` for types, structs, enums
-- Prefer `const foo: Type = .{ .field = value };` over `const foo = Type{ .field = value };`
-- File order: `//!` module doc comment, `const Self = @This();`, imports, `const log = std.log.scoped(...)`
-- Pass allocators explicitly; use `errdefer` for cleanup on error
-- Keep tests inline with the code they cover
-- Comments explain why, not what
-
-### Narrow-type arithmetic in bounds checks (security footgun)
-
-Zig 0.15 evaluates `narrow_type + comptime_int` in the narrow type **before** widening for the comparison. A bounds check like:
+panics (Debug/ReleaseSafe) or is UB (ReleaseFast) before the comparison rejects the oversized input. Remote DoS class. `ziglint` does not catch this. Always widen first:
 
 ```zig
-const len = r.assumeRead(u8);  // or u16, u24
-if (remaining < len + N) return error.UnexpectedEof;  // BUG: len + N overflows u8
+if (remaining < @as(usize, len) + 5) return error.UnexpectedEof;
 ```
 
-overflows the narrow type when `len` is near its max, causing a panic (Debug/ReleaseSafe) or UB (ReleaseFast) **before** the comparison rejects the oversized input. This is a remote DoS class on any parser that reads an attacker-controlled length field — it caused 14 exploitable sites in ztls (#72). `ziglint` does not catch this.
+## Style
 
-Always widen before the add:
-```zig
-if (remaining < @as(usize, len) + N) return error.UnexpectedEof;
-```
+- `camelCase` functions, `snake_case` variables/constants, `PascalCase` types.
+- Prefer `const foo: Type = .{ .field = value };` over `const foo = Type{...};`.
+- File order: `//!` doc, `const Self = @This();`, imports, `const log = std.log.scoped(...)`.
+- Allocators explicit; `errdefer` for cleanup on error paths.
+- Use `@splat` for uniform array/vector init: `const mask: [4]u8 = @splat(0);`
+- Extract type aliases for repeated semantic types (`const RecordLen = u16;`, not bare `u16` in every signature).
+- Tests inline with the code they cover.
+- Comments explain why, not what.
 
-Audit every `narrow_var + comptime_int` bounds check when writing or reviewing parser code. This applies to any `u8`/`u16`/`u24`/`u32` length field read from untrusted input.
+Full style rules (expression shape, enums-over-bools, buffers, arithmetic placement, sockets idiom): [references/matt-zig-style.md](references/matt-zig-style.md).
 
-### Use `@splat` for initialization
+## Before writing Zig code
 
-Use `@splat` to initialize arrays and vectors with a uniform value. Do NOT manually repeat values or use `**` multiplication:
-
-```zig
-// WRONG — verbose and error-prone:
-const mask = [_]u8{ 0, 0, 0, 0 };
-const zeroes = [_]u8{0} ** 16;
-
-// RIGHT — use @splat:
-const mask: [4]u8 = @splat(0);
-const zeroes: [16]u8 = @splat(0);
-
-// Also works for vectors:
-const vec: @Vector(4, f32) = @splat(1.0);
-```
-
-### Use type aliases liberally
-
-Type aliases improve readability and self-document intent. Always prefer a named alias over a bare type when the type appears more than once or when the name adds semantic meaning:
-
-```zig
-// Import aliases — always extract frequently used imports:
-const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
-const log = std.log.scoped(.my_module);
-
-// Array/Vector type aliases — name what the type represents:
-const Mask = [4]u8;
-const MaskVec = @Vector(4, u8);
-const Color = [4]f32;
-
-// Instead of bare types scattered through signatures:
-fn applyMask(data: []u8, mask: Mask) void { ... }
-// NOT: fn applyMask(data: []u8, mask: [4]u8) void { ... }
-```
-
-A good type alias tells you *what it is*, not just *what it's made of*. `Mask` is more informative than `[4]u8`. When you see a raw array or vector type repeated in function signatures, fields, or local variables, extract an alias.
-
-## Before Writing Zig Code
-
-1. Run `zigdoc` to verify any std library API you're unsure about
-2. Read existing code in the project first — match established patterns
-3. Check project's style guide if one exists
-4. After writing, verify with `zig build test` — don't guess
-
-## Timestamp surprises
-
-`std.time.nanoTimestamp()` returns **`i128`**, not `i64`. Direct
-`@intCast` to `i64`/`u64` fails with "must have a known result type." Use:
-```zig
-const ns: i64 = @intCast(@as(i64, @truncate(std.time.nanoTimestamp())));
-```
-`std.time.milliTimestamp()` returns `i64` (safe to `@intCast` directly). For
-monotonic time, prefer `std.time.Instant` (from a `Timer`) over wall-clock
-timestamps when NTP skew matters.
-
-## Broken/incomplete std APIs in 0.15.2
-
-`std.compress.flate.Compress.Simple` is broken in Zig 0.15.2 — `BlockWriter`
-is missing the `bit_writer` field and `Container.writeFooter` is incomplete.
-If you need DEFLATE **compression**, hand-roll stored blocks (BTYPE=00, no
-Huffman/LZ77) — valid DEFLATE that any decompressor can read, ~1:1 ratio.
-`std.compress.flate.Decompress` (the decompressor) works fine.
-
-`std.meta.intToEnum` is deprecated — use `std.enums.fromInt` instead.
-`std.enums.fromInt(Enum, int_value)` returns `?Enum` (null on invalid),
-NOT an error union — use `orelse .default` or `orelse return error.Malformed`,
-not `catch`. This is the safe alternative to `@enumFromInt` which panics on
-invalid bit patterns.
-
-`std.mem.copyForwards` / `std.mem.copyBackwards` are deprecated — use the
-`@memmove(dest, source)` builtin instead (overlapping slices allowed;
-ziglint Z011 flags the std.mem forms).
-
-## Full Reference
-
-See [references/zig-0.15-migration.md](references/zig-0.15-migration.md) for complete migration details with all code examples, the new Writer/Reader VTable layout, signal handling patterns, format string changes, and allocator API updates.
+1. `zigdoc <symbol>` for any std API you are not certain of — 0.16 renamed too much to guess.
+2. If a capability seems missing, grep `.std_dir` for where it moved before hand-rolling it.
+3. Read existing code in the project first; match established patterns.
+4. After writing, run `zig build test`, `zig build`, and every non-default build-flag combination the project documents.

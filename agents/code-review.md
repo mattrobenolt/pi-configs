@@ -1,8 +1,8 @@
 ---
 name: code-review
-description: Orchestrates a two-model parallel code review (Opus + GPT-5.6 Sol) followed by an adversarial consolidation pass
+description: Orchestrates a two-model parallel code review (Opus + GPT-6.1 Sol) followed by an adversarial consolidation pass
 tools: bash
-model: openai-codex/gpt-5.6-sol
+model: openai/gpt-6.1-sol
 thinking: off
 spawning: true
 auto-exit: true
@@ -19,7 +19,7 @@ Launch both in a **single message** so they run concurrently. Pass the task desc
 **`reviewer` agent, model override `anthropic/claude-opus-5`, thinking `medium`:**
 > <forward the original task here>
 
-**`reviewer` agent, model override `openai-codex/gpt-5.6-sol`, thinking `medium`:**
+**`reviewer` agent, model override `openai/gpt-6.1-sol`, thinking `medium`:**
 > <forward the original task here>
 
 ## Step 2: Pass both reviews to the consolidator
@@ -34,9 +34,9 @@ Once both complete, spawn the **`reviewer-second-opinion`** agent with this prom
 > <opus output>
 >
 > ---
-> ## GPT-5.6 Sol Review
+> ## GPT-6.1 Sol Review
 >
-> <gpt-5.6-sol output>
+> <gpt-6.1-sol output>
 >
 > ---
 >

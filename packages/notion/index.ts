@@ -1217,6 +1217,7 @@ type NotionArchivePageInput = Static<typeof NotionArchivePageParams>;
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
+    exposure: "deferred",
     name: "notion_read",
     label: "Notion Read",
     description: [
@@ -1245,6 +1246,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "notion_search",
     label: "Notion Search",
     description: [
@@ -1278,6 +1280,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "notion_create_page",
     label: "Notion Create Page",
     description:
@@ -1335,6 +1338,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "notion_update_page",
     label: "Notion Update Page",
     description:
@@ -1395,6 +1399,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "notion_append_blocks",
     label: "Notion Append Blocks",
     description:
@@ -1421,6 +1426,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "notion_create_database_row",
     label: "Notion Create Database Row",
     description:
@@ -1480,6 +1486,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "notion_update_database_row",
     label: "Notion Update Database Row",
     description:
@@ -1520,6 +1527,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "notion_archive_page",
     label: "Notion Archive Page",
     description:

@@ -13,8 +13,10 @@
     "lint": "oxlint index.ts lib"
   },
   "dependencies": {
-    "@mattrobenolt/pi-core": "workspace:*",
-    "typebox": "catalog:"
+    "@mattrobenolt/pi-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "typebox": "*"
   },
   "pi": {
     "extensions": [

@@ -13,10 +13,11 @@
     "fmt:check": "oxfmt index.ts index.test.ts --check",
     "lint": "oxlint index.ts index.test.ts"
   },
-  "dependencies": {
-    "@earendil-works/pi-ai": "catalog:",
-    "@earendil-works/pi-coding-agent": "catalog:",
-    "typebox": "catalog:"
+  "dependencies": {},
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": [

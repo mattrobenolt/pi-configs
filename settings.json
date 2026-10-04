@@ -9,34 +9,37 @@
     "./packages/todos",
     "./packages/planetscale-knowledge",
     "git:github.com/ocodista/pi-token-bloat",
-    "git:github.com/nicobailon/pi-mcp-adapter",
     "git:github.com/HazAT/pi-ghostty",
     "git:github.com/championswimmer/pi-cache-graph",
     "git:github.com/nicobailon/pi-subagents"
   ],
-  "lastChangelogVersion": "0.85.1",
+  "lastChangelogVersion": "1.0.2",
   "defaultProvider": "fireworks",
   "defaultModel": "accounts/fireworks/models/glm-5p3",
   "defaultThinkingLevel": "xhigh",
   "theme": "dracula",
-  "transport": "sse",
+  "transport": "auto",
   "compaction": {
     "enabled": true
   },
+  "defaultTools": [
+    "+tool_search",
+    "+codemode"
+  ],
   "enabledModels": [
     "anthropic/claude-fable-5-1",
-    "anthropic/claude-opus-5",
-    "fireworks/accounts/fireworks/models/deepseek-v4-pro-0813",
+    "anthropic/claude-opus-5-5",
+    "anthropic/claude-sonnet-5-5",
     "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
+    "fireworks/accounts/fireworks/models/ember-1",
     "fireworks/accounts/fireworks/models/glm-5p3",
-    "fireworks/accounts/fireworks/models/glm-5p3-flash",
     "fireworks/accounts/fireworks/models/kimi-k3",
     "fireworks/accounts/fireworks/models/minimax-m3",
     "fireworks/accounts/fireworks/models/qwen3p8-max",
     "google/gemini-3.8-flash",
-    "openai-codex/gpt-5.6-luna",
-    "openai-codex/gpt-5.6-sol",
-    "openai-codex/gpt-6-astra"
+    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-6-luna",
+    "openai-codex/gpt-6.1-sol"
   ],
   "steeringMode": "all",
   "quietStartup": true,
@@ -49,7 +52,8 @@
   "doubleEscapeAction": "tree",
   "followUpMode": "all",
   "terminal": {
-    "showTerminalProgress": true
+    "showTerminalProgress": true,
+    "imageWidthCells": 80
   },
   "webfetch": {
     "objectiveModel": "fireworks/accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b"
@@ -66,5 +70,58 @@
   ],
   "showCacheMissNotices": true,
   "hideThinkingBlock": false,
-  "tuiMode": "fullscreen"
+  "tuiMode": "fullscreen",
+  "cacheWarming": "streaming",
+  "defaultProjectTrust": "always",
+  "warnings": {
+    "anthropicExtraUsage": false
+  },
+  "fullscreenExitOutput": "transcript",
+  "subagents": {
+    "agentOverrides": {
+      "claude-code": {
+        "disabled": true
+      },
+      "claude-code-writer": {
+        "disabled": true
+      },
+      "codex-exec": {
+        "disabled": true
+      },
+      "codex-exec-writer": {
+        "disabled": true
+      },
+      "cursor-agent": {
+        "disabled": true
+      },
+      "cursor-agent-writer": {
+        "disabled": true
+      },
+      "scout": {
+        "model": "fireworks/accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
+        "thinking": "low"
+      },
+      "researcher": {
+        "model": "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
+        "thinking": "medium"
+      },
+      "evidence-auditor": {
+        "model": "anthropic/claude-opus-5-5",
+        "thinking": "high"
+      },
+      "worker": {
+        "model": "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
+        "thinking": "max"
+      },
+      "reviewer": {
+        "model": "anthropic/claude-opus-5-5",
+        "thinking": "high"
+      },
+      "oracle": {
+        "model": "anthropic/claude-opus-5-5",
+        "thinking": "high"
+      }
+    }
+  },
+  "deviceId": "21b7f501-9a10-4f48-ab79-2de8c5f175f0"
 }

@@ -39,6 +39,21 @@ Preserve existing style:
 - Keep extensions self-contained unless there is a real reuse win.
 - Don’t add dependencies casually. The bar should be “this removes real complexity,” not “I felt like npm today.”
 
+## Scratch space and `/tmp`
+
+If `PI_EPHEMERAL_TMP` is set, pi runs inside a private mount namespace.
+`/tmp` is a disposable bind mount: it starts empty, no other process can
+see it, and it is deleted when pi exits. All pi children share it, including
+terminals and subagents. Use `/tmp` freely for scratch work, and do not
+clean it up. Never treat a `/tmp` path as durable; put artifacts the user
+must keep in the project or session directory. If a `/tmp` path the user
+references is missing, it exists on the system `/tmp` outside this
+namespace. Report that instead of claiming the file was deleted.
+
+If `PI_EPHEMERAL_TMP` is unset, `/tmp` is the real, shared system `/tmp`.
+Create scratch with `mktemp -d` and delete it before the task ends. Never
+leave clones, worktrees, or build trees in `/tmp`.
+
 ## Extensions
 
 Extensions usually export a default function taking `ExtensionAPI` and register tools or hooks from there.

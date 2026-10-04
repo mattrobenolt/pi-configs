@@ -493,6 +493,29 @@ export async function loadPullChecks(
   };
 }
 
+// Resolves any ref (branch, tag, or SHA) to its commit, then loads that commit's checks.
+// Each call re-resolves the ref, so a branch that moves mid-wait surfaces as head_changed.
+export async function loadRefChecks(
+  client: GitHubClient,
+  repo: string,
+  ref: string,
+  signal?: AbortSignal,
+): Promise<{ head_sha: string; snapshot: CheckSnapshot }> {
+  const { path } = splitRepo(repo);
+  const commit = await client.request<GitHubJson>(
+    "GET",
+    `${path}/commits/${encodeURIComponent(ref)}`,
+    { signal },
+  );
+  const headSha = requireString(commit.sha, `commit SHA for ref ${ref}`);
+  const snapshot = await loadCommitChecks(client, repo, headSha, signal);
+
+  return {
+    head_sha: headSha,
+    snapshot,
+  };
+}
+
 export function delay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("Cancelled"));
   return new Promise((resolve, reject) => {
@@ -509,7 +532,7 @@ export function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export async function waitForPullChecks(options: {
+export async function waitForChecks(options: {
   load: () => Promise<{ head_sha: string; snapshot: CheckSnapshot }>;
   expectedHeadSha?: string;
   timeoutMs: number;

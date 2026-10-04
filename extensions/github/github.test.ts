@@ -6,12 +6,13 @@ import {
   GitHubApiError,
   GitHubClient,
   loadPullChecks,
+  loadRefChecks,
   normalizeInlineComment,
   parseGitHubRemote,
   parseNumericRef,
   splitRepo,
   summarizeChecks,
-  waitForPullChecks,
+  waitForChecks,
   type CheckSnapshot,
 } from "./core.ts";
 import { DEFAULT_CI_WATCH_CONFIG, type CiWatchConfig } from "./config.ts";
@@ -932,7 +933,7 @@ test("CI run view paginates workflow jobs", async () => {
   assert.equal(resultDetails.jobs[100].name, "late-job");
 });
 
-test("waitForPullChecks waits through discovery and returns terminal status", async () => {
+test("waitForChecks waits through discovery and returns terminal status", async () => {
   let now = 0;
   let calls = 0;
   const empty: CheckSnapshot = summarizeChecks([], []);
@@ -943,7 +944,7 @@ test("waitForPullChecks waits through discovery and returns terminal status", as
   );
   const snapshots = [empty, pending, passed];
 
-  const result = await waitForPullChecks({
+  const result = await waitForChecks({
     load: async () => ({ head_sha: "abc", snapshot: snapshots[Math.min(calls++, 2)] }),
     expectedHeadSha: "abc",
     timeoutMs: 60_000,
@@ -959,8 +960,8 @@ test("waitForPullChecks waits through discovery and returns terminal status", as
   assert.equal(calls, 3);
 });
 
-test("waitForPullChecks stops when the PR head changes", async () => {
-  const result = await waitForPullChecks({
+test("waitForChecks stops when the PR head changes", async () => {
+  const result = await waitForChecks({
     load: async () => ({ head_sha: "new", snapshot: summarizeChecks([], []) }),
     expectedHeadSha: "old",
     timeoutMs: 60_000,
@@ -968,6 +969,119 @@ test("waitForPullChecks stops when the PR head changes", async () => {
   assert.equal(result.status, "head_changed");
   assert.equal(result.head_sha, "new");
   assert.equal(result.expected_head_sha, "old");
+});
+
+test("loadRefChecks resolves a branch ref to its commit SHA and loads checks", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/commits/trunk")) {
+        return jsonResponse({ sha: "abc123" });
+      }
+      if (url.pathname.endsWith("/commits/abc123/check-runs")) {
+        return jsonResponse({
+          total_count: 1,
+          check_runs: [{ name: "unit", status: "completed", conclusion: "success" }],
+        });
+      }
+      if (url.pathname.endsWith("/commits/abc123/status")) {
+        return jsonResponse({ total_count: 0, statuses: [] });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+
+  const result = await loadRefChecks(client, "o/r", "trunk");
+  assert.equal(result.head_sha, "abc123");
+  assert.equal(result.snapshot.status, "passed");
+});
+
+test("CI status accepts a git ref instead of a PR number", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/commits/trunk")) {
+        return jsonResponse({ sha: "abc123" });
+      }
+      if (url.pathname.endsWith("/commits/abc123/check-runs")) {
+        return jsonResponse({
+          total_count: 1,
+          check_runs: [{ name: "unit", status: "completed", conclusion: "success" }],
+        });
+      }
+      if (url.pathname.endsWith("/commits/abc123/status")) {
+        return jsonResponse({ total_count: 0, statuses: [] });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+
+  const result = await executeCI({} as any, client, {
+    action: "status",
+    repo: "o/r",
+    ref: "trunk",
+  });
+  const resultDetails = result.details as any;
+  assert.equal(resultDetails.status, "passed");
+  assert.equal(resultDetails.head_sha, "abc123");
+  assert.match((result.content[0] as any).text, /head: abc123/);
+});
+
+test("CI status rejects ambiguous or missing targets", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () => {
+      throw new Error("should not call GitHub");
+    },
+  });
+
+  await assert.rejects(
+    executeCI({} as any, client, { action: "status", repo: "o/r", pr_number: 1, ref: "main" }),
+    /not both/,
+  );
+  await assert.rejects(
+    executeCI({} as any, client, { action: "status", repo: "o/r" }),
+    /requires pr_number or ref/,
+  );
+});
+
+test("waitForChecks re-resolves refs each poll and stops when the branch moves", async () => {
+  let now = 0;
+  let resolutions = 0;
+  const shas = ["abc", "def"];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/commits/main")) {
+        return jsonResponse({ sha: shas[Math.min(resolutions++, 1)] });
+      }
+      if (url.pathname.endsWith("/check-runs")) {
+        return jsonResponse({ total_count: 0, check_runs: [] });
+      }
+      if (url.pathname.endsWith("/status")) {
+        return jsonResponse({ total_count: 0, statuses: [] });
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+
+  const result = await waitForChecks({
+    load: () => loadRefChecks(client, "o/r", "main"),
+    expectedHeadSha: "abc",
+    timeoutMs: 60_000,
+    pollIntervalMs: 10_000,
+    now: () => now,
+    sleep: async (ms) => {
+      now += ms;
+    },
+  });
+
+  assert.equal(result.status, "head_changed");
+  assert.equal(result.head_sha, "def");
+  assert.equal(resolutions, 2);
 });
 
 test("extension registers four user-facing GitHub tools", () => {

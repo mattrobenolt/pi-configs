@@ -18,4 +18,4 @@ __pycache__/
 skills/wwmd/replay/
 mcp-cache.json
 mcp-onboarding.json
-model-store.json
+models-store.json

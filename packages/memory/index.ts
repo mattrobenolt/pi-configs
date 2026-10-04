@@ -1593,6 +1593,7 @@ export default function (pi: ExtensionAPI) {
 
   // --- scratchpad tool ---
   pi.registerTool({
+    exposure: "deferred",
     name: "scratchpad",
     label: "Scratchpad",
     description: [
@@ -1939,6 +1940,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    exposure: "deferred",
     name: "memory_last_context",
     label: "Memory Last Context",
     description: "Show the last memory block injected into this session.",
