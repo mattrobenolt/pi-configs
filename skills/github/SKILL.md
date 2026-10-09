@@ -23,6 +23,7 @@ The reference files are long (170–420 lines). Read each one to the end before 
 - **Resolve a conversation:** after addressing inline feedback, resolve (or reopen) the review thread with `github_review resolve_thread`/`unresolve_thread`, identified by any inline comment in the thread or by the thread node ID from `list_threads`; use `list_threads` to see which threads are still open.
 - **Manage the PR conversation:** create, update, or delete top-level PR comments with `github_pr`; prefer editing corrections over posting follow-up noise.
 - **Open or update a PR:** inspect the actual change, follow the repository template and [PR body guidance](references/pr-body.md), then use `github_pr create` or `update` so titles and Markdown bodies are transported exactly.
+  - In the validation section, report only checks beyond routine CI. If none ran, write exactly `No validation beyond the repository's required CI.`
 - **Triage issues:** inspect/list, create/update, close/reopen, and manage issue comments with `github_issue`.
 - **Wait for CI:** use `github_ci status` with `wait: true`, pinned to the expected head SHA; inspect failed runs and logs without shell polling loops.
 - **Audit writes:** read the full body echoed in every create/update tool result. If it is wrong, edit that same object rather than posting a correction.
@@ -96,7 +97,7 @@ Resolving an already-resolved thread is a no-op; you do not need to pre-check. R
 
 1. Read the local diff, commits, linked issue or decision record, and validation results. Do not generate the PR story from filenames or commit subjects alone.
 2. Find and follow the repository's PR template and contribution guidance. Preserve required sections and checklists.
-3. Read [references/pr-body.md](references/pr-body.md) and [references/writing-style.md](references/writing-style.md) completely before drafting the title or body. Explain why, summarize the behavioral change, and surface material risk without narrating the diff. Run the LLM-specific compression and claim-verification pass from pr-body.md: do not repeat routine test counts, lint/build status, or other CI facts in the body.
+3. Read [references/pr-body.md](references/pr-body.md) and [references/writing-style.md](references/writing-style.md) completely before drafting the title or body. Explain why, summarize the behavioral change, and surface material risk without narrating the diff. Run the LLM-specific compression and claim-verification pass from pr-body.md.
 4. Use GitHub's draft state for intentionally incomplete work instead of putting `[WIP]` in the title.
 5. Create or update through `github_pr`, passing the complete Markdown body. Use `owner/repo#number` references and issue-closing keywords deliberately.
 6. Read the full title and body echoed by the tool. If either is wrong or stale, update that same PR rather than adding a corrective conversation comment.

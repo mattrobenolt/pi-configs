@@ -53,9 +53,8 @@ Answer these questions, using the repository template where one exists:
    supplement the explanation rather than carrying it entirely.
 2. **What changed?** Summarize the chosen approach and the important behavioral
    difference. Do not list every modified file or restate the diff.
-3. **How was it validated?** Describe evidence that helps a reviewer understand
-   coverage: the regression scenario, meaningful manual behavior, benchmark
-   method, or an important gap. Do not transcribe routine CI status.
+3. **What was validated beyond routine CI?** Apply the cases in
+   [Write the Validation section](#write-the-validation-section).
 4. **What should reviewers pay attention to?** Call out a load-bearing design
    decision, intentional tradeoff, migration boundary, or requested review
    focus only when one genuinely exists.
@@ -80,8 +79,8 @@ A useful default shape is:
 
 ## Validation
 
-- [Behavior covered by a regression test.]
-- [Manual scenario or measurement not represented by routine CI.]
+[If nothing beyond CI ran: "No validation beyond the repository's required CI."]
+[Otherwise: each check, what it established, and its exact command.]
 
 ## Risk and rollout
 
@@ -89,49 +88,57 @@ A useful default shape is:
 known limitation.]
 ```
 
+<!-- Keep this shape. Models copy sample output, even banned samples, so this file shows none.
+The exact case 1 sentence leaves no slot for filler.
+One rule at the point of use beats repeated prose bans against the learned prior. -->
+## Write the Validation section
+
+Routine CI status — test counts, lint, type checks, build, and coverage — never
+appears in the PR body. The rule covers `<details>` blocks. GitHub displays that
+status next to the PR. A count restated in the body goes stale on the next push.
+
+Validation beyond CI means a new regression test, a manual check, or a
+benchmark. Apply case 1 or case 2. When a gap exists, add case 3.
+
+1. **Nothing beyond CI.** Write exactly this sentence:
+
+   ```markdown
+   No validation beyond the repository's required CI.
+   ```
+
+   If case 3 does not apply, stop there.
+
+2. **Validation beyond CI exists.** Describe only those checks:
+
+   - the failure that the new regression test reproduces
+   - the behavior that the manual check exercised
+   - the result that the benchmark measured
+
+   State what each check established. Give each command exactly as you ran it.
+   For a bug fix, name the failure scenario and the evidence that now covers
+   it. For a benchmark, give the baseline, the method, and the environment. For
+   a user-visible change, add before and after screenshots, a recording, or
+   reproduction steps. For example:
+
+   ```markdown
+   The regression test reproduces an acknowledged timeout and asserts that a
+   retry commits only one write.
+   ```
+
+3. **A consequential behavior has no coverage.** For each gap, add a line that
+   starts with `Not covered:`. Name the behavior. State why the gap is
+   acceptable, or link the follow-up issue.
+
+If the repository template mandates a section or checklist for tests, follow it
+exactly. Tick each true box. Add no commentary. If the section takes free text,
+apply the cases above.
+
 ## Correct common LLM failure modes
 
 LLMs tend to optimize for a body that *looks complete*: many headings, a bullet
 for every file, and a triumphant testing section. Optimize instead for
 information the reviewer cannot get more reliably from the diff, GitHub UI, or
 CI.
-
-### Do not transcribe CI
-
-CI is the source of truth for pass/fail status. Do not write:
-
-```markdown
-## Testing
-
-- ✅ 100/100 tests passed
-- ✅ Lint passed
-- ✅ Type checking passed
-- ✅ Build succeeded
-```
-
-Test counts, green-check inventories, coverage slogans, and routine build or
-lint results become stale and make the body longer without helping review. Do
-not move this noise into a `<details>` block; omit it.
-
-Describe the validation *shape* only when it adds information. For example:
-
-```markdown
-## Validation
-
-The regression test reproduces an acknowledged timeout and asserts that a
-retry commits only one write.
-```
-
-Mention a command only when it is not represented by ordinary CI, gives the
-reviewer a useful focused reproduction path, or records a meaningful benchmark
-method. If the repository template requires a testing section and there was no
-additional manual validation, say that once without enumerating checks:
-
-```markdown
-## Validation
-
-No validation beyond the repository's required CI.
-```
 
 ### Summarize the result, not the work log
 
@@ -210,20 +217,6 @@ tables, generated-file inventories, or mechanical implementation notes.
 Do not add a ceremonial checklist of every file touched or everything that
 looks correct. Reviewers can read the diff; tell them what the diff cannot.
 
-## Describe validation honestly
-
-Treat validation as reviewer context, not a status dashboard. Explain what
-behavior the tests or manual checks establish and disclose consequential gaps.
-Let CI report whether routine suites, lint, type checks, and builds passed.
-
-If a non-routine command is worth including, report it exactly as run. Do not
-say "all tests pass" when only a focused package was tested. Include benchmark
-numbers only with the baseline, measurement method, and relevant environment.
-
-For user-visible changes, include before/after screenshots, recordings, or
-reproduction steps when they communicate behavior better than prose. For bug
-fixes, explain the failing scenario and the evidence that now covers it.
-
 ## Link work precisely
 
 When merging this PR should close an issue, put a GitHub closing keyword in the
@@ -288,7 +281,7 @@ Before creating or updating the PR, check:
 - Does the title say what outcome the change produces?
 - Does the body explain why the change exists?
 - Does it summarize behavior rather than enumerate files?
-- Does validation explain coverage instead of repeating CI status or test counts?
+- Does validation report only checks beyond CI, or the exact case 1 sentence?
 - Are all factual claims exact and verified against the final diff?
 - Are material risks, limitations, and rollout constraints visible?
 - Are links supplemental rather than load-bearing?

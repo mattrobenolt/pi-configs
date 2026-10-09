@@ -8,9 +8,11 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
-    "fmt": "oxfmt index.ts",
-    "fmt:check": "oxfmt index.ts --check",
-    "lint": "oxlint index.ts"
+    "test": "node --experimental-strip-types --test index.test.ts",
+    "test:integration": "TERM_INTEGRATION=1 node --experimental-strip-types --test integration.test.ts",
+    "fmt": "oxfmt *.ts",
+    "fmt:check": "oxfmt *.ts --check",
+    "lint": "oxlint *.ts"
   },
   "dependencies": {},
   "peerDependencies": {

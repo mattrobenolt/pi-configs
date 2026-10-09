@@ -13,7 +13,7 @@
     "git:github.com/championswimmer/pi-cache-graph",
     "git:github.com/nicobailon/pi-subagents"
   ],
-  "lastChangelogVersion": "1.0.2",
+  "lastChangelogVersion": "1.1.0",
   "defaultProvider": "fireworks",
   "defaultModel": "accounts/fireworks/models/glm-5p3",
   "defaultThinkingLevel": "xhigh",
@@ -30,6 +30,7 @@
     "anthropic/claude-fable-5-1",
     "anthropic/claude-opus-5-5",
     "anthropic/claude-sonnet-5-5",
+    "anthropic/claude-haiku-5-5",
     "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
     "fireworks/accounts/fireworks/models/ember-1",
     "fireworks/accounts/fireworks/models/glm-5p3",

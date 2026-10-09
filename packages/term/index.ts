@@ -1,170 +1,231 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+  truncateHead,
+  truncateTail,
+} from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  checkAbort,
+  commandCompletion,
+  commandOutput,
+  commandStatus,
+  commonPrefix,
+  createdPaneId,
+  DeadlineReached,
+  delay,
+  enqueue,
+  findExecutable,
+  linesOf,
+  outputMatcher,
+  paneId,
+  parsePanes,
+  remainingTime,
+  shellKind,
+  trackedCommand,
+  withinDeadline,
+  type OutputMatch,
+  type PaneInfo,
+} from "./core.ts";
+
+const Actions = [
+  "list",
+  "ensure",
+  "run",
+  "resize",
+  "send",
+  "keys",
+  "read",
+  "wait",
+  "interrupt",
+  "kill",
+] as const;
+const WaitConditions = ["command", "exit", "output", "silence"] as const;
+const Outcomes = [
+  "listed",
+  "created",
+  "existing",
+  "resized",
+  "sent",
+  "interrupted",
+  "read",
+  "matched",
+  "exited",
+  "exited_without_match",
+  "silent",
+  "timed_out",
+  "missing",
+  "killed",
+] as const;
 
 const TermParams = Type.Object({
-  action: StringEnum(
-    ["list", "ensure", "resize", "send", "keys", "read", "wait", "interrupt", "kill"] as const,
-    { description: "Action." },
-  ),
+  action: StringEnum(Actions, {
+    description: "Action. Use run for shell commands and send for raw program input.",
+  }),
   name: Type.Optional(
     Type.String({
+      minLength: 1,
+      maxLength: 128,
       description: "Terminal name. Required except for list.",
     }),
   ),
-  cwd: Type.Optional(
-    Type.String({
-      description: "Working directory for ensure.",
-    }),
-  ),
+  cwd: Type.Optional(Type.String({ description: "Working directory for a new terminal." })),
   command: Type.Optional(
     Type.Array(Type.String(), {
-      description: "argv to run on ensure. Omit for an interactive shell.",
+      minItems: 1,
+      description: "For ensure: startup argv. Omit for an interactive shell.",
     }),
   ),
   shell: Type.Optional(
     Type.String({
-      description: "Shell for interactive terminals. Default: $SHELL, then zsh, then bash.",
+      description: "Interactive shell path or name. Default: $SHELL, then zsh or bash.",
     }),
   ),
   shellProfile: Type.Optional(
     StringEnum(["default", "clean"] as const, {
-      description: "Shell startup profile: default or clean.",
+      description: "Shell profile. Default: clean. default loads the normal shell configuration.",
     }),
   ),
   closeOnExit: Type.Optional(
     Type.Boolean({
-      description: "Close the pane when the startup command exits.",
+      description:
+        "For ensure: remove the pane on exit. This discards output and exit status. Default: false.",
     }),
   ),
   width: Type.Optional(
-    Type.String({
-      description: "Width, for example '120' or '90%'.",
-    }),
+    Type.String({ description: "Pane width, such as '120' or '90%'. Default: '100%'." }),
   ),
   height: Type.Optional(
-    Type.String({
-      description: "Height, for example '30' or '100%'.",
-    }),
+    Type.String({ description: "Pane height, such as '30' or '100%'. Default: '100%'." }),
   ),
-  x: Type.Optional(
-    Type.String({
-      description: "Horizontal position.",
-    }),
-  ),
-  y: Type.Optional(
-    Type.String({
-      description: "Vertical position.",
-    }),
-  ),
+  x: Type.Optional(Type.String({ description: "Horizontal pane position. Default: '0'." })),
+  y: Type.Optional(Type.String({ description: "Vertical pane position. Default: '0'." })),
   text: Type.Optional(
-    Type.String({
-      description: "Text for action send.",
-    }),
+    Type.String({ description: "For run: shell command. For send: raw input text." }),
   ),
   enter: Type.Optional(
-    Type.Boolean({
-      description: "For send: append Enter.",
-    }),
+    Type.Boolean({ description: "For send: append Enter. run always submits the command." }),
   ),
   keys: Type.Optional(
     Type.Array(Type.String(), {
-      description: "Keys for action keys, for example ['Ctrl c'].",
+      minItems: 1,
+      description: "For keys: key names, such as ['Ctrl c'].",
     }),
   ),
   inputMode: Type.Optional(
     StringEnum(["paste", "write_chars"] as const, {
-      description: "For send: paste or write_chars.",
+      description: "For send: paste or write_chars. Default: write_chars.",
     }),
   ),
   mode: Type.Optional(
     StringEnum(["screen", "scrollback", "delta"] as const, {
-      description: "For read: screen, scrollback, or delta.",
+      description:
+        "Read mode. Default: scrollback. Delta returns changed lines and accepts limit only.",
     }),
   ),
   offset: Type.Optional(
-    Type.Integer({
-      minimum: 1,
-      description: "For read: 1-indexed start line.",
-    }),
+    Type.Integer({ minimum: 1, description: "For read: first line, indexed from 1." }),
   ),
   limit: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: "For read: max lines.",
+      description:
+        "Maximum returned lines. Read default: 120. Delta reads consume only these lines.",
     }),
   ),
   tail: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: "For read: return the last N lines.",
+      description: "Return the last N lines. Not valid for delta reads.",
     }),
   ),
   ansi: Type.Optional(
     Type.Boolean({
-      description: "For read: preserve ANSI escapes.",
+      description: "For read: preserve ANSI escapes. Wait patterns always use plain text.",
     }),
   ),
   waitFor: Type.Optional(
-    StringEnum(["exit", "output", "silence"] as const, {
+    StringEnum(WaitConditions, {
       description:
-        "For wait: exit (process ended; best for commands), output (literal pattern appears), or silence (quiet for idleMs). output/silence also return early if the process exits first.",
+        "Wait condition. Default: output with pattern, command after run, otherwise exit. Silence does not prove command completion.",
     }),
   ),
   pattern: Type.Optional(
     Type.String({
+      minLength: 1,
+      maxLength: 2048,
       description:
-        "For wait/output: pattern matched against the full scrollback. Interpreted as a JavaScript RegExp (multiline); if it fails to compile, matching falls back to a literal substring.",
+        "Literal output text. This selects an output wait. Use matchMode: regex for regular expressions.",
+    }),
+  ),
+  matchMode: Type.Optional(
+    StringEnum(["literal", "regex"] as const, {
+      description:
+        "Output match mode. Default: literal. Regex uses JavaScript multiline syntax without slash delimiters.",
     }),
   ),
   timeoutMs: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: "For wait: timeout in milliseconds.",
+      description:
+        "For run/wait: wait timeout in milliseconds. Default: 30000. Timeout does not stop the process.",
     }),
   ),
   idleMs: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: "For wait/silence: quiet period in milliseconds.",
+      description: "For silence waits: required quiet period. Default: 2000 milliseconds.",
     }),
   ),
   pollMs: Type.Optional(
     Type.Integer({
       minimum: 50,
-      description: "For wait: poll interval in milliseconds.",
+      description: "For run/wait: poll interval. Default: 500 milliseconds.",
     }),
   ),
   restart: Type.Optional(
-    Type.Boolean({
-      description: "For ensure: recreate an existing terminal with the same name.",
-    }),
+    Type.Boolean({ description: "For ensure: replace an existing terminal. Default: false." }),
   ),
 });
 
-type TermParamsType = Static<typeof TermParams>;
+type Params = Static<typeof TermParams>;
+type Outcome = (typeof Outcomes)[number];
+type WaitCondition = (typeof WaitConditions)[number];
 
-type ExecResult = {
-  stdout: string;
-  stderr: string;
-  code: number;
-  killed: boolean;
-};
+const TermOutput = Type.Object(
+  {
+    action: StringEnum(Actions),
+    outcome: StringEnum(Outcomes),
+    workspace: Type.String(),
+    name: Type.Optional(Type.String()),
+    paneId: Type.Optional(Type.String()),
+    output: Type.String(),
+    message: Type.String(),
+    waitFor: Type.Optional(StringEnum(WaitConditions)),
+    conditionMet: Type.Optional(Type.Boolean()),
+    exitStatus: Type.Optional(Type.Union([Type.Integer(), Type.Null()])),
+    runId: Type.Optional(Type.String()),
+    matchedText: Type.Optional(Type.String()),
+    matchedLine: Type.Optional(Type.String()),
+    matchLine: Type.Optional(Type.Integer()),
+    fullOutputPath: Type.Optional(Type.String()),
+    truncated: Type.Boolean(),
+  },
+  { additionalProperties: true },
+);
 
-type PaneInfo = Record<string, unknown>;
-
-type ShellLaunch = {
-  argv: string[];
-  profile: "default" | "clean";
-  shellPath?: string;
-  shellKind?: "zsh" | "bash" | "other";
-  initPath?: string;
-  envLoader?: "direnv";
+type CommandRun = {
+  id: string;
+  marker: string;
+  statusPath: string;
+  exitStatus?: number;
+  output?: string;
 };
 
 type TerminalState = {
@@ -172,1285 +233,994 @@ type TerminalState = {
   paneId: string;
   cwd: string;
   command?: string[];
+  shellKind?: "bash" | "zsh" | "other";
   closeOnExit: boolean;
   createdAt: number;
-  lastDeltaLine: number;
+  deltaSnapshot: string[];
+  lastRun?: CommandRun;
   width: string;
   height: string;
   x: string;
   y: string;
 };
 
-const TERMINAL_OR_PLUGIN_ID = /^(terminal|plugin)_\d+$/;
-const DEFAULT_WORKSPACE_COLS = 160;
-const DEFAULT_WORKSPACE_ROWS = 60;
-const workspaceStates = new Map<string, WorkspaceState>();
-
-class WorkspaceState {
-  readonly workspaceName: string;
-  readonly terminals = new Map<string, TerminalState>();
-  readonly initPaths = new Set<string>();
-  initialized = false;
-
-  constructor(workspaceName: string) {
-    this.workspaceName = workspaceName;
-  }
-}
-
-function shortId(): string {
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-}
-
-type ZellijSessionListEntry = {
+type PendingCreation = { terminal: TerminalState; before: Set<string> };
+type Queue = { tail: Promise<void> };
+type Workspace = {
   name: string;
-  exited: boolean;
+  terminals: Map<string, TerminalState>;
+  pending: Map<string, PendingCreation>;
+  temporaryPaths: Set<string>;
+  commands: Queue;
+  mutations: Queue;
+  initialization?: Promise<void>;
+  ioDirectory?: Promise<string>;
 };
 
-function previewOutput(stdout: string, stderr: string): string {
-  return [stdout.trim(), stderr.trim()].filter(Boolean).join("\n\n");
+function shortId(): string {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function parseZellijSessionList(stdout: string): ZellijSessionListEntry[] {
-  return stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const name = line.split(" ")[0] ?? line;
-      return {
-        name,
-        exited: line.includes("(EXITED"),
-      };
-    });
-}
-
-function requireName(params: TermParamsType): string {
-  if (!params.name?.trim()) {
-    throw new Error(`Action ${params.action} requires name.`);
-  }
+function requireName(params: Params): string {
+  if (!params.name?.trim()) throw new Error(`Action ${params.action} requires name.`);
   return params.name.trim();
 }
 
-function requireText(params: TermParamsType): string {
-  if (typeof params.text !== "string") {
-    throw new Error(`Action ${params.action} requires text.`);
-  }
+function requireText(params: Params): string {
+  if (typeof params.text !== "string") throw new Error(`Action ${params.action} requires text.`);
   return params.text;
 }
 
-function requireKeys(params: TermParamsType): string[] {
-  if (!params.keys?.length) {
-    throw new Error(`Action ${params.action} requires at least one key.`);
-  }
-  return params.keys;
-}
-
-function parseCreatedPaneId(stdout: string, stderr: string): string | undefined {
-  for (const chunk of [stdout, stderr]) {
-    for (const line of chunk.split(/\r?\n/).map((entry) => entry.trim())) {
-      if (TERMINAL_OR_PLUGIN_ID.test(line)) return line;
+function geometry(params: Params, existing?: TerminalState) {
+  const size = {
+    width: params.width?.trim() || existing?.width || "100%",
+    height: params.height?.trim() || existing?.height || "100%",
+    x: params.x?.trim() || existing?.x || "0",
+    y: params.y?.trim() || existing?.y || "0",
+  };
+  for (const [name, value] of Object.entries(size)) {
+    const percent = value.endsWith("%");
+    const number = Number(percent ? value.slice(0, -1) : value);
+    const minimum = name === "x" || name === "y" ? 0 : 1;
+    if (!/^\d+%?$/.test(value) || number < minimum || number > (percent ? 100 : 65535)) {
+      throw new Error(
+        `The ${name} value ${value} is invalid. Use a pane size from 1 to 65535, or a percentage from 1% to 100%. Positions can be zero.`,
+      );
     }
   }
-  return undefined;
+  return size;
 }
 
-function paneIdFromPaneInfo(pane: PaneInfo): string {
-  const kind = pane.is_plugin ? "plugin" : "terminal";
-  return `${kind}_${String(pane.id)}`;
+function preview(stdout: string, stderr: string): string {
+  return [stdout.trim(), stderr.trim()].filter(Boolean).join("\n\n") || "<no output>";
 }
 
-function findNewPaneId(before: PaneInfo[], after: PaneInfo[], name?: string): string | undefined {
-  const existing = new Set(before.map((pane) => paneIdFromPaneInfo(pane)));
-  const created = after.filter((pane) => !existing.has(paneIdFromPaneInfo(pane)));
-
-  if (name) {
-    const named = created.find((pane) => pane.title === name);
-    if (named) return paneIdFromPaneInfo(named);
-  }
-
-  if (created.length === 1) {
-    return paneIdFromPaneInfo(created[0]);
-  }
-
-  if (name) {
-    const matching = after.find((pane) => pane.title === name);
-    if (matching) return paneIdFromPaneInfo(matching);
-  }
-
-  return undefined;
+function cleanOutput(output: string): string {
+  const lines = linesOf(output);
+  let start = 0;
+  while (lines[start]?.startsWith("direnv: ")) start++;
+  while (lines[start] === "") start++;
+  return lines.slice(start).join("\n");
 }
 
-function parseCreatedPaneIdOrThrow(
-  stdout: string,
-  stderr: string,
-  context: string,
-  before: PaneInfo[] = [],
-  after: PaneInfo[] = [],
-  name?: string,
-): string {
-  const direct = parseCreatedPaneId(stdout, stderr);
-  if (direct) return direct;
-
-  const inferred = findNewPaneId(before, after, name);
-  if (inferred) return inferred;
-
-  throw new Error(
-    `${context} returned an unexpected pane id.\n\n${previewOutput(stdout, stderr) || "<no output>"}`,
-  );
-}
-
-function shellKindFromPath(shellPath: string): "zsh" | "bash" | "other" {
-  const base = path.basename(shellPath).toLowerCase();
-  if (base.includes("zsh")) return "zsh";
-  if (base.includes("bash")) return "bash";
-  return "other";
-}
-
-async function findKnownShell(candidates: string[]): Promise<string | undefined> {
-  for (const candidate of candidates) {
-    for (const base of ["/run/current-system/sw/bin", "/usr/bin", "/bin"]) {
-      const fullPath = path.join(base, candidate);
-      try {
-        const resolved = await fs.realpath(fullPath);
-        return resolved;
-      } catch {
-        // ignore
-      }
-    }
-  }
-  return undefined;
-}
-
-async function resolveShellPath(
-  shell?: string,
-  profile: "default" | "clean" = "default",
-): Promise<string> {
-  if (shell?.trim()) return shell.trim();
-
-  if (profile === "clean") {
-    const cleanPreferred = await findKnownShell(["zsh", "bash"]);
-    if (cleanPreferred) return cleanPreferred;
-  }
-
-  if (process.env.SHELL?.trim()) return process.env.SHELL.trim();
-
-  const fallback = await findKnownShell(["zsh", "bash"]);
-  if (fallback) return fallback;
-
-  return "sh";
-}
-
-async function commandExists(command: string): Promise<boolean> {
-  try {
-    const resolved = await findKnownShell([command]);
-    if (resolved) return true;
-  } catch {
-    // ignore
-  }
-  return false;
-}
-
-async function maybeWrapWithDirenv(
-  argv: string[],
-  cwd?: string,
-): Promise<{ argv: string[]; envLoader?: "direnv" }> {
-  if (!cwd) return { argv };
-  if (!(await commandExists("direnv"))) return { argv };
+function terminalInfo(terminal: TerminalState, pane?: PaneInfo) {
   return {
-    argv: ["direnv", "exec", cwd, ...argv],
-    envLoader: "direnv",
+    name: terminal.name,
+    paneId: terminal.paneId,
+    cwd: terminal.cwd,
+    command: terminal.command ?? null,
+    createdAt: terminal.createdAt,
+    width: terminal.width,
+    height: terminal.height,
+    x: terminal.x,
+    y: terminal.y,
+    closeOnExit: terminal.closeOnExit,
+    status: pane ? (pane.exited ? "exited" : "running") : "missing",
+    exitStatus: pane?.exit_status ?? null,
+    lastRunId: terminal.lastRun?.id ?? null,
   };
 }
 
-async function buildShellLaunch(
-  params: Pick<TermParamsType, "cwd" | "command" | "shell" | "shellProfile">,
-  workspace: WorkspaceState,
-): Promise<ShellLaunch | undefined> {
-  const shellProfile = params.shellProfile ?? "clean";
-
-  if (params.command?.length) {
-    const wrapped = await maybeWrapWithDirenv(params.command, params.cwd);
-    return {
-      argv: wrapped.argv,
-      profile: shellProfile,
-      envLoader: wrapped.envLoader,
-    };
-  }
-
-  const shellPath = await resolveShellPath(params.shell, shellProfile);
-  const shellKind = shellKindFromPath(shellPath);
-
-  if (shellKind === "zsh") {
-    const initDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-term-zsh-"));
-    const initPath = path.join(initDir, ".zshrc");
-    workspace.initPaths.add(initDir);
-    await fs.writeFile(
-      initPath,
-      ["unsetopt beep", "PROMPT='term:%1~ %# '", "RPROMPT=''"].join("\n") + "\n",
-      "utf8",
-    );
-    const wrapped = await maybeWrapWithDirenv(
-      ["env", `ZDOTDIR=${initDir}`, shellPath, "-i"],
-      params.cwd,
-    );
-    return {
-      argv: wrapped.argv,
-      profile: shellProfile,
-      shellPath,
-      shellKind,
-      initPath,
-      envLoader: wrapped.envLoader,
-    };
-  }
-
-  if (shellKind === "bash") {
-    const initDir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-term-bash-"));
-    const initPath = path.join(initDir, "bashrc");
-    workspace.initPaths.add(initDir);
-    await fs.writeFile(
-      initPath,
-      ["PS1='term:\\w\\$ '", "unset PROMPT_COMMAND"].join("\n") + "\n",
-      "utf8",
-    );
-    const wrapped = await maybeWrapWithDirenv(
-      [shellPath, "--noprofile", "--rcfile", initPath, "-i"],
-      params.cwd,
-    );
-    return {
-      argv: wrapped.argv,
-      profile: shellProfile,
-      shellPath,
-      shellKind,
-      initPath,
-      envLoader: wrapped.envLoader,
-    };
-  }
-
-  const wrapped = await maybeWrapWithDirenv([shellPath], params.cwd);
+function selectLines(lines: string[], params: Pick<Params, "offset" | "limit" | "tail">) {
+  const count = params.tail ?? params.limit ?? 120;
+  const start =
+    params.offset !== undefined
+      ? Math.min(lines.length, params.offset - 1)
+      : Math.max(0, lines.length - count);
+  const end = Math.min(lines.length, start + count);
   return {
-    argv: wrapped.argv,
-    profile: shellProfile,
-    shellPath,
-    shellKind,
-    envLoader: wrapped.envLoader,
+    output: lines.slice(start, end).join("\n"),
+    startLine: end > start ? start + 1 : 0,
+    endLine: end > start ? end : 0,
+    totalLines: lines.length,
+    hasMoreBefore: start > 0,
+    hasMoreAfter: end < lines.length,
   };
 }
 
-function splitLinesPreserveShape(text: string): string[] {
-  if (!text.length) return [];
-  return text.replace(/\r\n/g, "\n").split("\n");
-}
-
-function clampPositiveInteger(value: number | undefined, fallback: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return fallback;
-  return Math.floor(value);
-}
-
-function sliceLines(
-  lines: string[],
-  params: Pick<TermParamsType, "offset" | "limit" | "tail">,
-): {
-  selected: string[];
-  startLine: number;
-  endLine: number;
-  totalLines: number;
-  hasMoreBefore: boolean;
-  hasMoreAfter: boolean;
-} {
-  const totalLines = lines.length;
-  if (totalLines === 0) {
-    return {
-      selected: [],
-      startLine: 0,
-      endLine: 0,
-      totalLines: 0,
-      hasMoreBefore: false,
-      hasMoreAfter: false,
-    };
-  }
-
-  const limit = clampPositiveInteger(params.limit, 120);
-  let startIdx = 0;
-  let endExclusive = totalLines;
-
-  if (typeof params.offset === "number") {
-    startIdx = Math.min(totalLines, Math.max(0, params.offset - 1));
-    endExclusive = Math.min(totalLines, startIdx + limit);
-  } else if (typeof params.tail === "number") {
-    const tail = clampPositiveInteger(params.tail, limit);
-    startIdx = Math.max(0, totalLines - tail);
-    endExclusive = totalLines;
-  } else {
-    startIdx = Math.max(0, totalLines - limit);
-    endExclusive = totalLines;
-  }
-
+function matchEvidence(match: OutputMatch) {
+  const matchedText = truncateHead(match.matchedText, { maxBytes: 2048, maxLines: 4 }).content;
+  const index = match.matchedLine.indexOf(match.matchedText.split("\n")[0]);
+  const start = Math.max(0, index - 160);
+  const line = match.matchedLine.slice(start);
+  const excerpt = truncateHead(line, { maxBytes: 2560, maxLines: 4 });
   return {
-    selected: lines.slice(startIdx, endExclusive),
-    startLine: startIdx + 1,
-    endLine: endExclusive,
-    totalLines,
-    hasMoreBefore: startIdx > 0,
-    hasMoreAfter: endExclusive < totalLines,
+    matchedText,
+    matchedLine: `${start ? "…" : ""}${excerpt.content}${excerpt.truncated ? "…" : ""}`,
+    matchLine: match.matchLine,
   };
 }
 
-function buildReadText(name: string, payload: ReturnType<typeof sliceLines>, mode: string): string {
-  if (!payload.selected.length) {
-    return `No ${mode} output available for ${name}.`;
-  }
-
-  let header = `${name} ${mode} lines ${payload.startLine}-${payload.endLine} of ${payload.totalLines}`;
-  if (payload.hasMoreBefore || payload.hasMoreAfter) {
-    const hints = [];
-    if (payload.hasMoreBefore) hints.push("more before");
-    if (payload.hasMoreAfter) hints.push("more after");
-    header += ` (${hints.join(", ")})`;
-  }
-
-  return `${header}\n\n${payload.selected.join("\n")}`;
-}
-
-function summarizeText(text: string, maxLen = 160): string {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\n/g, "\\n");
-  if (normalized.length <= maxLen) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxLen - 3))}...`;
-}
-
-function stripLeadingBoilerplate(text: string): string {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-
-  let idx = 0;
-  while (idx < lines.length && lines[idx].startsWith("direnv: ")) idx += 1;
-  while (idx < lines.length && lines[idx] === "") idx += 1;
-  return lines.slice(idx).join("\n");
-}
-
-function lastNonEmptyLine(text: string): string | undefined {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i]?.trim();
-    if (line) return line;
-  }
-  return undefined;
-}
-
-function renderTarget(args: TermParamsType): string {
-  return typeof args.name === "string" && args.name.trim() ? args.name.trim() : "workspace";
-}
-
-function resolveGeometry(args: Pick<TermParamsType, "width" | "height" | "x" | "y">): {
-  width: string;
-  height: string;
-  x: string;
-  y: string;
-} {
-  return {
-    width: args.width?.trim() || "100%",
-    height: args.height?.trim() || "100%",
-    x: args.x?.trim() || "0",
-    y: args.y?.trim() || "0",
-  };
-}
-
-async function removePathQuietly(targetPath: string): Promise<void> {
-  try {
-    await fs.rm(targetPath, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
-}
+const BOOTSTRAP = `import os, pty, fcntl, termios, struct, subprocess, time, select, sys
+session, cols, rows = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+master, slave = pty.openpty()
+p = None
+captured = bytearray()
+try:
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+    env = dict(os.environ, TERM='xterm-256color')
+    p = subprocess.Popen(['zellij', 'attach', session], stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True)
+    os.close(slave)
+    slave = None
+    deadline = time.monotonic() + 1.5
+    while time.monotonic() < deadline:
+        if select.select([master], [], [], 0.05)[0]:
+            try:
+                captured.extend(os.read(master, 65536))
+            except OSError:
+                break
+        if p.poll() is not None:
+            break
+    if p.poll() is not None:
+        raise RuntimeError('Zellij attach exited before workspace resize: ' + captured[-2048:].decode(errors='replace'))
+finally:
+    if p is not None and p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+    if slave is not None:
+        os.close(slave)
+    os.close(master)
+`;
 
 export default function (pi: ExtensionAPI) {
-  let workspace: WorkspaceState | null = null;
+  let workspace: Workspace | undefined;
 
-  async function cleanupExitedWorkspaces(): Promise<void> {
-    try {
-      const result = await pi.exec("zellij", ["list-sessions", "--no-formatting"], {
-        timeout: 2000,
-      });
-      if (result.code !== 0) return;
-
-      const sessions = parseZellijSessionList(result.stdout);
-      for (const session of sessions) {
-        if (!session.exited) continue;
-        if (!session.name.startsWith("pt-")) continue;
-        try {
-          await pi.exec("zellij", ["delete-session", session.name], { timeout: 2000 });
-        } catch {
-          // ignore cleanup failures
-        }
-      }
-    } catch {
-      // ignore cleanup failures
-    }
+  function getWorkspace(): Workspace {
+    workspace ??= {
+      name: `pt-${shortId()}`,
+      terminals: new Map(),
+      pending: new Map(),
+      temporaryPaths: new Set(),
+      commands: { tail: Promise.resolve() },
+      mutations: { tail: Promise.resolve() },
+    };
+    return workspace;
   }
 
-  pi.on("session_start", async (_event, _ctx) => {
-    await cleanupExitedWorkspaces();
-    const workspaceName = `pt-${shortId()}`;
-    workspace = new WorkspaceState(workspaceName);
-    workspaceStates.set(workspaceName, workspace);
-  });
+  async function cleanup() {
+    const state = workspace;
+    if (!state) return;
+    workspace = undefined;
+    await Promise.allSettled([state.commands.tail, state.mutations.tail]);
+    await pi.exec("zellij", ["kill-session", state.name], { timeout: 2000 }).catch(() => {});
+    await pi.exec("zellij", ["delete-session", state.name], { timeout: 2000 }).catch(() => {});
+    for (const dir of state.temporaryPaths)
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 
-  pi.on("session_shutdown", async () => {
-    if (!workspace) return;
-    const current = workspace;
-    workspace = null;
-    workspaceStates.delete(current.workspaceName);
-
-    for (const initDir of current.initPaths) {
-      await removePathQuietly(initDir);
-    }
-
-    try {
-      await pi.exec("zellij", ["kill-session", current.workspaceName], { timeout: 2000 });
-    } catch {
-      // ignore cleanup failures
-    }
-
-    try {
-      await pi.exec("zellij", ["delete-session", current.workspaceName], { timeout: 2000 });
-    } catch {
-      // ignore cleanup failures
-    }
-  });
+  pi.on("session_start", cleanup);
+  pi.on("session_shutdown", cleanup);
 
   pi.registerTool({
     name: "term",
     label: "Term",
     description: [
-      "Manage named terminals in a private per-session zellij workspace.",
-      "Use this for durable shells, REPLs, logs, and background processes.",
-      "wait exit returns the moment the process ends, with its exit status and final output. output/silence waits also stop early if the process exits first, so a failed command never stalls a pattern wait until the timeout.",
-      "Interactive shells stay alive after each command, so exit never fires there; end sent commands with a sentinel like '; echo DONE:$?' and wait for the DONE: pattern (the number is the exit code).",
+      "Manage named terminals in a private Zellij workspace.",
+      "Use run with name and text for shell commands. It creates a shell if needed, preserves shell state, and tracks completion automatically.",
+      "After a run timeout, use wait with the same name. The command continues until completion or interruption.",
+      "Use ensure with command argv for a dedicated process, then wait for exit. Use send for raw REPL or program input.",
+      "A pattern selects an output wait and matches literal text by default. Use matchMode: regex for JavaScript multiline syntax.",
+      "Output waits search full scrollback, including old output and command echo. They are readiness checks, not command-completion checks.",
+      "Wait outcomes distinguish matched, exited, exited_without_match, silent, timed_out, and missing. Silence does not prove completion.",
+      "Output is capped at 2000 lines or 50KB. Truncated results include a fullOutputPath that remains available until session shutdown.",
     ].join("\n"),
     promptSnippet:
-      "Manage named terminals for durable process I/O; wait exit waits for a command to finish and returns its status and output.",
+      "Use term run for persistent shell commands with automatic completion tracking. Use send for raw program input.",
     parameters: TermParams,
+    outputSchema: TermOutput,
     renderCall(args, theme) {
-      const action = typeof args.action === "string" ? args.action : "";
-      const target = renderTarget(args as TermParamsType);
-      let text = theme.fg("toolTitle", theme.bold("term ")) + theme.fg("muted", action);
-
-      switch (action) {
-        case "ensure": {
-          text += " " + theme.fg("accent", target);
-          if (typeof args.cwd === "string" && args.cwd.trim()) {
-            text += " " + theme.fg("dim", args.cwd.trim());
-          }
-          if (Array.isArray(args.command) && args.command.length) {
-            text += " " + theme.fg("dim", summarizeText(args.command.join(" "), 80));
-          }
-          if (typeof args.width === "string" || typeof args.height === "string") {
-            text += " " + theme.fg("muted", `${args.width ?? "100%"}×${args.height ?? "100%"}`);
-          }
-          break;
-        }
-        case "resize": {
-          text += " " + theme.fg("accent", target);
-          text += " " + theme.fg("muted", `${args.width ?? "100%"}×${args.height ?? "100%"}`);
-          break;
-        }
-        case "send": {
-          text += " " + theme.fg("accent", target);
-          if (typeof args.text === "string" && args.text.length) {
-            text += " " + theme.fg("dim", JSON.stringify(summarizeText(args.text, 100)));
-          }
-          if (args.enter) {
-            text += " " + theme.fg("muted", "+ Enter");
-          }
-          break;
-        }
-        case "keys": {
-          text += " " + theme.fg("accent", target);
-          if (Array.isArray(args.keys) && args.keys.length) {
-            text += " " + theme.fg("dim", args.keys.join(", "));
-          }
-          break;
-        }
-        case "interrupt":
-        case "kill": {
-          text += " " + theme.fg("accent", target);
-          break;
-        }
-        case "read": {
-          text += " " + theme.fg("accent", target);
-          if (typeof args.mode === "string") {
-            text += " " + theme.fg("muted", args.mode);
-          }
-          if (typeof args.offset === "number") {
-            const limit = typeof args.limit === "number" ? args.limit : "?";
-            text += " " + theme.fg("dim", `${args.offset}-${args.offset + Number(limit) - 1}`);
-          } else if (typeof args.tail === "number") {
-            text += " " + theme.fg("dim", `tail:${args.tail}`);
-          }
-          break;
-        }
-        case "wait": {
-          text += " " + theme.fg("accent", target);
-          if (typeof args.waitFor === "string") {
-            text += " " + theme.fg("muted", args.waitFor);
-          }
-          if (typeof args.pattern === "string" && args.pattern.length) {
-            text += " " + theme.fg("dim", JSON.stringify(summarizeText(args.pattern, 60)));
-          }
-          if (typeof args.timeoutMs === "number") {
-            text += " " + theme.fg("dim", `(${args.timeoutMs}ms)`);
-          }
-          break;
-        }
-        case "list":
-        default:
-          break;
-      }
-
+      let text = theme.fg("toolTitle", theme.bold("term ")) + theme.fg("muted", args.action);
+      if (args.name) text += " " + theme.fg("accent", args.name);
+      if (args.text) text += " " + theme.fg("dim", JSON.stringify(args.text.slice(0, 100)));
+      if (args.command) text += " " + theme.fg("dim", args.command.join(" ").slice(0, 100));
+      if (args.pattern)
+        text +=
+          " " + theme.fg("dim", `${args.matchMode ?? "literal"}:${JSON.stringify(args.pattern)}`);
       return new Text(text, 0, 0);
     },
-    async execute(_toolCallId, params, signal, _onUpdate): Promise<any> {
-      if (!workspace) {
-        const fallbackName = `pt-${shortId()}`;
-        workspace = workspaceStates.get(fallbackName) ?? new WorkspaceState(fallbackName);
-        workspaceStates.set(fallbackName, workspace);
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const state = getWorkspace();
+      let deadline: number | undefined;
+
+      // Serialize CLI calls, not wait loops. Mutations also serialize complete input sequences.
+      async function runCli(args: string[]) {
+        const callDeadline = deadline;
+        const job = enqueue(state.commands, async () => {
+          checkAbort(signal);
+          const result = await pi.exec("zellij", args, {
+            signal,
+            timeout: remainingTime(callDeadline),
+          });
+          checkAbort(signal);
+          if (callDeadline !== undefined) remainingTime(callDeadline);
+          return result;
+        });
+        return callDeadline === undefined ? job : withinDeadline(job, callDeadline, signal);
       }
 
-      const state = workspace;
-
-      async function run(args: string[]): Promise<ExecResult> {
-        const result = await pi.exec("zellij", args, { signal });
-        return {
-          stdout: result.stdout,
-          stderr: result.stderr,
-          code: result.code,
-          killed: result.killed,
-        };
-      }
-
-      async function runOrThrow(
-        args: string[],
-        context = `zellij ${args.join(" ")}`,
-      ): Promise<ExecResult> {
-        const result = await run(args);
-        if (result.code !== 0) {
+      function checkResult(result: Awaited<ReturnType<typeof runCli>>, context: string) {
+        if (
+          result.code !== 0 ||
+          result.killed ||
+          /Session '.+' not found|There is no active session!/.test(result.stderr)
+        ) {
           throw new Error(
-            `${context} failed (exit ${result.code})\n\n${previewOutput(result.stdout, result.stderr)}`.trim(),
+            `${context} failed (exit ${result.code}${result.killed ? ", killed" : ""}).\n${preview(result.stdout, result.stderr)}`,
           );
         }
+      }
+
+      async function mutation(args: string[], context: string) {
+        const result = await runCli(args);
+        checkResult(result, context);
         return result;
       }
 
-      async function bootstrapWorkspaceSize(cols: number, rows: number): Promise<void> {
-        const python = (await findKnownShell(["python3"])) ?? "/usr/bin/python3";
-        const script = [
-          "import os, pty, fcntl, termios, struct, subprocess, time, sys",
-          "session, cols, rows = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])",
-          "master, slave = pty.openpty()",
-          "fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))",
-          "p = subprocess.Popen(['zellij', 'attach', session], stdin=slave, stdout=slave, stderr=slave, close_fds=True)",
-          "os.close(slave)",
-          "time.sleep(1.5)",
-          "p.terminate()",
-          "time.sleep(0.5)",
-          "try:\n    p.kill()\nexcept ProcessLookupError:\n    pass",
-          "os.close(master)",
-        ].join("\n");
-        await pi.exec(python, ["-c", script, state.workspaceName, String(cols), String(rows)], {
-          timeout: 5000,
-          signal,
-        });
+      // Only read-only queries are retried. A repeated mutation can duplicate a process.
+      async function query<T>(
+        args: string[],
+        context: string,
+        parse: (text: string) => T | Promise<T>,
+        prepare?: () => Promise<unknown>,
+      ): Promise<T> {
+        let failure = "";
+        for (let attempt = 0; attempt < 3; attempt++) {
+          checkAbort(signal);
+          remainingTime(deadline);
+          await prepare?.();
+          const result = await runCli(args);
+          try {
+            checkResult(result, context);
+            return await parse(result.stdout);
+          } catch (error) {
+            failure = `${String(error)}\nstdout/stderr: ${preview(result.stdout, result.stderr).slice(0, 4096)}`;
+          }
+          if (attempt < 2) await delay(50 * (attempt + 1), signal, deadline);
+        }
+        throw new Error(`${context} failed after 3 read attempts.\n${failure}`);
       }
 
-      async function ensureWorkspace(): Promise<void> {
-        if (state.initialized) return;
-        await runOrThrow(["attach", "--create-background", state.workspaceName]);
-        await bootstrapWorkspaceSize(DEFAULT_WORKSPACE_COLS, DEFAULT_WORKSPACE_ROWS);
-        state.initialized = true;
+      async function ensureWorkspace() {
+        if (!state.initialization) {
+          state.initialization = (async () => {
+            await mutation(
+              ["attach", "--create-background", state.name],
+              "Zellij workspace creation",
+            );
+            const python = await findExecutable("python3");
+            if (!python)
+              throw new Error(
+                "Workspace setup requires python3 on PATH. Add Python to the dev shell.",
+              );
+            const result = await pi.exec(python, ["-c", BOOTSTRAP, state.name, "160", "60"], {
+              signal,
+              timeout: 5000,
+            });
+            checkAbort(signal);
+            if (result.code !== 0 || result.killed)
+              throw new Error(`Workspace resize failed.\n${preview(result.stdout, result.stderr)}`);
+          })();
+          state.initialization.catch(() => {
+            state.initialization = undefined;
+          });
+        }
+        await state.initialization;
       }
 
       async function listPanes(): Promise<PaneInfo[]> {
         await ensureWorkspace();
-        const result = await runOrThrow(
-          ["--session", state.workspaceName, "action", "list-panes", "--json"],
-          `zellij list-panes for workspace ${state.workspaceName}`,
+        return query(
+          ["--session", state.name, "action", "list-panes", "--json"],
+          "Zellij pane query",
+          parsePanes,
         );
-        return JSON.parse(result.stdout) as PaneInfo[];
       }
 
-      async function getTerminalOrThrow(name: string): Promise<TerminalState> {
+      async function findPane(terminal: TerminalState) {
+        return (await listPanes()).find((pane) => paneId(pane) === terminal.paneId);
+      }
+
+      function ioDirectory() {
+        state.ioDirectory ??= fs.mkdtemp(path.join(os.tmpdir(), "pi-term-io-")).then((dir) => {
+          state.temporaryPaths.add(dir);
+          return dir;
+        });
+        return state.ioDirectory;
+      }
+
+      async function completion(receipt: CommandRun, output: string) {
+        const marker = commandCompletion(output, receipt.marker);
+        if (marker) return marker;
+        // A receipt file survives scrollback rollover and background output after the prompt.
+        const exitStatus = await commandStatus(receipt.statusPath);
+        return exitStatus === undefined
+          ? null
+          : { exitStatus, output: commandOutput(output, receipt.marker) };
+      }
+
+      async function dump(terminal: TerminalState, full = true, ansi = false) {
+        const target = path.join(await ioDirectory(), `${shortId()}.txt`);
+        const args = [
+          "--session",
+          state.name,
+          "action",
+          "dump-screen",
+          "--pane-id",
+          terminal.paneId,
+          "--path",
+          target,
+        ];
+        if (full) args.push("--full");
+        if (ansi) args.push("--ansi");
+        try {
+          // A fresh file proves that the query ran. Empty CLI stdout cannot prove that.
+          return await query(
+            args,
+            `Zellij output query for ${terminal.name}`,
+            async () => cleanOutput(await fs.readFile(target, "utf8")),
+            () => fs.rm(target, { force: true }),
+          );
+        } finally {
+          await fs.rm(target, { force: true });
+        }
+      }
+
+      async function getTerminal(name: string) {
         const terminal = state.terminals.get(name);
-        if (!terminal) throw new Error(`Terminal ${name} does not exist in the current workspace.`);
+        if (!terminal)
+          throw new Error(`Terminal ${name} does not exist. Use ensure or run to create it.`);
         return terminal;
       }
 
-      async function findPaneForTerminal(terminal: TerminalState): Promise<PaneInfo | undefined> {
-        const panes = await listPanes();
-        return panes.find((pane) => {
-          const kind = pane.is_plugin ? "plugin" : "terminal";
-          return `${kind}_${String(pane.id)}` === terminal.paneId;
-        });
+      async function launchShell(cwd: string, command?: string[]) {
+        const direnv = await findExecutable("direnv");
+        const wrap = (argv: string[]) => (direnv ? [direnv, "exec", cwd, ...argv] : argv);
+        if (command) return { argv: wrap(command), kind: undefined };
+        const shell = params.shell
+          ? await findExecutable(params.shell)
+          : ((await findExecutable(process.env.SHELL || "zsh")) ??
+            (await findExecutable("zsh")) ??
+            (await findExecutable("bash")));
+        if (!shell)
+          throw new Error("No executable shell exists on PATH. Set shell to an executable path.");
+        const kind = shellKind(shell);
+        if (params.action === "run" && kind === "other")
+          throw new Error(
+            "run requires Bash or Zsh. Set shell to bash or zsh, or use ensure and send.",
+          );
+        if (params.shellProfile === "default" || kind === "other")
+          return { argv: wrap([shell, "-i"]), kind };
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), `pi-term-${kind}-`));
+        state.temporaryPaths.add(dir);
+        if (kind === "zsh") {
+          await fs.writeFile(
+            path.join(dir, ".zshrc"),
+            "unsetopt beep\nPROMPT='term:%1~ %# '\nRPROMPT=''\n",
+          );
+          return { argv: wrap(["env", `ZDOTDIR=${dir}`, shell, "-i"]), kind };
+        }
+        const rc = path.join(dir, "bashrc");
+        await fs.writeFile(rc, "PS1='term:\\w\\$ '\nunset PROMPT_COMMAND\n");
+        return { argv: wrap([shell, "--noprofile", "--rcfile", rc, "-i"]), kind };
       }
 
-      async function createTerminal(name: string): Promise<TerminalState> {
-        await ensureWorkspace();
-        const before = await listPanes();
-        const cwd = params.cwd?.trim() || process.cwd();
-        const shellLaunch = await buildShellLaunch(params, state);
-        const geometry = resolveGeometry(params);
+      async function recoverCreation(name: string) {
+        const pending = state.pending.get(name);
+        if (!pending) return undefined;
+        const panes = (await listPanes()).filter(
+          (pane) => !pane.is_plugin && !pending.before.has(paneId(pane)),
+        );
+        const named = panes.filter((pane) => pane.title === name);
+        const pane = named.length === 1 ? named[0] : panes.length === 1 ? panes[0] : undefined;
+        if (!pane)
+          throw new Error(
+            `Creation of ${name} is unconfirmed. No second process was launched. Inspect list before another creation.`,
+          );
+        pending.terminal.paneId = paneId(pane);
+        state.terminals.set(name, pending.terminal);
+        state.pending.delete(name);
+        return pending.terminal;
+      }
+
+      async function createTerminal(name: string, command = params.command) {
+        const recovered = await recoverCreation(name);
+        if (recovered) return recovered;
+        const size = geometry(params);
+        const cwd = path.resolve(ctx.cwd, params.cwd?.trim() || ".");
+        if (!(await fs.stat(cwd)).isDirectory())
+          throw new Error(`Terminal directory ${cwd} is not a directory.`);
+        const before = new Set((await listPanes()).map(paneId));
+        const launch = await launchShell(cwd, command);
+        const terminal: TerminalState = {
+          name,
+          paneId: "",
+          cwd,
+          command,
+          shellKind: launch.kind,
+          closeOnExit: Boolean(params.closeOnExit),
+          createdAt: Date.now(),
+          deltaSnapshot: [],
+          ...size,
+        };
         const args = [
           "--session",
-          state.workspaceName,
+          state.name,
           "action",
           "new-pane",
           "--name",
           name,
           "--floating",
           "--x",
-          geometry.x,
+          terminal.x,
           "--y",
-          geometry.y,
+          terminal.y,
           "--width",
-          geometry.width,
+          terminal.width,
           "--height",
-          geometry.height,
+          terminal.height,
           "--borderless",
           "true",
-        ];
-        if (cwd) args.push("--cwd", cwd);
-        if (params.closeOnExit) args.push("--close-on-exit");
-        if (shellLaunch?.argv.length) args.push("--", ...shellLaunch.argv);
-        const result = await runOrThrow(
-          args,
-          `zellij create terminal ${name} in workspace ${state.workspaceName}`,
-        );
-        const after = await listPanes();
-        const paneId = parseCreatedPaneIdOrThrow(
-          result.stdout,
-          result.stderr,
-          `create terminal ${name}`,
-          before,
-          after,
-          name,
-        );
-        const terminal: TerminalState = {
-          name,
-          paneId,
+          "--cwd",
           cwd,
-          command: params.command ?? undefined,
-          closeOnExit: Boolean(params.closeOnExit),
-          createdAt: Date.now(),
-          lastDeltaLine: 0,
-          width: geometry.width,
-          height: geometry.height,
-          x: geometry.x,
-          y: geometry.y,
-        };
-        state.terminals.set(name, terminal);
-        return terminal;
+        ];
+        if (params.closeOnExit) args.push("--close-on-exit");
+        args.push("--", ...launch.argv);
+        state.pending.set(name, { terminal, before });
+        const result = await runCli(args);
+        // Register a returned ID before any optional metadata query can fail.
+        const id = createdPaneId(result.stdout, result.stderr);
+        if (id) {
+          terminal.paneId = id;
+          state.terminals.set(name, terminal);
+          state.pending.delete(name);
+          return terminal;
+        }
+        try {
+          return (await recoverCreation(name))!;
+        } catch (error) {
+          throw new Error(
+            `${String(error)}\nCreation response (exit ${result.code}): ${preview(result.stdout, result.stderr)}`,
+          );
+        }
       }
 
-      async function resizeTerminal(
-        terminal: TerminalState,
-        geometry: { width: string; height: string; x: string; y: string },
-      ): Promise<void> {
-        await runOrThrow(
-          [
-            "--session",
-            state.workspaceName,
-            "action",
-            "change-floating-pane-coordinates",
-            "--pane-id",
-            terminal.paneId,
-            "--x",
-            geometry.x,
-            "--y",
-            geometry.y,
-            "--width",
-            geometry.width,
-            "--height",
-            geometry.height,
-          ],
-          `zellij resize terminal ${terminal.name} ${terminal.paneId}`,
-        );
-        terminal.width = geometry.width;
-        terminal.height = geometry.height;
-        terminal.x = geometry.x;
-        terminal.y = geometry.y;
-      }
-
-      async function closeTerminal(terminal: TerminalState): Promise<void> {
-        await runOrThrow(
-          ["--session", state.workspaceName, "action", "close-pane", "--pane-id", terminal.paneId],
-          `zellij close-pane ${terminal.paneId}`,
-        );
+      async function closeTerminal(terminal: TerminalState) {
+        if (await findPane(terminal))
+          await mutation(
+            ["--session", state.name, "action", "close-pane", "--pane-id", terminal.paneId],
+            `Close ${terminal.name}`,
+          );
         state.terminals.delete(terminal.name);
       }
 
-      async function dumpTerminal(
+      async function sendInput(
         terminal: TerminalState,
-        options: { full: boolean; ansi?: boolean },
-      ): Promise<string> {
-        const args = [
-          "--session",
-          state.workspaceName,
-          "action",
-          "dump-screen",
-          "--pane-id",
-          terminal.paneId,
-        ];
-        if (options.full) args.push("--full");
-        if (options.ansi) args.push("--ansi");
-        const result = await runOrThrow(args, `zellij dump-screen ${terminal.paneId}`);
-        return stripLeadingBoilerplate(result.stdout);
+        text: string,
+        enter: boolean,
+        inputMode: "paste" | "write_chars",
+      ) {
+        await mutation(
+          [
+            "--session",
+            state.name,
+            "action",
+            inputMode === "paste" ? "paste" : "write-chars",
+            "--pane-id",
+            terminal.paneId,
+            "--",
+            text,
+          ],
+          `Send input to ${terminal.name}`,
+        );
+        if (enter)
+          await mutation(
+            ["--session", state.name, "action", "send-keys", "--pane-id", terminal.paneId, "Enter"],
+            `Submit input to ${terminal.name}`,
+          );
       }
 
-      switch (params.action) {
-        case "list": {
-          if (!state.terminals.size) {
-            return {
-              content: [{ type: "text", text: "No terminals in the current workspace." }],
-              details: { action: params.action, workspace: state.workspaceName, terminals: [] },
-            };
-          }
-
-          const panes = await listPanes();
-          const terminals = await Promise.all(
-            Array.from(state.terminals.values()).map(async (terminal) => {
-              const pane = panes.find((entry) => {
-                const kind = entry.is_plugin ? "plugin" : "terminal";
-                return `${kind}_${String(entry.id)}` === terminal.paneId;
-              });
-              const preview = pane
-                ? lastNonEmptyLine(await dumpTerminal(terminal, { full: true }))
-                : undefined;
-              return {
-                ...terminal,
-                exited: Boolean(pane?.exited),
-                exitStatus: typeof pane?.exit_status === "number" ? pane.exit_status : null,
-                title: typeof pane?.title === "string" ? pane.title : null,
-                preview,
-              };
-            }),
-          );
-
-          const text = terminals
-            .map((terminal) => {
-              const parts = [
-                terminal.name,
-                `[${terminal.paneId}]`,
-                terminal.cwd,
-                `${terminal.width}×${terminal.height}`,
-                terminal.exited ? `status=exited(${terminal.exitStatus ?? "?"})` : "status=running",
-              ];
-              if (terminal.command?.length) parts.push(`cmd=${terminal.command.join(" ")}`);
-              if (terminal.preview)
-                parts.push(`preview=${JSON.stringify(summarizeText(terminal.preview, 80))}`);
-              return parts.join(" ");
-            })
-            .join("\n");
-
-          return {
-            content: [{ type: "text", text }],
-            details: { action: params.action, workspace: state.workspaceName, terminals },
-          };
+      async function result(
+        outcome: Outcome,
+        message: string,
+        output = "",
+        fields: Record<string, unknown> = {},
+        terminal?: TerminalState,
+        isError = false,
+      ) {
+        const bounded = truncateTail(output, {
+          maxBytes: DEFAULT_MAX_BYTES - 6144,
+          maxLines: DEFAULT_MAX_LINES - 16,
+        });
+        let fullOutputPath: string | undefined;
+        if (bounded.truncated) {
+          const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-term-output-"));
+          state.temporaryPaths.add(dir);
+          fullOutputPath = path.join(dir, "output.txt");
+          await fs.writeFile(fullOutputPath, output);
         }
+        const data = {
+          action: params.action,
+          outcome,
+          workspace: state.name,
+          ...(terminal ? { name: terminal.name, paneId: terminal.paneId } : {}),
+          ...fields,
+          output: bounded.content,
+          message,
+          truncated: bounded.truncated,
+          ...(fullOutputPath ? { fullOutputPath } : {}),
+        };
+        const note = fullOutputPath ? `\n\nOutput truncated. Full output: ${fullOutputPath}` : "";
+        const content = truncateHead(
+          `${message}${bounded.content ? `\n\n${bounded.content}` : ""}${note}`,
+        ).content;
+        return {
+          content: [{ type: "text" as const, text: content }],
+          details: data,
+          structuredContent: data,
+          isError,
+        };
+      }
 
-        case "ensure": {
-          const name = requireName(params);
-          const existing = state.terminals.get(name);
-          if (existing && !params.restart) {
-            const pane = await findPaneForTerminal(existing);
-            return {
-              content: [{ type: "text", text: `Terminal ${name} already exists.` }],
-              details: {
-                action: params.action,
-                workspace: state.workspaceName,
-                terminal: existing,
-                exited: Boolean(pane?.exited),
-                exitStatus: typeof pane?.exit_status === "number" ? pane.exit_status : null,
-                created: false,
-              },
-            };
-          }
+      async function wait(
+        terminal: TerminalState,
+        forcedCondition?: WaitCondition,
+        commandRun = terminal.lastRun,
+      ) {
+        checkAbort(signal);
+        const condition =
+          forcedCondition ??
+          params.waitFor ??
+          (params.pattern !== undefined ? "output" : terminal.lastRun ? "command" : "exit");
+        if (params.pattern !== undefined && condition !== "output")
+          throw new Error(
+            "A pattern requires an output wait. Omit waitFor or set waitFor: output.",
+          );
+        if (params.matchMode && condition !== "output")
+          throw new Error("matchMode requires an output wait with a pattern.");
+        if (condition === "output" && params.pattern === undefined)
+          throw new Error("Output waits require a pattern. Use run for shell command completion.");
+        if (condition === "command" && !terminal.lastRun)
+          throw new Error("No tracked command exists. Use run to launch a shell command.");
+        if (condition === "exit" && !terminal.command && params.waitFor === undefined)
+          throw new Error(
+            "An interactive shell stays alive after commands. Use run for command completion, or explicitly waitFor: exit for shell shutdown.",
+          );
+        const matcher =
+          condition === "output"
+            ? outputMatcher(params.pattern!, params.matchMode ?? "literal")
+            : undefined;
+        const receipt = condition === "command" ? commandRun : undefined;
 
-          if (existing && params.restart) {
-            try {
-              await closeTerminal(existing);
-            } catch {
-              state.terminals.delete(name);
+        const timeout = params.timeoutMs ?? 30_000;
+        const idle = params.idleMs ?? 2000;
+        const poll = params.pollMs ?? 500;
+        deadline = Date.now() + timeout;
+        let output = "";
+        let lastChange = Date.now();
+        let initialized = false;
+        let nextUpdate = Date.now();
+        const base = {
+          waitFor: condition,
+          conditionMet: false,
+          ...(receipt ? { runId: receipt.id } : {}),
+        };
+        const shown = (text: string) =>
+          selectLines(linesOf(text), { tail: params.tail ?? params.limit ?? 80 }).output;
+        const currentOutput = () =>
+          receipt ? commandOutput(output, receipt.marker, true) : output;
+        async function completed(completion: { exitStatus: number; output: string }) {
+          Object.assign(receipt!, completion);
+          return result(
+            "exited",
+            `Command ${receipt!.id} completed in ${terminal.name}.\nExit status: ${completion.exitStatus}.`,
+            shown(completion.output),
+            { ...base, conditionMet: true, exitStatus: completion.exitStatus },
+            terminal,
+            completion.exitStatus !== 0,
+          );
+        }
+        try {
+          if (receipt?.exitStatus !== undefined && receipt.output !== undefined)
+            return completed({ exitStatus: receipt.exitStatus, output: receipt.output });
+          while (true) {
+            checkAbort(signal);
+            remainingTime(deadline);
+            const pane = await findPane(terminal);
+            if (!pane)
+              return result(
+                "missing",
+                `Terminal ${terminal.name} is missing. Output and exit status are unavailable.`,
+                shown(currentOutput()),
+                base,
+                terminal,
+                true,
+              );
+            const current = await dump(terminal);
+            if (!initialized || current !== output) lastChange = Date.now();
+            initialized = true;
+            output = current;
+            if (receipt) {
+              const done = await completion(receipt, output);
+              if (done) return completed(done);
             }
+            const match = matcher?.(output);
+            if (match) {
+              const evidence = matchEvidence(match);
+              const returned = params.ansi ? await dump(terminal, true, true) : output;
+              return result(
+                "matched",
+                `Output matched in ${terminal.name}.\nMatch mode: ${params.matchMode ?? "literal"}.\nMatched line ${evidence.matchLine}: ${JSON.stringify(evidence.matchedLine)}`,
+                shown(returned),
+                {
+                  ...base,
+                  conditionMet: true,
+                  ...evidence,
+                  exited: pane.exited,
+                  exitStatus: pane.exit_status ?? null,
+                },
+                terminal,
+              );
+            }
+            if (pane.exited) {
+              const exitStatus = pane.exit_status ?? null;
+              const met = condition === "exit" || condition === "command";
+              if (receipt && exitStatus !== null) {
+                receipt.exitStatus = exitStatus;
+                receipt.output = commandOutput(output, receipt.marker);
+              }
+              const returned = params.ansi ? await dump(terminal, true, true) : output;
+              return result(
+                met ? "exited" : "exited_without_match",
+                `Terminal ${terminal.name} exited${exitStatus === null ? "" : ` with status ${exitStatus}`}.
+${met ? "The exit condition was met." : "The requested condition was not met."}`,
+                shown(receipt?.output ?? returned),
+                { ...base, conditionMet: met, exitStatus },
+                terminal,
+                !met || (exitStatus !== null && exitStatus !== 0),
+              );
+            }
+            if (condition === "silence" && Date.now() - lastChange >= idle) {
+              return result(
+                "silent",
+                `Terminal ${terminal.name} was quiet for ${idle} ms. This does not prove command completion.`,
+                shown(currentOutput()),
+                { ...base, conditionMet: true, idleMs: idle },
+                terminal,
+              );
+            }
+            if (Date.now() >= nextUpdate) {
+              nextUpdate = Date.now() + 2000;
+              onUpdate?.({
+                content: [
+                  {
+                    type: "text",
+                    text: `Waiting for ${condition} in ${terminal.name}.\n${truncateTail(currentOutput(), { maxLines: 10, maxBytes: 2048 }).content}`,
+                  },
+                ],
+                details: base,
+              });
+            }
+            await delay(poll, signal, deadline);
           }
-
-          const terminal = await createTerminal(name);
-          return {
-            content: [
-              {
-                type: "text",
-                text: terminal.command?.length
-                  ? `Created terminal ${name} [${terminal.paneId}] in ${terminal.cwd}\nsize: ${terminal.width} × ${terminal.height} @ (${terminal.x}, ${terminal.y})\nstartup command: ${terminal.command.join(" ")}`
-                  : `Created terminal ${name} [${terminal.paneId}] in ${terminal.cwd}\nsize: ${terminal.width} × ${terminal.height} @ (${terminal.x}, ${terminal.y})\nstartup shell: ${params.shellProfile ?? "clean"}`,
-              },
-            ],
-            details: {
-              action: params.action,
-              workspace: state.workspaceName,
-              terminal,
-              created: true,
-            },
-          };
-        }
-
-        case "resize": {
-          const name = requireName(params);
-          const terminal = await getTerminalOrThrow(name);
-          const geometry = resolveGeometry(params);
-          await resizeTerminal(terminal, geometry);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Resized terminal ${name} [${terminal.paneId}]\nsize: ${terminal.width} × ${terminal.height} @ (${terminal.x}, ${terminal.y})`,
-              },
-            ],
-            details: {
-              action: params.action,
-              workspace: state.workspaceName,
-              terminal,
-            },
-          };
-        }
-
-        case "send": {
-          const name = requireName(params);
-          const terminal = await getTerminalOrThrow(name);
-          const text = requireText(params);
-          const inputMode = params.inputMode ?? "write_chars";
-          const actionName = inputMode === "write_chars" ? "write-chars" : "paste";
-          await runOrThrow(
-            [
-              "--session",
-              state.workspaceName,
-              "action",
-              actionName,
-              "--pane-id",
-              terminal.paneId,
-              text,
-            ],
-            `zellij ${actionName} ${terminal.paneId}`,
+        } catch (error) {
+          if (!(error instanceof DeadlineReached)) throw error;
+          return result(
+            "timed_out",
+            `Wait timed out in ${terminal.name} after ${timeout} ms. The process was not stopped.`,
+            shown(currentOutput()),
+            base,
+            terminal,
           );
-          if (params.enter) {
-            await runOrThrow(
+        } finally {
+          deadline = undefined;
+        }
+      }
+
+      async function perform() {
+        checkAbort(signal);
+        if (
+          params.action === "run" &&
+          (params.pattern !== undefined ||
+            params.matchMode !== undefined ||
+            (params.waitFor !== undefined && params.waitFor !== "command"))
+        ) {
+          throw new Error(
+            "run tracks command completion automatically. Do not supply an output pattern or a different wait condition.",
+          );
+        }
+        if (params.action === "run" && params.closeOnExit)
+          throw new Error("run requires a persistent shell. Use ensure for an auto-close process.");
+        switch (params.action) {
+          case "list": {
+            if (!state.terminals.size && !state.pending.size)
+              return result("listed", "No terminals in the current workspace.", "", {
+                terminals: [],
+              });
+            const panes = await listPanes();
+            const terminals = [...state.terminals.values()].map((terminal) =>
+              terminalInfo(
+                terminal,
+                panes.find((pane) => paneId(pane) === terminal.paneId),
+              ),
+            );
+            const pending = [...state.pending.keys()];
+            const text = terminals
+              .map(
+                (terminal) =>
+                  `${terminal.name} [${terminal.paneId}] ${terminal.cwd} status=${terminal.status}${terminal.status === "exited" ? `(${terminal.exitStatus ?? "?"})` : ""}`,
+              )
+              .join("\n");
+            return result(
+              "listed",
+              "Terminals in the current workspace.",
+              `${text}${pending.length ? `\nUnconfirmed creations: ${pending.join(", ")}` : ""}`,
+              {
+                terminals,
+                pending,
+                ...(pending.length
+                  ? {
+                      untracked: panes.filter(
+                        (pane) =>
+                          ![...state.terminals.values()].some(
+                            (terminal) => terminal.paneId === paneId(pane),
+                          ),
+                      ),
+                    }
+                  : {}),
+              },
+            );
+          }
+          case "ensure": {
+            const name = requireName(params);
+            const existing = state.terminals.get(name) ?? (await recoverCreation(name));
+            if (existing) {
+              const pane = await findPane(existing);
+              if (pane && !params.restart)
+                return result(
+                  "existing",
+                  `Terminal ${name} already exists (${pane.exited ? "exited" : "running"}). Use restart: true to replace it.`,
+                  "",
+                  { created: false, terminal: terminalInfo(existing, pane) },
+                  existing,
+                );
+              await closeTerminal(existing);
+            }
+            const terminal = await createTerminal(name);
+            return result(
+              "created",
+              `Created terminal ${name} [${terminal.paneId}] in ${terminal.cwd}.\n${terminal.command ? `Startup argv: ${JSON.stringify(terminal.command)}` : `Interactive shell: ${terminal.shellKind}. Use run for shell commands.`}`,
+              "",
+              { created: true, width: terminal.width, height: terminal.height },
+              terminal,
+            );
+          }
+          case "run": {
+            const name = requireName(params);
+            const text = requireText(params);
+            if (params.command)
+              throw new Error(
+                "run accepts text, not startup argv. Use ensure with command for a dedicated process.",
+              );
+            let terminal = state.terminals.get(name) ?? (await recoverCreation(name));
+            if (terminal && !(await findPane(terminal))) {
+              state.terminals.delete(name);
+              terminal = undefined;
+            }
+            terminal ??= await createTerminal(name);
+            if (terminal.command || (terminal.shellKind !== "bash" && terminal.shellKind !== "zsh"))
+              throw new Error(
+                "run requires a Bash or Zsh shell. Use send for REPL or program input.",
+              );
+            const pane = await findPane(terminal);
+            if (pane?.exited)
+              throw new Error(`Shell ${name} exited. Use ensure with restart: true to replace it.`);
+            if (terminal.lastRun && terminal.lastRun.exitStatus === undefined) {
+              const done = await completion(terminal.lastRun, await dump(terminal));
+              if (!done)
+                throw new Error(
+                  `A command is still pending in ${name}. Use wait or interrupt before another run.`,
+                );
+              Object.assign(terminal.lastRun, done);
+            }
+            const id = shortId();
+            const statusPath = path.join(await ioDirectory(), `${id}.status`);
+            terminal.lastRun = { id, marker: `__PI_TERM_${id}`, statusPath };
+            await sendInput(
+              terminal,
+              trackedCommand(text, id, terminal.shellKind, statusPath),
+              true,
+              "paste",
+            );
+            return { terminal, receipt: terminal.lastRun };
+          }
+          case "resize": {
+            const terminal = await getTerminal(requireName(params));
+            if (!(await findPane(terminal)))
+              return result(
+                "missing",
+                `Terminal ${terminal.name} is missing.`,
+                "",
+                {},
+                terminal,
+                true,
+              );
+            const size = geometry(params, terminal);
+            await mutation(
               [
                 "--session",
-                state.workspaceName,
+                state.name,
+                "action",
+                "change-floating-pane-coordinates",
+                "--pane-id",
+                terminal.paneId,
+                "--x",
+                size.x,
+                "--y",
+                size.y,
+                "--width",
+                size.width,
+                "--height",
+                size.height,
+              ],
+              `Resize ${terminal.name}`,
+            );
+            Object.assign(terminal, size);
+            const pane = await findPane(terminal);
+            return result(
+              "resized",
+              `Resized ${terminal.name}. Actual size: ${pane?.pane_columns ?? "?"} × ${pane?.pane_rows ?? "?"}.`,
+              "",
+              { width: pane?.pane_columns ?? null, height: pane?.pane_rows ?? null },
+              terminal,
+            );
+          }
+          case "send": {
+            const terminal = await getTerminal(requireName(params));
+            const pane = await findPane(terminal);
+            if (!pane || pane.exited)
+              throw new Error(
+                `Terminal ${terminal.name} is not running. Use ensure with restart: true.`,
+              );
+            const text = requireText(params);
+            await sendInput(
+              terminal,
+              text,
+              Boolean(params.enter),
+              params.inputMode ?? "write_chars",
+            );
+            return result(
+              "sent",
+              `Sent ${Buffer.byteLength(text)} bytes to ${terminal.name}${params.enter ? " and Enter" : ""}. No command completion was tracked.`,
+              "",
+              {},
+              terminal,
+            );
+          }
+          case "keys":
+          case "interrupt": {
+            const terminal = await getTerminal(requireName(params));
+            const pane = await findPane(terminal);
+            if (!pane || pane.exited)
+              return result(
+                "missing",
+                `Terminal ${terminal.name} is not running. No keys were sent.`,
+                "",
+                {},
+                terminal,
+                true,
+              );
+            const keys = params.action === "interrupt" ? ["Ctrl c"] : params.keys;
+            if (!keys?.length) throw new Error("Action keys requires at least one key.");
+            await mutation(
+              [
+                "--session",
+                state.name,
                 "action",
                 "send-keys",
                 "--pane-id",
                 terminal.paneId,
-                "Enter",
+                "--",
+                ...keys,
               ],
-              `zellij send-keys Enter ${terminal.paneId}`,
+              `Send keys to ${terminal.name}`,
+            );
+            return result(
+              params.action === "interrupt" ? "interrupted" : "sent",
+              `Sent keys to ${terminal.name}: ${keys.join(", ")}.`,
+              "",
+              {},
+              terminal,
             );
           }
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `Sent ${inputMode === "paste" ? "pasted input" : "typed input"} to ${name} [${terminal.paneId}]` +
-                  `\ntext: ${summarizeText(text)}` +
-                  (params.enter ? "\nthen sent key: Enter" : ""),
-              },
-            ],
-            details: {
-              action: params.action,
-              workspace: state.workspaceName,
-              terminal,
-              inputMode,
-              bytes: Buffer.byteLength(text),
-              enter: Boolean(params.enter),
-            },
-          };
-        }
-
-        case "keys": {
-          const name = requireName(params);
-          const terminal = await getTerminalOrThrow(name);
-          const keys = requireKeys(params);
-          await runOrThrow(
-            [
-              "--session",
-              state.workspaceName,
-              "action",
-              "send-keys",
-              "--pane-id",
-              terminal.paneId,
-              ...keys,
-            ],
-            `zellij send-keys ${terminal.paneId}`,
-          );
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Sent keys to ${name} [${terminal.paneId}]\nkeys: ${keys.join(", ")}`,
-              },
-            ],
-            details: { action: params.action, workspace: state.workspaceName, terminal, keys },
-          };
-        }
-
-        case "interrupt": {
-          const name = requireName(params);
-          const terminal = await getTerminalOrThrow(name);
-          await runOrThrow(
-            [
-              "--session",
-              state.workspaceName,
-              "action",
-              "send-keys",
-              "--pane-id",
-              terminal.paneId,
-              "Ctrl c",
-            ],
-            `zellij send-keys Ctrl c ${terminal.paneId}`,
-          );
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Interrupted ${name} [${terminal.paneId}]\nsent key: Ctrl c`,
-              },
-            ],
-            details: {
-              action: params.action,
-              workspace: state.workspaceName,
-              terminal,
-              signal: "Ctrl-C",
-            },
-          };
-        }
-
-        case "read": {
-          const name = requireName(params);
-          const terminal = await getTerminalOrThrow(name);
-          const mode = params.mode ?? "scrollback";
-          const rawOutput = await dumpTerminal(terminal, {
-            full: mode !== "screen",
-            ansi: params.ansi,
-          });
-          const lines = splitLinesPreserveShape(rawOutput);
-
-          let payload: ReturnType<typeof sliceLines>;
-          if (mode === "delta") {
-            const startIdx = Math.min(lines.length, terminal.lastDeltaLine);
-            const selected = lines.slice(startIdx);
-            payload = {
-              selected,
-              startLine: selected.length ? startIdx + 1 : 0,
-              endLine: lines.length,
-              totalLines: lines.length,
-              hasMoreBefore: startIdx > 0,
-              hasMoreAfter: false,
-            };
-            terminal.lastDeltaLine = lines.length;
-
-            if (
-              typeof params.offset === "number" ||
-              typeof params.tail === "number" ||
-              typeof params.limit === "number"
-            ) {
-              payload = sliceLines(payload.selected, {
-                offset: params.offset,
-                limit: params.limit,
-                tail: params.tail,
-              });
-              if (payload.startLine > 0) {
-                payload = {
-                  ...payload,
-                  startLine: payload.startLine + startIdx,
-                  endLine: payload.endLine + startIdx,
-                  totalLines: lines.length,
-                  hasMoreBefore: startIdx > 0 || payload.hasMoreBefore,
-                };
-              }
-            }
-          } else {
-            payload = sliceLines(lines, params);
-          }
-
-          const text = buildReadText(name, payload, mode);
-          const bytes = Buffer.byteLength(text);
-          const note =
-            bytes > DEFAULT_MAX_BYTES
-              ? `\n\n[Note: returned content is ${formatSize(bytes)}. Consider a smaller limit or tail if this gets expensive.]`
-              : "";
-          return {
-            content: [{ type: "text", text: text + note }],
-            details: {
-              action: params.action,
-              workspace: state.workspaceName,
-              terminal,
-              mode,
-              startLine: payload.startLine,
-              endLine: payload.endLine,
-              totalLines: payload.totalLines,
-              hasMoreBefore: payload.hasMoreBefore,
-              hasMoreAfter: payload.hasMoreAfter,
-              maxSuggestedLines: DEFAULT_MAX_LINES,
-              maxSuggestedBytes: DEFAULT_MAX_BYTES,
-            },
-          };
-        }
-
-        case "wait": {
-          const name = requireName(params);
-          const terminal = await getTerminalOrThrow(name);
-          const waitFor = params.waitFor ?? "exit";
-          const timeoutMs = clampPositiveInteger(params.timeoutMs, 30_000);
-          const idleMs = clampPositiveInteger(params.idleMs, 2_000);
-          const pollMs = clampPositiveInteger(params.pollMs, 500);
-          const deadline = Date.now() + timeoutMs;
-          let lastChangeAt = Date.now();
-          let lastSeenOutput = "";
-          let nextProgressAt = Date.now();
-
-          const buildPayload = (output: string, tail = params.tail ?? 80) => {
-            const lines = splitLinesPreserveShape(output);
-            return sliceLines(lines, {
-              offset: undefined,
-              limit: params.limit,
-              tail,
-            });
-          };
-
-          const patternRegex = (() => {
-            if (waitFor !== "output" || !params.pattern) return null;
-            try {
-              return new RegExp(params.pattern, "m");
-            } catch {
-              // Invalid regex: fall back to literal substring matching.
-              return null;
-            }
-          })();
-
-          const outputMatches = (output: string): boolean => {
-            if (waitFor !== "output") return false;
-            if (!params.pattern) return output.length > 0;
-            if (patternRegex) return patternRegex.test(output);
-            return output.includes(params.pattern);
-          };
-
-          const buildMatchResult = (output: string, extra?: Record<string, unknown>) => {
-            const payload = buildPayload(output);
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    `Wait finished for ${name} [${terminal.paneId}]\ncondition: output` +
-                    `${params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
-                    `\n\n${buildReadText(name, payload, "scrollback")}`,
-                },
-              ],
-              details: {
-                action: params.action,
-                workspace: state.workspaceName,
+          case "read": {
+            const terminal = await getTerminal(requireName(params));
+            if (!(await findPane(terminal)))
+              return result(
+                "missing",
+                `Terminal ${terminal.name} is missing.`,
+                "",
+                {},
                 terminal,
-                waitFor,
-                matchedPattern: params.pattern ?? null,
-                startLine: payload.startLine,
-                endLine: payload.endLine,
-                totalLines: payload.totalLines,
-                ...extra,
-              },
-            };
-          };
-
-          const buildExitedResult = (
-            exitStatus: number | null,
-            output: string,
-            premature: boolean,
-          ) => {
-            const payload = buildPayload(output, params.tail ?? 40);
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    `Wait finished for ${name} [${terminal.paneId}]` +
-                    `\ncondition: ${waitFor}${waitFor === "output" && params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
-                    `\nresult: exited${exitStatus !== null ? ` with status ${exitStatus}` : ""}${premature ? " before the condition was met; this is the final output" : ""}.` +
-                    `\n\n${buildReadText(name, payload, "scrollback")}`,
-                },
-              ],
-              details: {
-                action: params.action,
-                workspace: state.workspaceName,
-                terminal,
-                waitFor,
-                exited: true,
-                exitStatus,
-                premature,
-                matchedPattern: null,
-                startLine: payload.startLine,
-                endLine: payload.endLine,
-                totalLines: payload.totalLines,
-              },
-            };
-          };
-
-          if (waitFor === "output" || waitFor === "silence") {
-            lastSeenOutput = await dumpTerminal(terminal, { full: true, ansi: params.ansi });
-            if (waitFor === "output" && outputMatches(lastSeenOutput)) {
-              return buildMatchResult(lastSeenOutput, { alreadyMatched: true });
-            }
-          }
-
-          _onUpdate?.({
-            content: [
-              {
-                type: "text",
-                text:
-                  `Waiting on ${name} [${terminal.paneId}]` +
-                  `\ncondition: ${waitFor}${params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
-                  `\ntimeout: ${timeoutMs}ms`,
-              },
-            ],
-            details: {
-              action: params.action,
-              workspace: state.workspaceName,
-              terminal,
-              waitFor,
-              pattern: params.pattern ?? null,
-              timeoutMs,
-            },
-          });
-
-          while (Date.now() <= deadline) {
-            if (signal?.aborted) {
-              throw new Error(`wait for ${name} was cancelled.`);
-            }
-
-            const pane = await findPaneForTerminal(terminal);
-            if (!pane) {
-              return {
-                content: [{ type: "text", text: `Terminal ${name} no longer exists.` }],
-                details: {
-                  action: params.action,
-                  workspace: state.workspaceName,
-                  terminal,
-                  waitFor,
-                  missing: true,
-                },
-              };
-            }
-
-            if (pane.exited) {
-              const exitStatus = typeof pane.exit_status === "number" ? pane.exit_status : null;
-              const finalOutput = await dumpTerminal(terminal, { full: true, ansi: params.ansi });
-              if (waitFor === "output" && outputMatches(finalOutput)) {
-                return buildMatchResult(finalOutput, { exited: true, exitStatus });
-              }
-              return buildExitedResult(exitStatus, finalOutput, waitFor !== "exit");
-            }
-
-            if (waitFor === "output" || waitFor === "silence") {
-              const currentOutput = await dumpTerminal(terminal, { full: true, ansi: params.ansi });
-              if (currentOutput !== lastSeenOutput) {
-                lastSeenOutput = currentOutput;
-                lastChangeAt = Date.now();
-              }
-
-              if (waitFor === "output" && outputMatches(currentOutput)) {
-                return buildMatchResult(currentOutput);
-              }
-
-              if (waitFor === "silence" && Date.now() - lastChangeAt >= idleMs) {
-                const payload = buildPayload(lastSeenOutput);
-                return {
-                  content: [
-                    {
-                      type: "text",
-                      text: `Wait finished for ${name} [${terminal.paneId}]\ncondition: silence for ${idleMs}ms\n\n${buildReadText(name, payload, "scrollback")}`,
-                    },
-                  ],
-                  details: {
-                    action: params.action,
-                    workspace: state.workspaceName,
-                    terminal,
-                    waitFor,
-                    idleMs,
-                    startLine: payload.startLine,
-                    endLine: payload.endLine,
-                    totalLines: payload.totalLines,
-                  },
-                };
-              }
-            }
-
-            if (Date.now() >= nextProgressAt) {
-              nextProgressAt = Date.now() + 2_000;
-              const previewOutputText =
-                waitFor === "exit"
-                  ? await dumpTerminal(terminal, { full: true, ansi: params.ansi })
-                  : lastSeenOutput;
-              const previewPayload = buildPayload(
-                previewOutputText,
-                Math.min(params.tail ?? 12, 20),
+                true,
               );
-              _onUpdate?.({
-                content: [
-                  {
-                    type: "text",
-                    text:
-                      `Still waiting on ${name} [${terminal.paneId}]` +
-                      `\ncondition: ${waitFor}${params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
-                      `\n\n${buildReadText(name, previewPayload, "scrollback")}`,
-                  },
-                ],
-                details: {
-                  action: params.action,
-                  workspace: state.workspaceName,
-                  terminal,
-                  waitFor,
-                  pattern: params.pattern ?? null,
-                  timeoutMs,
-                  previewStartLine: previewPayload.startLine,
-                  previewEndLine: previewPayload.endLine,
-                  previewTotalLines: previewPayload.totalLines,
+            const mode = params.mode ?? "scrollback";
+            if (mode === "delta" && (params.offset !== undefined || params.tail !== undefined))
+              throw new Error("Delta reads accept limit only. Use scrollback for offset or tail.");
+            const output = await dump(terminal, mode !== "screen", params.ansi);
+            const lines = linesOf(output);
+            if (mode === "delta") {
+              const start = commonPrefix(terminal.deltaSnapshot, lines);
+              const end = Math.min(lines.length, start + (params.limit ?? 120));
+              const selected = lines.slice(start, end).join("\n");
+              const answer = await result(
+                "read",
+                `${terminal.name}: ${end - start} changed lines. ${lines.length - end} lines remain unread.`,
+                selected,
+                {
+                  mode,
+                  startLine: start + 1,
+                  endLine: end,
+                  totalLines: lines.length,
+                  hasMoreAfter: end < lines.length,
                 },
-              });
+                terminal,
+              );
+              terminal.deltaSnapshot = lines.slice(0, end);
+              return answer;
             }
-
-            await new Promise((resolve) => setTimeout(resolve, pollMs));
+            const selected = selectLines(lines, params);
+            return result(
+              "read",
+              `${terminal.name} ${mode}: lines ${selected.startLine}-${selected.endLine} of ${selected.totalLines}.`,
+              selected.output,
+              { ...selected, mode },
+              terminal,
+            );
           }
-
-          const finalOutput =
-            waitFor === "exit"
-              ? await dumpTerminal(terminal, { full: true, ansi: params.ansi })
-              : lastSeenOutput;
-          const finalPayload = buildPayload(finalOutput, params.tail ?? 40);
-          throw new Error(
-            `Timed out waiting on ${name} [${terminal.paneId}] after ${timeoutMs}ms\ncondition: ${waitFor}${params.pattern ? ` matching ${JSON.stringify(params.pattern)}` : ""}` +
-              `\n\n${buildReadText(name, finalPayload, "scrollback")}`,
-          );
-        }
-
-        case "kill": {
-          const name = requireName(params);
-          const terminal = await getTerminalOrThrow(name);
-          await closeTerminal(terminal);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Killed terminal ${name} [${terminal.paneId}]`,
-              },
-            ],
-            details: { action: params.action, workspace: state.workspaceName, terminal },
-          };
+          case "wait":
+            return wait(await getTerminal(requireName(params)));
+          case "kill": {
+            const name = requireName(params);
+            const terminal = state.terminals.get(name) ?? (await recoverCreation(name));
+            if (terminal) await closeTerminal(terminal);
+            return result("killed", `Terminal ${name} is closed.`, "", { name }, terminal);
+          }
         }
       }
+
+      type ToolResult = Awaited<ReturnType<typeof result>>;
+      if (params.action === "list" || params.action === "wait")
+        return (await perform()) as ToolResult;
+      const answer = await enqueue(state.mutations, perform);
+      if (params.action === "run") {
+        const started = answer as { terminal: TerminalState; receipt: CommandRun };
+        return wait(started.terminal, "command", started.receipt);
+      }
+      return answer as ToolResult;
     },
   });
 }
