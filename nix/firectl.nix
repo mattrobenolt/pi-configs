@@ -1,15 +1,16 @@
 # firectl is closed-source; Fireworks publishes gzipped static binaries per
 # versioned path, so we pin version + hashes here. Latest version is listed in
-# the public bucket:
-#   curl 'https://storage.googleapis.com/fireworks-public?prefix=firectl/'
+# the public bucket (delimiter + max-keys are required; the bare listing
+# truncates at 100 keys and hides current releases):
+#   curl -s 'https://storage.googleapis.com/fireworks-public?prefix=firectl/&delimiter=/&max-keys=1000' | grep -oE '<Prefix>firectl/[0-9][^<]*/' | sort -V | tail -1
+# Then per platform: curl -sSL ".../<version>/<platform>.gz" -o /tmp/f.gz && nix hash file /tmp/f.gz
 { lib, stdenvNoCC, fetchurl }:
 
 let
-  version = "1.7.36";
+  version = "1.8.14";
 
   platforms = {
     "aarch64-darwin" = "darwin-arm64";
-    "x86_64-darwin" = "darwin-amd64";
     "x86_64-linux" = "linux-amd64";
     "aarch64-linux" = "linux-arm64";
   };
@@ -19,10 +20,9 @@ let
       or (throw "firectl: unsupported system ${stdenvNoCC.hostPlatform.system}");
 
   hashes = {
-    "darwin-arm64" = "sha256-3jdAFphtRqNMJyijrf8wqesrvzs9SujY3PP4bqwJ678=";
-    "darwin-amd64" = "sha256-0/3oUAjfdgl9BTllBDGkO8Rg3F5Hl8KhF09bWEIbMvs=";
-    "linux-amd64" = "sha256-wvfymj0BGcayNGzYAp+BMQkSQAlT/9RW59VLHyFsqPM=";
-    "linux-arm64" = "sha256-/nmIM2QVpH4X2kIlappxwszoiplkWZF/KgThG1VKMyo=";
+    "darwin-arm64" = "sha256-klHdG/7tuLBMYKyKpHLTyXEB7PfRdlAQKvHJS1fG800=";
+    "linux-amd64" = "sha256-D7h29bO4Yabpk+NaabFH+W74RmYzQawiEsk7LQY+Yec=";
+    "linux-arm64" = "sha256-vgcevC5RsIoynG36RKw5CeqrR7PAWR/tjECs2w1hIeM=";
   };
 in
 stdenvNoCC.mkDerivation {
