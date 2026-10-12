@@ -35,7 +35,7 @@
               jq
               gh
               pnpm
-              zig
+              zig_0_16
               self'.packages.firectl
             ];
             env.NPM_CONFIG_MIN_RELEASE_AGE = "0";

@@ -50,10 +50,7 @@ import type { BuildSystemPromptOptions, ExtensionAPI } from "@earendil-works/pi-
 
 const BASE_PROMPT = `You are a coding agent operating inside pi. You help the user by reading files, executing commands, editing code, and writing new files.`;
 
-const STATIC_GUIDELINES = [
-  "Be concise in your responses",
-  "Show file paths clearly when working with files",
-];
+const STATIC_GUIDELINES = ["Show file paths clearly when working with files"];
 
 // =============================================================================
 // Persona — the retired ~/.pi/agent/APPEND_SYSTEM.md, now owned by this

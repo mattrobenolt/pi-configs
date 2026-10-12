@@ -152,3 +152,23 @@ Full style rules (expression shape, enums-over-bools, buffers, arithmetic placem
 2. If a capability seems missing, grep `.std_dir` for where it moved before hand-rolling it.
 3. Read existing code in the project first; match established patterns.
 4. After writing, run `zig build test`, `zig build`, and every non-default build-flag combination the project documents.
+
+## Running one module's tests standalone (with dependency modules)
+
+To run a single module's tests outside `zig build` (fast iteration, direct
+stderr), pass the dependency modules on the compiler command line — each
+`--dep NAME` must come before the `-MNAME=...` that uses it:
+
+```sh
+zig test src/flate/root.zig \
+  --dep fastmem -Mflate=src/flate/root.zig \
+  --dep fastmem_options -Mfastmem=zig-pkg/fastmem-*/src/root.zig
+```
+
+Gotchas learned the hard way (zcompress, 2026-10):
+- `error: module 'X' declared but not used` means the root source file never
+  references `@import("X")` — only wire deps the root actually imports.
+- The fastmem module needs its generated `fastmem_options` companion module
+  (see fastmem's build.zig) when compiled outside our build graph.
+- ztest prints per-suite but hides which vector failed inside a table test;
+  a temporary print in the table runner is faster than binary-searching.
