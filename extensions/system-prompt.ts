@@ -221,7 +221,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", (event) => {
-    pendingPreview = (event.prompt ?? "").replace(/\s+/g, " ").slice(0, 80);
+    // 1.2.0 split the event: only user-started turns carry a prompt. Custom
+    // (idle-triggered) turns leave pendingPreview undefined so agent_start
+    // skips the snapshot, matching the "user prompt" gate below.
+    pendingPreview =
+      event.messageType === "user" ? event.prompt.replace(/\s+/g, " ").slice(0, 80) : undefined;
   });
 
   pi.on("agent_start", (_event, ctx) => {

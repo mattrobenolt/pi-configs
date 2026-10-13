@@ -1263,8 +1263,11 @@ export default function (pi: ExtensionAPI) {
   // or set PI_MEMORY_OPERATING_CONTEXT=1 / PI_MEMORY_AUTO_SEARCH=1 to restore injection.
   pi.on("before_agent_start", async (event, _ctx) => {
     const autoSearchEnabled = isAutoMemorySearchEnabled();
+    // 1.2.0 split the event: custom-triggered turns have no user prompt, so
+    // they search on (and record) the empty query like before.
+    const prompt = event.messageType === "user" ? event.prompt : "";
     const [searchResults, currentProjectKey] = await Promise.all([
-      autoSearchEnabled ? searchRelevantMemories(event.prompt ?? "") : Promise.resolve(null),
+      autoSearchEnabled ? searchRelevantMemories(prompt) : Promise.resolve(null),
       getProjectKey(),
     ]);
     const operatingContext = isOperatingMemoryEnabled() ? buildOperatingMemoryBrief() : "";
@@ -1278,7 +1281,7 @@ export default function (pi: ExtensionAPI) {
 
     lastMemoryInjection = {
       at: new Date().toISOString(),
-      prompt: event.prompt ?? "",
+      prompt,
       memoryContext,
       chars: memoryContext.length,
       sections: (memoryContext.match(/^## /gm) ?? []).length,
