@@ -27,6 +27,8 @@
 
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
+              fd
+              zstd
               nodejs
               python3
               zellij
