@@ -13,7 +13,7 @@
     "git:github.com/championswimmer/pi-cache-graph",
     "git:github.com/nicobailon/pi-subagents"
   ],
-  "lastChangelogVersion": "1.1.0",
+  "lastChangelogVersion": "1.2.0",
   "defaultProvider": "fireworks",
   "defaultModel": "accounts/fireworks/models/glm-5p3",
   "defaultThinkingLevel": "xhigh",
