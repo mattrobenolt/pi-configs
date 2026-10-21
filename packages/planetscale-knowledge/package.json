@@ -15,8 +15,8 @@
   },
   "dependencies": {},
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "catalog:",
+    "@earendil-works/pi-coding-agent": "catalog:",
     "typebox": "*"
   },
   "pi": {

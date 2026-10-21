@@ -16,7 +16,7 @@
     "@mattrobenolt/pi-core": "workspace:*"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-coding-agent": "catalog:",
     "typebox": "*"
   },
   "pi": {
