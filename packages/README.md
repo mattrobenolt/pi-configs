@@ -21,6 +21,7 @@ Current packages:
 - `memory/` — five-target memory system with qmd-backed search.
 - `notion/` — Notion tools for reading pages and databases. Extracts token from macOS Keychain automatically.
 - `pi-core/` — shared utilities used by other packages (tool output, file helpers, context, preview).
+- `prose-audit/` — deterministic prose auditor for synthetic-style signals. See `prose-audit/README.md`.
 - `slack/` — native Slack tools and background conversation loop. Kept installed, but filtered out by default in `settings.json`.
 - `term/` — named terminal workspace backed by zellij.
 - `todos/` — file-backed todo manager and selector.

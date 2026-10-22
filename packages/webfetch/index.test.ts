@@ -15,8 +15,14 @@ import {
   cleanMarkdown,
   convertHTMLToMarkdown,
   decodeHtmlEntities,
+  discoverLlmsTxt,
+  extractLlmsTxtUrl,
   extractMarkdownAlternateUrl,
   extractTextFromHTML,
+  isLlmsTxtDocument,
+  llmsTxtCandidateUrls,
+  markdownCandidateUrls,
+  parseLinkHeader,
   readResponseBytes,
   transformContent,
   validateAndNormalizeUrl,
@@ -108,6 +114,9 @@ test("transformContent returns non-html content unchanged for markdown output", 
   );
 });
 
+const offlineFetch: typeof globalThis.fetch = async () =>
+  new Response("not found", { status: 404 });
+
 test("transformContent uses Defuddle's Node API for html markdown extraction", async () => {
   const markdown = await transformContent(
     `<!doctype html>
@@ -125,6 +134,7 @@ test("transformContent uses Defuddle's Node API for html markdown extraction", a
     "text/html; charset=utf-8",
     "markdown",
     "https://example.com/article",
+    offlineFetch,
   );
 
   assert.match(markdown, /main article content/);
@@ -143,6 +153,7 @@ test("transformContent handles CSS-special IDs during Defuddle's hidden-content 
       "text/html",
       "markdown",
       "https://example.com/article",
+      offlineFetch,
     );
 
     assert.match(markdown, /tiny/);
@@ -182,6 +193,117 @@ test("extractMarkdownAlternateUrl returns null when no alternate link present", 
 test("extractMarkdownAlternateUrl returns null when href is empty", () => {
   const html = `<link rel="alternate" type="text/markdown" href="">`;
   assert.equal(extractMarkdownAlternateUrl(html, "https://example.com"), null);
+});
+
+// --- llmstxt.org link relations ---
+
+test("extractMarkdownAlternateUrl handles relation and type in any attribute order", () => {
+  const html = `<link href="/a.md" type="text/markdown" rel="alternate">`;
+  assert.equal(
+    extractMarkdownAlternateUrl(html, "https://example.com/p"),
+    "https://example.com/a.md",
+  );
+  const spaced = `<link rel="stylesheet alternate" type="text/markdown" href="/b.md">`;
+  assert.equal(
+    extractMarkdownAlternateUrl(spaced, "https://example.com/p"),
+    "https://example.com/b.md",
+  );
+});
+
+test("extractLlmsTxtUrl finds describedby and llms-txt relations", () => {
+  const described = `<link rel="describedby" href="/docs/llms.txt">`;
+  assert.equal(
+    extractLlmsTxtUrl(described, "https://example.com/docs/page"),
+    "https://example.com/docs/llms.txt",
+  );
+  const platform = `<link rel="llms-txt" href="https://example.com/llms.txt">`;
+  assert.equal(
+    extractLlmsTxtUrl(platform, "https://example.com/page"),
+    "https://example.com/llms.txt",
+  );
+  assert.equal(extractLlmsTxtUrl("<html></html>", "https://example.com"), null);
+});
+
+test("parseLinkHeader extracts alternate markdown and llms.txt relations", () => {
+  const header = [
+    '</docs/page.html.md>; rel="alternate"; type="text/markdown"',
+    '</docs/llms.txt>; rel="describedby"',
+    "</style.css>; rel=preload; as=style",
+  ].join(", ");
+  assert.deepEqual(parseLinkHeader(header, "https://example.com/docs/page.html"), {
+    alternateMarkdownUrl: "https://example.com/docs/page.html.md",
+    llmsTxtUrl: "https://example.com/docs/llms.txt",
+  });
+});
+
+test("parseLinkHeader accepts llms-txt and ignores non-markdown alternates", () => {
+  const header =
+    '</docs/llms.txt>; rel="llms-txt", </feed.xml>; rel="alternate"; type="application/rss+xml"';
+  assert.deepEqual(parseLinkHeader(header, "https://example.com/docs/"), {
+    alternateMarkdownUrl: null,
+    llmsTxtUrl: "https://example.com/docs/llms.txt",
+  });
+  assert.deepEqual(parseLinkHeader(null, "https://example.com"), {
+    alternateMarkdownUrl: null,
+    llmsTxtUrl: null,
+  });
+});
+
+// --- conventional markdown variants ---
+
+test("markdownCandidateUrls appends and replaces extensions like llmstxt.org", () => {
+  assert.deepEqual(markdownCandidateUrls("https://www.fastht.ml/docs/tutorials/by_example.html"), [
+    "https://www.fastht.ml/docs/tutorials/by_example.html.md",
+    "https://www.fastht.ml/docs/tutorials/by_example.md",
+  ]);
+  assert.deepEqual(markdownCandidateUrls("https://example.com/docs/overview"), [
+    "https://example.com/docs/overview.md",
+  ]);
+  assert.deepEqual(markdownCandidateUrls("https://example.com/docs/"), [
+    "https://example.com/docs/index.html.md",
+    "https://example.com/docs/index.md",
+  ]);
+  assert.deepEqual(markdownCandidateUrls("ftp://example.com/x.html"), []);
+});
+
+test("llmsTxtCandidateUrls prefers the most specific path, then the origin", () => {
+  assert.deepEqual(llmsTxtCandidateUrls("https://www.fastht.ml/docs/"), [
+    "https://www.fastht.ml/docs/llms.txt",
+    "https://www.fastht.ml/llms.txt",
+  ]);
+  assert.deepEqual(llmsTxtCandidateUrls("https://www.fastht.ml/"), [
+    "https://www.fastht.ml/llms.txt",
+  ]);
+  assert.deepEqual(llmsTxtCandidateUrls("https://www.fastht.ml/docs/page.html"), []);
+});
+
+test("isLlmsTxtDocument requires an H1 and allows a BOM", () => {
+  assert.equal(isLlmsTxtDocument("# FastHTML\n\n> FastHTML is a library."), true);
+  assert.equal(isLlmsTxtDocument("\uFEFF# FastHTML"), true);
+  assert.equal(isLlmsTxtDocument("<!doctype html><html>404</html>"), false);
+  assert.equal(isLlmsTxtDocument("just text"), false);
+});
+
+test("discoverLlmsTxt returns the most specific valid file and skips soft 404s", async () => {
+  const seen: string[] = [];
+  const mockFetch: typeof globalThis.fetch = async (input) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    seen.push(url);
+    if (url === "https://example.com/docs/llms.txt")
+      return new Response("<!doctype html><html>404</html>", {
+        headers: { "content-type": "text/html" },
+      });
+    if (url === "https://example.com/llms.txt")
+      return new Response("# Example\n\n> Summary", { headers: { "content-type": "text/plain" } });
+    return new Response("not found", { status: 404 });
+  };
+
+  assert.equal(
+    await discoverLlmsTxt("https://example.com/docs/", mockFetch),
+    "https://example.com/llms.txt",
+  );
+  assert.deepEqual(seen, ["https://example.com/docs/llms.txt", "https://example.com/llms.txt"]);
 });
 
 // --- cleanMarkdown ---
@@ -285,17 +407,15 @@ test("transformContent cancels alternate markdown fetches", async () => {
     <link rel="alternate" type="text/markdown" href="/page.md">
   </head><body><main><p>Fallback content.</p></main></body></html>`;
   const controller = new AbortController();
-  let alternateSignal: AbortSignal | null = null;
+  const signals: AbortSignal[] = [];
   const mockFetch: typeof globalThis.fetch = async (_input, init) => {
-    alternateSignal = init?.signal ?? null;
+    const current = init?.signal ?? null;
+    if (current) signals.push(current);
+    if (current?.aborted) throw new DOMException("Aborted", "AbortError");
     return new Promise<Response>((_resolve, reject) => {
-      alternateSignal?.addEventListener(
-        "abort",
-        () => reject(new DOMException("Aborted", "AbortError")),
-        {
-          once: true,
-        },
-      );
+      current?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+        once: true,
+      });
     });
   };
 
@@ -310,8 +430,123 @@ test("transformContent cancels alternate markdown fetches", async () => {
   controller.abort();
 
   const result = await pending;
-  assert.equal((alternateSignal as AbortSignal | null)?.aborted, true);
+  assert.ok(signals.length > 0);
+  assert.ok(signals.every((signal) => signal.aborted));
   assert.match(result, /Fallback content/);
+});
+
+// --- llmstxt.org markdown source resolution ---
+
+function trackingFetch(routes: Record<string, Response>): {
+  fetch: typeof globalThis.fetch;
+  requested: string[];
+} {
+  const requested: string[] = [];
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    requested.push(url);
+    const response = routes[url];
+    if (!response) return new Response("not found", { status: 404 });
+    if (init?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    return response.clone();
+  };
+  return { fetch, requested };
+}
+
+test("transformContent uses a Link header alternate before parsing HTML", async () => {
+  const { fetch, requested } = trackingFetch({
+    "https://example.com/page.md": new Response("# From header\n", {
+      headers: { "content-type": "text/markdown" },
+    }),
+  });
+  const relations = parseLinkHeader(
+    '<https://example.com/page.md>; rel="alternate"; type="text/markdown"',
+    "https://example.com/page",
+  );
+
+  const result = await transformContent(
+    "<html><body><main><p>HTML fallback.</p></main></body></html>",
+    "text/html",
+    "markdown",
+    "https://example.com/page",
+    fetch,
+    undefined,
+    undefined,
+    relations,
+  );
+
+  assert.match(result, /From header/);
+  assert.deepEqual(requested, ["https://example.com/page.md"]);
+});
+
+test("transformContent probes page.html.md when no alternate is declared", async () => {
+  const { fetch, requested } = trackingFetch({
+    "https://www.fastht.ml/docs/tutorials/by_example.html.md": new Response("# Probed markdown\n", {
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    }),
+  });
+
+  const result = await transformContent(
+    "<html><body><main><p>HTML fallback.</p></main></body></html>",
+    "text/html",
+    "markdown",
+    "https://www.fastht.ml/docs/tutorials/by_example.html",
+    fetch,
+  );
+
+  assert.match(result, /Probed markdown/);
+  assert.deepEqual(requested, ["https://www.fastht.ml/docs/tutorials/by_example.html.md"]);
+});
+
+test("transformContent probes an extensionless .md sibling", async () => {
+  const { fetch, requested } = trackingFetch({
+    "https://example.com/docs/overview.md": new Response("# Overview\n", {
+      headers: { "content-type": "text/markdown" },
+    }),
+  });
+
+  const result = await transformContent(
+    "<html><body><main><p>HTML fallback.</p></main></body></html>",
+    "text/html",
+    "markdown",
+    "https://example.com/docs/overview",
+    fetch,
+  );
+
+  assert.match(result, /Overview/);
+  assert.deepEqual(requested, ["https://example.com/docs/overview.md"]);
+});
+
+test("transformContent rejects HTML soft 404s for .md probes", async () => {
+  const { fetch } = trackingFetch({
+    "https://example.com/page.html.md": new Response(
+      "<!doctype html><html><body>Not found</body></html>",
+      { headers: { "content-type": "text/html; charset=utf-8" } },
+    ),
+  });
+
+  const result = await transformContent(
+    "<html><body><main><p>Real page content.</p></main></body></html>",
+    "text/html",
+    "markdown",
+    "https://example.com/page.html",
+    fetch,
+  );
+
+  assert.match(result, /Real page content/);
+  assert.doesNotMatch(result, /Not found/);
+});
+
+test("transformContent skips markdown probing for raw output", async () => {
+  const { fetch, requested } = trackingFetch({});
+  const html = "<html><body><p>raw</p></body></html>";
+
+  assert.equal(
+    await transformContent(html, "text/html", "raw", "https://example.com/page.html", fetch),
+    html,
+  );
+  assert.deepEqual(requested, []);
 });
 
 // --- chunkMarkdown ---

@@ -1,22 +1,31 @@
 import fs from "node:fs/promises";
 
-import { auditProse, GENRES, type Genre, type ProseAuditResult } from "./index.ts";
+import {
+  auditProse,
+  GENRES,
+  ruleCatalog,
+  type Finding,
+  type Genre,
+  type ProseAuditResult,
+} from "./index.ts";
 
 interface Options {
   input?: string;
   text?: string;
   genre: Genre;
   json: boolean;
+  rules: boolean;
 }
 
 function usage(): string {
-  return `Usage: prose-audit [--json] [--genre GENRE] [--text TEXT | FILE | -]
+  return `Usage: prose-audit [--json] [--genre GENRE] [--rules] [--text TEXT | FILE | -]
 
 Audit prose for explainable AI-style signals. The score is not an authorship probability.
 
 Options:
   --json          Emit the complete result as JSON
   --genre GENRE   ${GENRES.join(", ")} (default: general)
+  --rules         List the deterministic rule catalog
   --text TEXT     Audit a literal string
   -h, --help      Show this help
 
@@ -24,7 +33,7 @@ Use '-' or omit FILE to read stdin.`;
 }
 
 function parseArgs(args: string[]): Options {
-  const options: Options = { genre: "general", json: false };
+  const options: Options = { genre: "general", json: false, rules: false };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -34,6 +43,10 @@ function parseArgs(args: string[]): Options {
     }
     if (arg === "--json") {
       options.json = true;
+      continue;
+    }
+    if (arg === "--rules") {
+      options.rules = true;
       continue;
     }
     if (arg === "--genre") {
@@ -74,23 +87,46 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function printRules(): void {
+  const rules = [...ruleCatalog()].sort(
+    (left, right) => left.category.localeCompare(right.category) || left.id.localeCompare(right.id),
+  );
+  process.stdout.write("id\tcategory\tweight\tconfidence\tsource\tdescription\n");
+  for (const rule of rules) {
+    process.stdout.write(
+      `${rule.id}\t${rule.category}\t${rule.weight}\t${rule.confidence}\t${rule.source}\t${rule.description}\n`,
+    );
+  }
+}
+
+function sortedFindings(result: ProseAuditResult): Finding[] {
+  return [...result.findings].sort(
+    (left, right) => right.penalty - left.penalty || left.start - right.start,
+  );
+}
+
 function printHuman(result: ProseAuditResult): void {
   const score = result.synthetic_style_score ?? "n/a";
   process.stdout.write(
     `Synthetic style: ${score}/100 (${result.band}, ${result.confidence} confidence)\n`,
   );
+  const categoryText = Object.entries(result.categories)
+    .map(([category, value]) => `${category} ${value.findings}`)
+    .join(" · ");
   process.stdout.write(
-    `${result.metrics.words} words · ${result.metrics.sentences} sentences · ${result.findings.length} findings\n`,
+    `${result.metrics.words} words · ${result.metrics.sentences} sentences · ${result.findings.length} findings${categoryText ? ` · ${categoryText}` : ""}\n`,
   );
 
-  for (const finding of result.findings.slice(0, 20)) {
+  const findings = sortedFindings(result);
+  for (const finding of findings.slice(0, 20)) {
     process.stdout.write(
-      `\n${finding.severity.toUpperCase()} ${finding.rule} at ${finding.line}:${finding.column}\n`,
+      `\n${finding.severity.toUpperCase()} ${finding.rule} at ${finding.line}:${finding.column} (${finding.confidence} confidence)\n`,
     );
     process.stdout.write(`  ${finding.message}\n  “${finding.evidence}”\n`);
+    process.stdout.write(`  Fix: ${finding.fix}\n`);
   }
-  if (result.findings.length > 20) {
-    process.stdout.write(`\n… ${result.findings.length - 20} more findings; use --json for all.\n`);
+  if (findings.length > 20) {
+    process.stdout.write(`\n… ${findings.length - 20} more findings; use --json for all.\n`);
   }
   process.stdout.write(`\nCaveat: ${result.caveats[0]}\n`);
 }
@@ -98,6 +134,10 @@ function printHuman(result: ProseAuditResult): void {
 async function main(): Promise<void> {
   try {
     const options = parseArgs(process.argv.slice(2));
+    if (options.rules) {
+      printRules();
+      return;
+    }
     const text =
       options.text ??
       (options.input && options.input !== "-"

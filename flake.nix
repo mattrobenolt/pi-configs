@@ -2,6 +2,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    mattware = {
+      url = "github:mattrobenolt/nixpkgs";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -26,20 +30,24 @@
           packages.firectl = pkgs.callPackage ./nix/firectl.nix { };
 
           devShells.default = pkgs.mkShell {
-            packages = with pkgs; [
-              fd
-              zstd
-              nodejs
-              python3
-              zellij
-              nushell
-              zoxide
-              jq
-              gh
-              pnpm
-              zig_0_16
-              self'.packages.firectl
-            ];
+            packages =
+              with pkgs;
+              [
+                fd
+                zstd
+                nodejs
+                python3
+                zellij
+                nushell
+                zoxide
+                jq
+                gh
+                pnpm
+                zig_0_16
+                inputs.mattware.packages.${system}.skills-ref
+                self'.packages.firectl
+              ]
+              ++ lib.optionals stdenv.hostPlatform.isLinux [ chromium ];
             env.NPM_CONFIG_MIN_RELEASE_AGE = "0";
           };
         };

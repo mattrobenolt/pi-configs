@@ -22,12 +22,15 @@ function compactResult(result: ProseAuditResult): string {
     .slice(0, 12)
     .map(
       (finding) =>
-        `- ${finding.rule} at ${finding.line}:${finding.column}: ${finding.message}\n  “${finding.evidence}”`,
+        `- ${finding.rule} at ${finding.line}:${finding.column} (${finding.confidence}): ${finding.message}\n  “${finding.evidence}”\n  Fix: ${finding.fix}`,
     );
+  const categories = Object.entries(result.categories)
+    .map(([category, value]) => `${category} ${value.findings}`)
+    .join(" · ");
 
   return [
     `Synthetic style score: ${score}/100 (${result.band}, ${result.confidence} confidence)`,
-    `${result.metrics.words} words; ${result.findings.length} findings; genre: ${result.genre}`,
+    `${result.metrics.words} words; ${result.findings.length} findings; genre: ${result.genre}${categories ? `; ${categories}` : ""}`,
     top.length ? `\nHighest-value findings:\n${top.join("\n")}` : "\nNo configured tells found.",
     `\n${result.caveats.join(" ")}`,
   ].join("\n");
@@ -38,10 +41,11 @@ export default function proseAuditExtension(pi: ExtensionAPI) {
     name: "prose_audit",
     label: "Prose Audit",
     description:
-      "Audit prose for explainable AI-style lexical, rhetorical, formatting, and rhythm signals. Accepts exactly one of text or path. The score measures style, not authorship. The full structured result is returned in details.",
+      "Audit prose for explainable AI-style lexical, rhetorical, structural, cadence, grounding, and formatting signals. Accepts exactly one of text or path. The score measures style, not authorship. The full structured result is returned in details.",
     promptSnippet: "Audit prose for synthetic or formulaic writing patterns",
     promptGuidelines: [
       "Use prose_audit when prose may sound synthetic or formulaic; treat its score as a style signal, never proof of authorship.",
+      "Read cadence, structure, and grounding findings together with lexical hits; surface slop often has no unusual vocabulary.",
     ],
     parameters: AuditParams,
     async execute(_toolCallId, params: AuditInput, signal, _onUpdate, ctx) {
@@ -81,8 +85,11 @@ export default function proseAuditExtension(pi: ExtensionAPI) {
 
       const audit = details.result;
       const score = audit.synthetic_style_score ?? "n/a";
+      const categories = Object.entries(audit.categories)
+        .map(([category, value]) => `${category} ${value.findings}`)
+        .join(" · ");
       const lines = [
-        `${theme.fg("success", `${score}/100`)} ${theme.fg("muted", `${audit.band} · ${audit.metrics.words} words · ${audit.findings.length} findings`)}`,
+        `${theme.fg("success", `${score}/100`)} ${theme.fg("muted", `${audit.band} · ${audit.metrics.words} words · ${audit.findings.length} findings${categories ? ` · ${categories}` : ""}`)}`,
       ];
       if (expanded) lines.push("", compactResult(audit));
       return new Text(lines.join("\n"), 0, 0);

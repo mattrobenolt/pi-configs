@@ -1,6 +1,6 @@
 # DeepSeek V4.1 Flash — Evidence Brief
 
-**pi ID:** `fireworks/accounts/fireworks/models/deepseek-v4p1-flash`
+**pi ID:** `fireworks/accounts/fireworks/models/deepseek-v4p1-flash-1017`
 **Status in pi:** intra-family escalation seat (0731 → v4p1 → K3) + fast/long-output vision; default stays 0731 (settled 2026-09-12)
 **Brief posture:** launch-day add + full local eval. Vendor numbers flagged where unverified.
 
@@ -11,9 +11,9 @@
 - **Vendor:** DeepSeek. GA 2026-09-10 ([api-docs news](https://api-docs.deepseek.com/news/news260910)); live on Fireworks same day (created 2026-09-10, `Ready`). HF: [deepseek-ai/DeepSeek-V4.1-Flash](https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash), tech report on the repo.
 - **Architecture:** new base model, not a V4-Flash post-train. 552B backbone MoE with a **causal encoder-decoder**: 8B active during prefill, 16B during decode; KV cache footprint ~1/4 of V4-Flash (paper title: "Pushing the Limits of KV Cache Compression"). Natively multimodal (vision + text). First-party API exposes a continuous reasoning effort 1–100; Fireworks exposes the usual enum.
 - **Context:** 1M (1,048,576, confirmed via the inference API `models` endpoint). Function calling + image input confirmed live.
-- **Pricing (Fireworks serverless):** $0.22 / $0.007 cached / $0.66 — identical sticker to V4 Flash 0731 post-hike.
+- **Pricing (Fireworks serverless):** $0.30 / $0.006 cached / $1.20 (corrected 2026-10-18 against Fireworks' pricing page; the launch-era sticker was $0.22 / $0.007 / $0.66).
 - **Thinking:** always on. Fireworks enum `low/medium/high/xhigh/max`; `minimal` rejected by the route ("Input should be 'low', 'medium'…"), no `off` — reasoning tokens appear even with no effort param. Probed live 2026-09-10 on openai-completions. Same ladder shape as GLM 5.3 Flash. pi entry carries `thinkingLevelMap: { off: null, minimal: null }`.
-- **Undated slug:** `deepseek-v4p1-flash` has no dated variant yet. The 0731 lesson (undated alias silently re-pointed) applies — pin a dated slug when one appears.
+- **Slug:** pinned to the dated slug `deepseek-v4p1-flash-1017` (2026-10-18, updated checkpoint — same model, straight drop-in). Resolves the 0731-lesson bullet below: the undated alias risk is now moot.
 
 ## 2. Vendor claims (unverified unless noted)
 
@@ -54,7 +54,7 @@ Method notes: probe scorer regexes miscalibrated (curly apostrophes, phrasing va
 - **Intra-family escalation rung: TAKEN from Pro-0813.** Hard-pack duel: 4/4 = 4/4 at $0.076 vs $0.198, faster wall (68s vs 94s avg). Independent agreement: AA v4.3 scores v4p1 40 > Pro 36; DeepSeek retired Pro first-party themselves (cutoff 2026-09-14). **The DeepSeek ladder is 0731 → v4p1 → K3.** Same-family bans carry to the rung: never a verifier; hands-on logic-breaks reports (below) say gate open-ended logic-heavy work externally.
 - **Default seat: stays 0731 — resolved on durable grounds, not the transient cache state.** AA v4.3 puts v4p1 at 40, **below GLM-5.3 (45) and K3 (44) on the same index** — the launch claim of frontier-class capability (DeepSWE 74.2, "beats our own flagship") did not survive neutral measurement. And verbosity (250M output tokens on AA's index vs 130M median) makes v4p1 ~1.5-2x 0731 per accepted text task even with caching on. 0731 also keeps the `off`/`minimal` gear v4p1 lacks.
 - **Vision seat: v4p1's where wall-time or output length matters.** Fastest measured pass (17s vs GLM 5.3 Flash's 43s) at 2.9x GLM's per-run cost (both trivial), with the 384K cap GLM lacks. GLM 5.3 Flash keeps batch-cheap vision.
-- **Deep context: capable.** 925K needles clean; $0.007 cache reads. Joins GLM 5.3 Flash in the sub-$1 deep-context club once the in-loop cache rate settles.
+- **Deep context: capable.** 925K needles clean; $0.006 cache reads. Joins GLM 5.3 Flash in the sub-$1 deep-context club once the in-loop cache rate settles.
 - **Verifier ban stands** (1/5 fabrication on traps, family prior, n=5). **Schema ban softened to unconfirmed** (10/10 clean, matches Pro-0813).
 - **Independent hands-on caveat (MindStudio, 2026-09-12):** four open-ended build tests (SVG, Rubik's-cube sim, Paint portrait, ray-tracer) — "plausible scaffolding quickly, but the underlying logic frequently breaks under scrutiny"; the cube sim replayed scramble moves instead of solving. Same family shape as 0731's agentic-strong/reasoning-weak profile. External verification for open-ended logic-heavy work.
 

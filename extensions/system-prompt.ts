@@ -108,7 +108,7 @@ function copyToClipboard(text: string, ctx: ExtensionCommandContext): void {
     ctx.ui.notify("Clipboard copy only wired up for macOS", "warning");
     return;
   }
-  const child = execFile("pbcopy", [], (err) => {
+  const child = execFile("pbcopy", [], { signal: ctx.signal }, (err) => {
     ctx.ui.notify(
       err ? `pbcopy failed: ${err.message}` : "Copied to clipboard",
       err ? "error" : "info",

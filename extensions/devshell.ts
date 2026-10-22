@@ -35,6 +35,29 @@ function shellQuote(input: string): string {
   return `'${input.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * Reject as soon as `signal` aborts, without cancelling `promise` itself. Direnv loads are
+ * shared across callers; a cancelled bash call must not abort a load others still await.
+ */
+function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
 function readFileIfExists(file: string): string {
   try {
     return fs.readFileSync(file, "utf8");
@@ -307,8 +330,14 @@ function loadDirenv(cwd: string, ctx: ExtensionContext): Promise<DirenvResult> {
   });
 }
 
-async function rewriteWithRtk(pi: ExtensionAPI, command: string): Promise<string> {
-  const result = await pi.exec("rtk", ["rewrite", command], { timeout: 5_000 }).catch(() => null);
+async function rewriteWithRtk(
+  pi: ExtensionAPI,
+  command: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const result = await pi
+    .exec("rtk", ["rewrite", command], { timeout: 5_000, signal })
+    .catch(() => null);
   const rewritten = result?.stdout.trim();
   return rewritten && rewritten !== command ? rewritten : command;
 }
@@ -503,11 +532,16 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: stockBash.promptGuidelines,
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const cwd = process.cwd();
-      const direnvResult = await refreshDirenvIfChanged(cwd, "watched files changed before bash");
+      // direnv export is shared work: race it so a cancelled bash call returns now,
+      // without aborting a load that the status bar and later calls still need.
+      const direnvResult = await raceAbort(
+        refreshDirenvIfChanged(cwd, "watched files changed before bash"),
+        signal,
+      );
       if (direnvResult.status === "blocked" || direnvResult.status === "error") {
         throw new Error(direnvResult.detail ?? direnvResult.summary ?? "direnv failed to load");
       }
-      const rewritten = await rewriteWithRtk(pi, params.command);
+      const rewritten = await rewriteWithRtk(pi, params.command, signal);
       const result = await stockBash.execute(
         toolCallId,
         { ...params, command: wrapForCwd(rewritten, cwd) },

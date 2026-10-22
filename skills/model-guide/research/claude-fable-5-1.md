@@ -1,8 +1,8 @@
 # Claude Fable 5.1 — Evidence Brief
 
 **pi ID:** `anthropic/claude-fable-5-1`
-**Status in pi:** the juggernaut — drop-in successor to Fable 5 (Matt directive, 2026-09-09)
-**Brief posture:** launch-week add. Fable 5 brief archived at `research/fable-5.md`; family-level evidence from it carries as priors, flagged where unmeasured on 5.1.
+**Status in pi:** **archived — not routed.** The active Claude juggernaut is Mythos 5.1 (`research/claude-mythos-5-1.md`); this brief is kept only as the shared Claude 5.1 capability record.
+**Brief posture:** launch-week evidence, archived after the 2026-10-19 roster removal. Family-level evidence carries as priors for Mythos, flagged where unmeasured.
 
 ---
 

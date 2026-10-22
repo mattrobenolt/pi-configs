@@ -35,7 +35,7 @@ Parameters:
 - `timeout`: request timeout in seconds. Defaults to 30, capped at 120.
 - `objective`: optional focus query for markdown output. The full page is fetched and converted first, then a local model extracts the relevant subset. If narrowing fails, the tool falls back to full markdown.
 
-`raw` intentionally bypasses Defuddle, markdown cleanup, and objective narrowing.
+`raw` intentionally bypasses markdown discovery, Defuddle, markdown cleanup, and objective narrowing.
 
 ### `websearch`
 
@@ -87,10 +87,20 @@ For normal web pages, `webfetch` uses this pipeline:
 fetch URL → size/content-type checks → image handling → markdown extraction → cleanup → optional objective narrowing → truncation
 ```
 
+Markdown source discovery follows [llmstxt.org](https://llmstxt.org/) in this order:
+
+1. Content negotiates with `Accept: text/markdown, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1`. Servers that already return markdown are used as-is.
+2. Uses a declared alternate: `Link: <...>; rel="alternate"; type="text/markdown"` or `<link rel="alternate" type="text/markdown">`.
+3. Probes the conventional variants: `page.html.md`, `page.md`, `index.html.md`, `index.md`.
+4. Falls back to Defuddle, then Turndown.
+
+Alternates and probes must return 2xx markdown or plain text. HTML soft 404s are rejected, and each probe has a 3-second timeout.
+
+For directory URLs (`/` or `/docs/`), `webfetch` looks for `<path>/llms.txt`, then `/llms.txt`. When a valid file exists, the output gets a one-line pointer to it. Pages that declare `rel="describedby"` or `rel="llms-txt"` get the pointer without a probe. A valid file must start with an H1, per the spec. The pointer is appended after objective narrowing, so it never reaches the extraction model.
+
 Extraction details:
 
 - Uses Defuddle's Node API for readable HTML extraction.
-- Looks for `<link rel="alternate" type="text/markdown">` and uses that markdown source when available.
 - Strips common tracking query params from markdown links.
 - Removes empty markdown links.
 - Normalizes table separator rows without touching fenced code blocks.

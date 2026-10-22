@@ -567,23 +567,23 @@ export async function syncSources(
   return { synced, skipped };
 }
 
-async function runQmd(args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("qmd", args, { maxBuffer: 10 * 1024 * 1024 });
+async function runQmd(args: string[], signal?: AbortSignal): Promise<string> {
+  const { stdout } = await execFileAsync("qmd", args, { maxBuffer: 10 * 1024 * 1024, signal });
   return stdout;
 }
 
-async function qmdAvailable(): Promise<boolean> {
+async function qmdAvailable(signal?: AbortSignal): Promise<boolean> {
   try {
-    await runQmd(["status"]);
+    await runQmd(["status"], signal);
     return true;
   } catch {
     return false;
   }
 }
 
-async function collectionExists(name: string): Promise<boolean> {
+async function collectionExists(name: string, signal?: AbortSignal): Promise<boolean> {
   try {
-    const raw = await runQmd(["collection", "list", "--json"]);
+    const raw = await runQmd(["collection", "list", "--json"], signal);
     try {
       const collections = JSON.parse(raw) as Array<string | { name?: string }>;
       return collections.some((entry) =>
@@ -597,9 +597,12 @@ async function collectionExists(name: string): Promise<boolean> {
   }
 }
 
-async function configuredCollectionPath(name: string): Promise<string | null> {
+async function configuredCollectionPath(
+  name: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
   try {
-    const output = await runQmd(["collection", "show", name]);
+    const output = await runQmd(["collection", "show", name], signal);
     const match = output.match(/^\s*Path:\s+(.+)$/m);
     return match?.[1]?.trim() ?? null;
   } catch {
@@ -607,23 +610,31 @@ async function configuredCollectionPath(name: string): Promise<string | null> {
   }
 }
 
-async function ensureCollection(audience: Audience, root: string): Promise<void> {
+async function ensureCollection(
+  audience: Audience,
+  root: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const name = collectionFor(audience);
   const expectedPath = corpusPath(audience, root);
-  if (await collectionExists(name)) {
-    if ((await configuredCollectionPath(name)) === expectedPath) return;
-    await runQmd(["collection", "remove", name]);
+  if (await collectionExists(name, signal)) {
+    if ((await configuredCollectionPath(name, signal)) === expectedPath) return;
+    await runQmd(["collection", "remove", name], signal);
   }
-  await runQmd(["collection", "add", expectedPath, "--name", name]);
+  await runQmd(["collection", "add", expectedPath, "--name", name], signal);
 }
 
-async function updateIndex(includeRestricted: boolean, root: string): Promise<void> {
+async function updateIndex(
+  includeRestricted: boolean,
+  root: string,
+  signal?: AbortSignal,
+): Promise<void> {
   for (const audience of includeRestricted
     ? (["public", "internal", "restricted"] as const)
     : (["public", "internal"] as const)) {
-    await ensureCollection(audience, root);
+    await ensureCollection(audience, root, signal);
   }
-  await runQmd(["update"]);
+  await runQmd(["update"], signal);
 }
 
 // Every mutation touches the same shared state (claims.jsonl, the corpus
@@ -650,9 +661,13 @@ async function searchCollection(
   mode: "keyword" | "deep",
   collection: string,
   limit: number,
+  signal?: AbortSignal,
 ): Promise<QmdResult[]> {
   const command = mode === "keyword" ? "search" : "query";
-  const raw = await runQmd([command, "--json", "-c", collection, "-n", String(limit), query]);
+  const raw = await runQmd(
+    [command, "--json", "-c", collection, "-n", String(limit), query],
+    signal,
+  );
   const parsed = JSON.parse(raw) as QmdResult[];
   return Array.isArray(parsed) ? parsed : [];
 }
@@ -708,6 +723,7 @@ async function searchKnowledge(
   includeRestricted: boolean,
   limit: number,
   root = knowledgeRoot(),
+  signal?: AbortSignal,
 ): Promise<string> {
   const collections = includeRestricted
     ? [DEFAULT_COLLECTION, RESTRICTED_COLLECTION]
@@ -715,7 +731,7 @@ async function searchKnowledge(
   const results = await Promise.all(
     collections.map(async (collection) => ({
       collection,
-      results: await searchCollection(query, mode, collection, limit),
+      results: await searchCollection(query, mode, collection, limit, signal),
     })),
   );
   const matches: Array<{ hit: QmdResult; entry: CatalogEntry | undefined }> = [];
@@ -747,7 +763,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
     description:
       "Show the local PlanetScale knowledge corpus configuration and whether qmd is available.",
     parameters: Type.Object({}),
-    async execute() {
+    async execute(_id, _params, signal) {
       const root = knowledgeRoot();
       const sources = await loadSources(root);
       return {
@@ -756,7 +772,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
             type: "text",
             text: [
               `Knowledge root: ${root}`,
-              `qmd: ${(await qmdAvailable()) ? "available" : "unavailable"}`,
+              `qmd: ${(await qmdAvailable(signal)) ? "available" : "unavailable"}`,
               `Sources (${sources.length}):`,
               ...sources.map(
                 (source) =>
@@ -782,14 +798,14 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
         Type.Boolean({ description: "Include configured restricted incident sources." }),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_id, params, signal) {
       return serializeMutation(async () => {
-        if (!(await qmdAvailable()))
+        if (!(await qmdAvailable(signal)))
           throw new Error("qmd is required. Add it to the dev shell or make it available on PATH.");
         const root = knowledgeRoot();
         const includeRestricted = params.include_restricted ?? false;
         const result = await syncSources(includeRestricted, root);
-        await updateIndex(includeRestricted, root);
+        await updateIndex(includeRestricted, root, signal);
         return {
           content: [
             {
@@ -836,16 +852,16 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
         Type.Integer({ minimum: 1, maximum: 10, description: "Maximum result count." }),
       ),
     }),
-    async execute(_id, params) {
-      if (!(await qmdAvailable()))
+    async execute(_id, params, signal) {
+      if (!(await qmdAvailable(signal)))
         throw new Error("qmd is required. Run planetscale_knowledge_sync after qmd is available.");
       const root = knowledgeRoot();
-      if (!(await collectionExists(DEFAULT_COLLECTION))) {
+      if (!(await collectionExists(DEFAULT_COLLECTION, signal))) {
         throw new Error(
           "PlanetScale knowledge has not been synced. Call planetscale_knowledge_sync first.",
         );
       }
-      if (params.include_restricted && !(await collectionExists(RESTRICTED_COLLECTION))) {
+      if (params.include_restricted && !(await collectionExists(RESTRICTED_COLLECTION, signal))) {
         throw new Error(
           "Restricted knowledge has not been synced. Call planetscale_knowledge_sync with include_restricted=true first.",
         );
@@ -856,6 +872,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
         params.include_restricted ?? false,
         params.limit ?? 5,
         root,
+        signal,
       );
       return {
         content: [{ type: "text", text }],
@@ -924,7 +941,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_id, params, signal) {
       return serializeMutation(async () => {
         const error = validateClaim({
           kind: params.kind,
@@ -971,7 +988,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
         await ensureRoot(root);
         await fs.appendFile(claimsPath(root), `${JSON.stringify(claim)}\n`);
         await materializeClaims(root);
-        if (await qmdAvailable()) await updateIndex(audience === "restricted", root);
+        if (await qmdAvailable(signal)) await updateIndex(audience === "restricted", root, signal);
 
         return {
           content: [
@@ -1043,7 +1060,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_id, params, signal) {
       return serializeMutation(async () => {
         const hasUpdate = [
           params.kind,
@@ -1080,10 +1097,11 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
         claims[index] = updated;
         await writeClaims(claims, root);
         await materializeClaims(root);
-        if (await qmdAvailable()) {
+        if (await qmdAvailable(signal)) {
           await updateIndex(
             claims.some((claim) => claim.audience === "restricted"),
             root,
+            signal,
           );
         }
 
@@ -1107,7 +1125,7 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
           "Record ID returned by planetscale_knowledge_search or planetscale_knowledge_record.",
       }),
     }),
-    async execute(_id, params) {
+    async execute(_id, params, signal) {
       return serializeMutation(async () => {
         const root = knowledgeRoot();
         const claims = await readClaims(root);
@@ -1117,10 +1135,11 @@ export default function planetscaleKnowledgeExtension(pi: ExtensionAPI) {
         const remaining = claims.filter((item) => item.id !== params.id);
         await writeClaims(remaining, root);
         await materializeClaims(root);
-        if (await qmdAvailable()) {
+        if (await qmdAvailable(signal)) {
           await updateIndex(
             remaining.some((item) => item.audience === "restricted"),
             root,
+            signal,
           );
         }
 

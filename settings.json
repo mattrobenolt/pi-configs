@@ -13,7 +13,7 @@
     "git:github.com/championswimmer/pi-cache-graph",
     "git:github.com/nicobailon/pi-subagents"
   ],
-  "lastChangelogVersion": "1.2.0",
+  "lastChangelogVersion": "1.4.0",
   "defaultProvider": "fireworks",
   "defaultModel": "accounts/fireworks/models/glm-5p3",
   "defaultThinkingLevel": "xhigh",
@@ -27,20 +27,20 @@
     "+codemode"
   ],
   "enabledModels": [
-    "anthropic/claude-fable-5-1",
+    "anthropic/claude-mythos-5-1",
     "anthropic/claude-opus-5-5",
     "anthropic/claude-sonnet-5-5",
     "anthropic/claude-haiku-5-5",
-    "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
+    "fireworks/accounts/fireworks/models/deepseek-v4p1-flash-1017",
     "fireworks/accounts/fireworks/models/ember-1",
     "fireworks/accounts/fireworks/models/glm-5p3",
     "fireworks/accounts/fireworks/models/kimi-k3",
     "fireworks/accounts/fireworks/models/minimax-m3",
     "fireworks/accounts/fireworks/models/qwen3p8-max",
     "google/gemini-3.8-flash",
-    "openai-codex/gpt-6-astra",
-    "openai-codex/gpt-6-luna",
-    "openai-codex/gpt-6.1-sol"
+    "openai/gpt-6-astra",
+    "openai/gpt-6-luna",
+    "openai/gpt-6.1-sol"
   ],
   "steeringMode": "all",
   "quietStartup": true,
@@ -103,7 +103,7 @@
         "thinking": "low"
       },
       "researcher": {
-        "model": "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
+        "model": "fireworks/accounts/fireworks/models/deepseek-v4p1-flash-1017",
         "thinking": "medium"
       },
       "evidence-auditor": {
@@ -111,7 +111,7 @@
         "thinking": "high"
       },
       "worker": {
-        "model": "fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
+        "model": "fireworks/accounts/fireworks/models/deepseek-v4p1-flash-1017",
         "thinking": "max"
       },
       "reviewer": {

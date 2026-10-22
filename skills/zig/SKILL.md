@@ -88,9 +88,9 @@ Defense: build the option matrix, not just the default. Run BOTH `zig build test
 
 ## `std.posix` was gutted
 
-The medium layer is gone. Survivors include `read`, `setsockopt`, `mmap`/`munmap`, `kill`/`raise`, `openat`, `sched_getaffinity`, signal-set helpers, `sigaltstack`. Everything else: go **higher** (`std.Io`) or **lower** (`std.posix.system` — `std.os.linux` without libc, `std.c` with libc).
+The medium layer is gone. Survivors include `read`, `setsockopt`, `mmap`/`munmap`, `kill`/`raise`, `openat`, `sched_getaffinity`, signal-set helpers, `sigaltstack`. There is no `std.posix.write` — write through `Io`, or `linux.write` at the raw layer. Everything else: go **higher** (`std.Io`) or **lower** (`std.posix.system` — `std.os.linux` without libc, `std.c` with libc).
 
-**setsockopt landmine:** `std.posix.setsockopt` maps `EINVAL` to `unreachable` — UB in ReleaseFast. For any option where EINVAL is a legitimate runtime failure, use the raw layer and decode errno yourself. See [references/linux-raw-layer.md](references/linux-raw-layer.md).
+**setsockopt landmine:** `std.posix.setsockopt` maps `EINVAL` to `unreachable` — UB in ReleaseFast. For any option where EINVAL is a legitimate runtime failure, use the raw layer and decode errno yourself. It also type-checks `SO_RCVTIMEO`/`SO_SNDTIMEO`: the `timeval` is validated and a too-large value returns `error.TimeoutTooBig`, so pass microseconds (`std.time.us_per_ms`), not nanoseconds. See [references/linux-raw-layer.md](references/linux-raw-layer.md).
 
 ## `std.mem` renames — "index of" is now "find"
 

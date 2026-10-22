@@ -18,6 +18,17 @@ const UTM_PARAMS = [
   "mc_eid",
 ];
 
+const MARKDOWN_ALTERNATE_TIMEOUT_MS = 10_000;
+const MARKDOWN_PROBE_TIMEOUT_MS = 3_000;
+const LLMS_TXT_TIMEOUT_MS = 4_000;
+const LLMS_TXT_MAX_BYTES = 256 * 1024;
+const MARKDOWN_ACCEPT = "text/markdown, text/x-markdown;q=0.9, text/plain;q=0.8, */*;q=0.1";
+
+export type LinkRelations = {
+  alternateMarkdownUrl: string | null;
+  llmsTxtUrl: string | null;
+};
+
 const DEFUDDLE_OPTS = {
   markdown: true,
   removeExactSelectors: true,
@@ -84,34 +95,37 @@ export async function transformContent(
   fetchFn: typeof globalThis.fetch = globalThis.fetch,
   signal?: AbortSignal,
   maxResponseBytes = 5 * 1024 * 1024,
+  linkRelations?: LinkRelations,
 ): Promise<string> {
   if (format === "raw") return raw;
   if (contentType.toLowerCase().includes("text/html")) {
-    // Try the markdown alternate URL declared in the HTML head before parsing HTML.
-    const alternateUrl = extractMarkdownAlternateUrl(raw, url);
-    if (alternateUrl) {
-      try {
-        const res = await fetchFn(alternateUrl, {
-          headers: { Accept: "text/markdown, text/plain;q=0.9, */*;q=0.1" },
-          signal: signal
-            ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-            : AbortSignal.timeout(10_000),
-        });
-        if (res.ok) {
-          const ct = res.headers.get("content-type") ?? "";
-          if (
-            ct.includes("text/markdown") ||
-            ct.includes("text/plain") ||
-            alternateUrl.endsWith(".md") ||
-            alternateUrl.endsWith(".mdx")
-          ) {
-            const text = new TextDecoder().decode(await readResponseBytes(res, maxResponseBytes));
-            if (text.trim()) return cleanMarkdown(text);
-          }
-        }
-      } catch {
-        // Alternate fetch failed — fall through to HTML extraction.
-      }
+    // Prefer a declared markdown alternate, then the conventional .md variants
+    // described by llmstxt.org. Both can fail cheaply; HTML extraction is the fallback.
+    const declared = linkRelations?.alternateMarkdownUrl ?? extractMarkdownAlternateUrl(raw, url);
+    const attempted = new Set<string>();
+    if (declared) {
+      attempted.add(declared);
+      const fetched = await fetchMarkdownVariant(
+        declared,
+        fetchFn,
+        signal,
+        maxResponseBytes,
+        MARKDOWN_ALTERNATE_TIMEOUT_MS,
+      );
+      if (fetched) return fetched;
+    }
+
+    for (const candidate of markdownCandidateUrls(url)) {
+      if (candidate === url || attempted.has(candidate)) continue;
+      attempted.add(candidate);
+      const fetched = await fetchMarkdownVariant(
+        candidate,
+        fetchFn,
+        signal,
+        maxResponseBytes,
+        MARKDOWN_PROBE_TIMEOUT_MS,
+      );
+      if (fetched) return fetched;
     }
 
     try {
@@ -134,22 +148,237 @@ export async function transformContent(
  * Returns an absolute URL string, or null if not present / not safe to use.
  */
 export function extractMarkdownAlternateUrl(html: string, baseUrl: string): string | null {
-  // Quick bailout — avoid regex on huge non-HTML strings.
+  // Quick bailout — avoid scanning huge non-HTML strings.
   if (!html.includes("alternate")) return null;
-  const match =
-    html.match(
-      /<link[^>]+rel=["']alternate["'][^>]+type=["']text\/markdown["'][^>]+href=["']([^"']+)["'][^>]*>/i,
-    ) ??
-    html.match(
-      /<link[^>]+href=["']([^"']+)["'][^>]+type=["']text\/markdown["'][^>]+rel=["']alternate["'][^>]*>/i,
-    );
-  const href = match?.[1]?.trim();
-  if (!href) return null;
+  for (const attrs of parseHtmlLinkTags(html)) {
+    if (!hasRel(attrs, "alternate")) continue;
+    if (!(attrs.type ?? "").toLowerCase().includes("text/markdown")) continue;
+    const resolved = resolveHref(attrs.href, baseUrl);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+/**
+ * Extract the llms.txt URL declared with `<link rel="describedby">` (or the
+ * `llms-txt` relation some doc platforms emit) in the HTML head.
+ */
+export function extractLlmsTxtUrl(html: string, baseUrl: string): string | null {
+  if (!html.includes("describedby") && !html.includes("llms-txt")) return null;
+  for (const attrs of parseHtmlLinkTags(html)) {
+    if (!hasRel(attrs, "describedby") && !hasRel(attrs, "llms-txt")) continue;
+    const resolved = resolveHref(attrs.href, baseUrl);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+const HTML_LINK_TAG_RE = /<link\b[^>]*>/gi;
+const HTML_ATTRIBUTE_RE = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+
+function parseHtmlLinkTags(html: string): Array<Record<string, string>> {
+  const tags: Array<Record<string, string>> = [];
+  for (const tag of html.match(HTML_LINK_TAG_RE) ?? []) {
+    const attrs: Record<string, string> = {};
+    for (const match of tag.matchAll(HTML_ATTRIBUTE_RE)) {
+      const name = match[1].toLowerCase();
+      attrs[name] ??= match[2] ?? match[3] ?? match[4] ?? "";
+    }
+    tags.push(attrs);
+  }
+  return tags;
+}
+
+function hasRel(attrs: Record<string, string>, relation: string): boolean {
+  return (attrs.rel ?? "").toLowerCase().split(/\s+/).includes(relation);
+}
+
+function resolveHref(href: string | undefined, baseUrl: string): string | null {
+  const value = href?.trim();
+  if (!value) return null;
   try {
-    return new URL(href, baseUrl).toString();
+    return new URL(value, baseUrl).toString();
   } catch {
     return null;
   }
+}
+
+/**
+ * Parse RFC 8288 `Link` response headers for the relations llmstxt.org uses:
+ * `rel="alternate" type="text/markdown"` and `rel="describedby"` (plus the
+ * `llms-txt` spelling emitted by some documentation platforms).
+ */
+export function parseLinkHeader(header: string | null | undefined, baseUrl: string): LinkRelations {
+  const relations: LinkRelations = { alternateMarkdownUrl: null, llmsTxtUrl: null };
+  if (!header) return relations;
+
+  for (const match of header.matchAll(/<([^>]*)>([^<]*)/g)) {
+    const resolved = resolveHref(match[1], baseUrl);
+    if (!resolved) continue;
+    const params = match[2] ?? "";
+    const rel = linkParam(params, "rel").toLowerCase().split(/\s+/).filter(Boolean);
+    const type = linkParam(params, "type").toLowerCase();
+    if (
+      !relations.alternateMarkdownUrl &&
+      rel.includes("alternate") &&
+      type.includes("text/markdown")
+    )
+      relations.alternateMarkdownUrl = resolved;
+    if (!relations.llmsTxtUrl && (rel.includes("describedby") || rel.includes("llms-txt")))
+      relations.llmsTxtUrl = resolved;
+  }
+  return relations;
+}
+
+function linkParam(params: string, name: string): string {
+  const match = params.match(new RegExp(`(?:^|;)\\s*${name}\\s*=\\s*(?:"([^"]*)"|([^;]*))`, "i"));
+  return (match?.[1] ?? match?.[2] ?? "").trim();
+}
+
+/**
+ * Conventional markdown variants for a URL, per llmstxt.org: append `.md` to
+ * the full filename (`page.html.md`), replace the extension (`page.md`), or use
+ * `index.html.md` / `index.md` for URLs without a filename.
+ */
+export function markdownCandidateUrls(url: string): string[] {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return [];
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return [];
+
+  const candidates: string[] = [];
+  const add = (pathname: string) => {
+    const candidate = new URL(parsed.toString());
+    candidate.pathname = pathname;
+    candidate.hash = "";
+    const value = candidate.toString();
+    if (!candidates.includes(value)) candidates.push(value);
+  };
+
+  const path = parsed.pathname;
+  const dir = path.slice(0, path.lastIndexOf("/") + 1);
+  const base = path.slice(path.lastIndexOf("/") + 1);
+
+  if (!base) {
+    add(`${path}index.html.md`);
+    add(`${path}index.md`);
+    return candidates;
+  }
+
+  add(`${path}.md`);
+  const dot = base.lastIndexOf(".");
+  if (dot > 0) add(`${dir}${base.slice(0, dot)}.md`);
+  return candidates;
+}
+
+/**
+ * llms.txt locations that cover a directory URL: the most specific path first,
+ * then the origin root. Non-directory URLs get no candidates; fetching a page
+ * must not trigger arbitrary sibling requests.
+ */
+export function llmsTxtCandidateUrls(url: string): string[] {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return [];
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return [];
+  if (!parsed.pathname.endsWith("/")) return [];
+
+  const candidates: string[] = [];
+  const add = (pathname: string) => {
+    const candidate = new URL(parsed.toString());
+    candidate.pathname = pathname;
+    candidate.search = "";
+    candidate.hash = "";
+    const value = candidate.toString();
+    if (!candidates.includes(value)) candidates.push(value);
+  };
+
+  add(`${parsed.pathname}llms.txt`);
+  if (parsed.pathname !== "/") add("/llms.txt");
+  return candidates;
+}
+
+/** The spec requires an H1 as the first content line; this rejects soft 404s. */
+export function isLlmsTxtDocument(text: string): boolean {
+  const body = text.startsWith("\uFEFF") ? text.slice(1) : text;
+  return /^\s*#\s+\S/.test(body);
+}
+
+/** Return the URL of the most specific llms.txt that covers this directory URL. */
+export async function discoverLlmsTxt(
+  url: string,
+  fetchFn: typeof globalThis.fetch = globalThis.fetch,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  for (const candidate of llmsTxtCandidateUrls(url)) {
+    const timeout = AbortSignal.timeout(LLMS_TXT_TIMEOUT_MS);
+    const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    try {
+      const response = await fetchFn(candidate, {
+        headers: { Accept: "text/plain, text/markdown;q=0.9, */*;q=0.1" },
+        signal: requestSignal,
+      });
+      if (!response.ok) continue;
+      const type = (response.headers.get("content-type") ?? "").toLowerCase();
+      if (type.includes("html")) continue;
+      const text = new TextDecoder().decode(await readResponseBytes(response, LLMS_TXT_MAX_BYTES));
+      if (isLlmsTxtDocument(text)) return candidate;
+    } catch {
+      // Timed out or unreadable — try the next candidate.
+    }
+  }
+  return null;
+}
+
+async function fetchMarkdownVariant(
+  url: string,
+  fetchFn: typeof globalThis.fetch,
+  signal: AbortSignal | undefined,
+  maxBytes: number,
+  timeoutMs: number,
+): Promise<string | null> {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  try {
+    const response = await fetchFn(url, {
+      headers: { Accept: MARKDOWN_ACCEPT },
+      signal: requestSignal,
+    });
+    if (!response.ok) return null;
+    if (!isMarkdownResponse(response, url)) return null;
+    const text = new TextDecoder().decode(await readResponseBytes(response, maxBytes));
+    if (!text.trim() || looksLikeHtmlDocument(text)) return null;
+    return cleanMarkdown(text);
+  } catch {
+    return null;
+  }
+}
+
+function isMarkdownResponse(response: Response, url: string): boolean {
+  const type = (response.headers.get("content-type") ?? "").toLowerCase();
+  if (type.includes("html")) return false;
+  if (type.includes("text/markdown") || type.includes("text/x-markdown")) return true;
+  if (type.includes("text/plain")) return true;
+  return isMarkdownPath(url) && !type.startsWith("image/");
+}
+
+function isMarkdownPath(url: string): boolean {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    return path.endsWith(".md") || path.endsWith(".mdx");
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeHtmlDocument(text: string): boolean {
+  return /^\s*(?:<!doctype\s+html|<html\b)/i.test(text);
 }
 
 /**

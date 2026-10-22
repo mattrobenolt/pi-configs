@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { auditProse } from "./index.ts";
+import { auditProse, ruleCatalog } from "./index.ts";
 
 const synthetic = `
 # Transforming the Modern Data Landscape
@@ -122,4 +122,83 @@ test("flags heavily packaged verification-report structure", () => {
   assert.ok(
     result.findings.some((finding) => finding.rule === "structure.repeated-status-headings"),
   );
+});
+
+test("flags short, blatant slop even when the score abstains", () => {
+  const text =
+    "In today's fast-paced world, let's be honest: this is not just a tool. It's a mindset. The future belongs to teams that quietly prioritize what matters.";
+  const result = auditProse(text);
+
+  assert.equal(result.synthetic_style_score, null);
+  assert.ok(result.findings.some((finding) => finding.rule === "lexical.stock-opener"));
+  assert.ok(result.findings.some((finding) => finding.rule === "rhetoric.negation-reframe"));
+});
+
+test("catches cadence slop that has no unusual vocabulary", () => {
+  const text =
+    "We rebuilt the deploy pipeline last month. It is faster. It is simpler. It is safer. The old system was not bad. It was just old. Here's what changed. First, we replaced the queue. Then we removed the cache. Finally, we added retries. That's it. That's the whole change. The lesson is simple. Small changes compound. The future belongs to teams that ship.";
+  const result = auditProse(text);
+
+  assert.ok(result.synthetic_style_score !== null);
+  assert.ok(result.synthetic_style_score >= 60);
+  assert.ok(result.findings.some((finding) => finding.rule === "cadence.punchy-fragment-run"));
+  assert.ok(result.findings.some((finding) => finding.rule === "cadence.repeated-sentence-starts"));
+  assert.ok(result.categories.cadence);
+});
+
+test("flags a cluster of weak GPT-era vocabulary", () => {
+  const text = `
+The practical answer is to prioritize the steady work that makes the system clearer and more dependable.
+A practical team will prioritize steady habits, clear language, and dependable review.
+The result is clearer ownership and a steady rhythm that quietly keeps the work practical.
+That is the challenge: make the system dependable without pretending the work is simple.
+`;
+  const result = auditProse(text);
+
+  assert.ok(result.findings.some((finding) => finding.rule === "lexical.ai-vocabulary-density"));
+});
+
+test("flags notability padding and empty significance", () => {
+  const text = `
+The project has been featured in several regional media outlets and trade publications.
+Its independent coverage stands as a testament to the team's enduring legacy.
+The work underscores the importance of collaboration and highlights the significance of the broader movement.
+`;
+  const result = auditProse(text, { genre: "marketing" });
+
+  assert.ok(result.findings.some((finding) => finding.rule === "lexical.notability"));
+  assert.ok(result.findings.some((finding) => finding.rule === "lexical.inflated-significance"));
+});
+
+test("exposes every emitted rule in the catalog", () => {
+  const rules = ruleCatalog();
+  const ids = rules.map((rule) => rule.id);
+  const findings = [
+    ...auditProse(
+      "It is important to note that experts argue this stands as a testament to the evolving landscape. Additionally, the work offers valuable insights.",
+    ).findings,
+    ...auditProse(
+      "We rebuilt the pipeline. It is fast. It is simple. That's it. Here's what changed. The lesson is simple. The future belongs to teams that ship.",
+    ).findings,
+  ];
+  for (const finding of findings) {
+    assert.ok(ids.includes(finding.rule), `missing catalog entry for ${finding.rule}`);
+  }
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test("does not flag terse concrete narrative as cadence slop", () => {
+  const text =
+    "The room was quiet. The fan hummed. The server logged one request. I closed the laptop and went home.";
+  const result = auditProse(text);
+
+  assert.equal(result.findings.length, 0);
+});
+
+test("masks nested markdown fences without leaving the inner code as prose", () => {
+  const text = `${direct}\n\n\`\`\`\`md\n\`\`\`text\nIt is not just code, it's a tapestry.\n\`\`\`\n\`\`\`\`\n\nThe build failed at 14:02.`;
+  const result = auditProse(text, { genre: "technical" });
+
+  assert.equal(result.findings.length, 0);
+  assert.equal(result.metrics.fenced_code_blocks, 1);
 });

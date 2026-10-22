@@ -26,7 +26,7 @@
  *   - scratchpad + today's daily + project MEMORY.md + global MEMORY.md + yesterday's daily
  */
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -378,10 +378,10 @@ function getQmdUpdateMode(): "background" | "manual" | "off" {
   return "background";
 }
 
-async function ensureQmdAvailableForUpdate(): Promise<boolean> {
+async function ensureQmdAvailableForUpdate(signal?: AbortSignal): Promise<boolean> {
   if (qmdAvailable) return true;
   if (getQmdUpdateMode() !== "background") return false;
-  qmdAvailable = await detectQmd();
+  qmdAvailable = await detectQmd(signal);
   return qmdAvailable;
 }
 
@@ -502,6 +502,30 @@ export function buildOperatingMemoryBrief(): string {
 type ExecFileFn = typeof execFile;
 let execFileFn: ExecFileFn = execFile;
 
+/**
+ * Reject as soon as `signal` aborts, without cancelling `promise` itself. Use this for
+ * work shared between callers (daemon startup): one cancelled tool call must not tear
+ * down a process another call is still waiting on.
+ */
+function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
 interface LastMemoryInjection {
   at: string;
   prompt: string;
@@ -546,12 +570,12 @@ export function normalizeGitRemote(url: string): string | null {
 }
 
 /** Get the git root for the given working directory, or null if not in a repo. */
-export function getGitRoot(cwd = process.cwd()): Promise<string | null> {
+export function getGitRoot(cwd = process.cwd(), signal?: AbortSignal): Promise<string | null> {
   return new Promise((resolve) => {
     execFileFn(
       "git",
       ["rev-parse", "--show-toplevel"],
-      { cwd, timeout: 3_000 },
+      { cwd, timeout: 3_000, signal },
       (err, stdout, _stderr) => {
         resolve(err || !stdout?.trim() ? null : stdout.trim());
       },
@@ -563,6 +587,7 @@ export function getGitRoot(cwd = process.cwd()): Promise<string | null> {
 export function resolveProjectKey(
   gitRoot: string | null,
   cwd = process.cwd(),
+  signal?: AbortSignal,
 ): Promise<string | null> {
   if (!gitRoot) {
     const rel = cwd.replace(/^\//, "");
@@ -577,7 +602,7 @@ export function resolveProjectKey(
     execFileFn(
       "git",
       ["-C", gitRoot, "remote", "get-url", "origin"],
-      { timeout: 3_000 },
+      { timeout: 3_000, signal },
       (err, remoteUrl) => {
         const key =
           err || !remoteUrl?.trim()
@@ -591,19 +616,22 @@ export function resolveProjectKey(
 }
 
 /** Get the current project key for the tracked cwd. */
-export async function getProjectKey(cwd = process.cwd()): Promise<string | null> {
-  const gitRoot = await getGitRoot(cwd);
+export async function getProjectKey(
+  cwd = process.cwd(),
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const gitRoot = await getGitRoot(cwd, signal);
   if (!gitRoot) {
     const cacheKey = `cwd:${cwd}`;
     const cached = projectKeyCache.get(cacheKey);
     if (cached !== undefined) return cached;
 
-    const key = await resolveProjectKey(null, cwd);
+    const key = await resolveProjectKey(null, cwd, signal);
     projectKeyCache.set(cacheKey, key);
     return key;
   }
 
-  return resolveProjectKey(gitRoot, cwd);
+  return resolveProjectKey(gitRoot, cwd, signal);
 }
 
 /** Override execFile implementation (for testing). */
@@ -642,7 +670,9 @@ export function _clearUpdateTimer() {
 const QMD_REPO_URL = "https://github.com/tobi/qmd";
 const DEFAULT_QMD_DAEMON_URL = "http://localhost:8181";
 const QMD_DAEMON_HEALTH_TIMEOUT_MS = 750;
-const QMD_DAEMON_START_TIMEOUT_MS = 15_000;
+// Must clear a cold embedding load in the daemon (~7s on CPU) but trip on a wedged
+// response, e.g. LLM reranking, which takes 45s+ here.
+const QMD_DAEMON_REQUEST_TIMEOUT_MS = 15_000;
 const QMD_DAEMON_RETRY_COOLDOWN_MS = 30_000;
 const QMD_DAEMON_READY_ATTEMPTS = 10;
 const QMD_DAEMON_READY_DELAY_MS = 300;
@@ -672,14 +702,14 @@ export function qmdCollectionInstructions(): string {
 }
 
 /** Auto-create the pi-projects collection for per-project memory files. */
-export async function setupProjectsCollection(): Promise<boolean> {
+export async function setupProjectsCollection(signal?: AbortSignal): Promise<boolean> {
   fs.mkdirSync(PROJECTS_DIR, { recursive: true });
   try {
     await new Promise<void>((resolve, reject) => {
       execFileFn(
         "qmd",
         ["collection", "add", PROJECTS_DIR, "--name", "pi-projects"],
-        { timeout: 10_000 },
+        { signal },
         (err) => (err ? reject(err) : resolve()),
       );
     });
@@ -815,24 +845,21 @@ async function qmdHttpGetJson(endpoint: string, timeoutMs: number): Promise<unkn
 async function qmdHttpPostJson(
   endpoint: string,
   body: unknown,
-  timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`${getQmdDaemonUrl()}${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`QMD daemon ${response.status}: ${await response.text()}`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
+  // Bound the daemon request, not the work: a wedged daemon response must fall back to
+  // the CLI instead of hanging the tool call. CLI searches have no timeout.
+  const timeout = AbortSignal.timeout(QMD_DAEMON_REQUEST_TIMEOUT_MS);
+  const response = await fetch(`${getQmdDaemonUrl()}${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  });
+  if (!response.ok) {
+    throw new Error(`QMD daemon ${response.status}: ${await response.text()}`);
   }
+  return await response.json();
 }
 
 async function qmdDaemonHealthCheck(timeoutMs = QMD_DAEMON_HEALTH_TIMEOUT_MS): Promise<boolean> {
@@ -846,27 +873,40 @@ async function qmdDaemonHealthCheck(timeoutMs = QMD_DAEMON_HEALTH_TIMEOUT_MS): P
 }
 
 async function startQmdDaemon(): Promise<boolean> {
+  // `qmd mcp --http --daemon` re-execs itself with a tsx --import preload that packaged
+  // builds do not ship, so the child dies with "preload not found". Start the foreground
+  // server detached instead; readiness is handled by waitForQmdDaemonReady().
+  const cacheDir = process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");
+  const logPath = path.join(cacheDir, "qmd", "mcp.log");
+  let logFd: number;
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    logFd = fs.openSync(logPath, "w");
+  } catch {
+    logFd = fs.openSync(os.devNull, "w");
+  }
+
   return await new Promise((resolve) => {
-    execFileFn(
-      "qmd",
-      ["mcp", "--http", "--daemon"],
-      { timeout: QMD_DAEMON_START_TIMEOUT_MS },
-      (err, stdout, stderr) => {
-        if (!err) {
-          qmdLastDebug = `daemon started: ${(stdout ?? stderr ?? "").trim() || "ok"}`;
-          resolve(true);
-          return;
-        }
-        const message = [stderr?.trim(), stdout?.trim(), err.message].filter(Boolean).join(" | ");
-        if (/already running/i.test(message)) {
-          qmdLastDebug = `daemon already running: ${message}`;
-          resolve(true);
-          return;
-        }
-        qmdLastDebug = `daemon start failed: ${message}`;
+    try {
+      const child = spawn("qmd", ["mcp", "--http"], {
+        detached: true,
+        stdio: ["ignore", logFd, logFd],
+      });
+      child.once("error", (err) => {
+        qmdLastDebug = `daemon spawn failed: ${err.message}`;
         resolve(false);
-      },
-    );
+      });
+      child.once("spawn", () => {
+        child.unref();
+        qmdLastDebug = `daemon spawned (pid ${child.pid ?? "?"})`;
+        resolve(true);
+      });
+    } catch (err) {
+      qmdLastDebug = `daemon spawn failed: ${err instanceof Error ? err.message : String(err)}`;
+      resolve(false);
+    } finally {
+      fs.closeSync(logFd);
+    }
   });
 }
 
@@ -938,6 +978,7 @@ async function runQmdSearchHttp(
   query: string,
   limit: number,
   collection: string,
+  signal?: AbortSignal,
 ): Promise<{ results: QmdSearchResult[]; stderr: string; transport: string }> {
   const parsed = (await qmdHttpPostJson(
     "/query",
@@ -945,8 +986,11 @@ async function runQmdSearchHttp(
       searches: qmdHttpSearches(mode, query),
       limit,
       collections: [collection],
+      // The CLI equivalents (`qmd search`, `qmd vsearch`) never rerank; only `qmd query`
+      // (deep) does. Reranking 40 candidates on CPU costs ~45s per search.
+      rerank: mode === "deep",
     },
-    60_000,
+    signal,
   )) as { results?: QmdSearchResult[]; hits?: QmdSearchResult[] } | QmdSearchResult[];
 
   const results = Array.isArray(parsed) ? parsed : (parsed.results ?? parsed.hits ?? []);
@@ -959,14 +1003,16 @@ async function runQmdSearchCli(
   query: string,
   limit: number,
   collection: string,
+  signal?: AbortSignal,
 ): Promise<{ results: QmdSearchResult[]; stderr: string; transport: string }> {
   const subcommand = mode === "keyword" ? "search" : mode === "semantic" ? "vsearch" : "query";
   const args = [subcommand, "--json", "-c", collection, "-n", String(limit), query];
 
   return await new Promise((resolve, reject) => {
-    execFileFn("qmd", args, { timeout: 60_000 }, (err, stdout, stderr) => {
+    execFileFn("qmd", args, { signal }, (err, stdout, stderr) => {
       if (err) {
-        reject(new Error(stderr?.trim() || err.message));
+        // Preserve abort identity so callers can tell cancellation from a qmd failure.
+        reject(err.name === "AbortError" ? err : new Error(stderr?.trim() || err.message));
         return;
       }
       try {
@@ -987,18 +1033,18 @@ async function runQmdSearchCli(
   });
 }
 
-export function detectQmd(): Promise<boolean> {
+export function detectQmd(signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     // qmd doesn't reliably support --version; use a fast command that exits 0 when available.
-    execFileFn("qmd", ["status"], { timeout: 5_000 }, (err) => {
+    execFileFn("qmd", ["status"], { timeout: 5_000, signal }, (err) => {
       resolve(!err);
     });
   });
 }
 
-export function checkCollection(name: string): Promise<boolean> {
+export function checkCollection(name: string, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
-    execFileFn("qmd", ["collection", "list", "--json"], { timeout: 10_000 }, (err, stdout) => {
+    execFileFn("qmd", ["collection", "list", "--json"], { signal }, (err, stdout) => {
       if (err) {
         resolve(false);
         return;
@@ -1033,11 +1079,14 @@ export async function runQmdSearchAll(
   query: string,
   limit: number,
   collections: string[] = ["pi-memory", "pi-projects", "pi-sessions"],
+  signal?: AbortSignal,
 ): Promise<{ results: QmdSearchResult[]; stderr: string; transports: string[]; debug: string[] }> {
   const searches = collections.map((collection) =>
-    runQmdSearch(mode, query, limit, collection).then((value) => ({ collection, value })),
+    runQmdSearch(mode, query, limit, collection, signal).then((value) => ({ collection, value })),
   );
   const settled = await Promise.allSettled(searches);
+  // allSettled hides cancellation as "no results"; surface it instead.
+  if (signal?.aborted) throw signal.reason;
   const combined: QmdSearchResult[] = [];
   let stderr = "";
   const transports: string[] = [];
@@ -1057,13 +1106,13 @@ export async function runQmdSearchAll(
 }
 
 /** Auto-create the pi-memory collection and path contexts in qmd. */
-export async function setupQmdCollection(): Promise<boolean> {
+export async function setupQmdCollection(signal?: AbortSignal): Promise<boolean> {
   try {
     await new Promise<void>((resolve, reject) => {
       execFileFn(
         "qmd",
         ["collection", "add", MEMORY_DIR, "--name", "pi-memory"],
-        { timeout: 10_000 },
+        { signal },
         (err) => (err ? reject(err) : resolve()),
       );
     });
@@ -1083,7 +1132,7 @@ export async function setupQmdCollection(): Promise<boolean> {
         execFileFn(
           "qmd",
           ["context", "add", ctxPath, desc, "-c", "pi-memory"],
-          { timeout: 10_000 },
+          { signal },
           (err) => (err ? reject(err) : resolve()),
         );
       });
@@ -1100,7 +1149,7 @@ export function scheduleQmdUpdate() {
   if (updateTimer) clearTimeout(updateTimer);
   updateTimer = setTimeout(() => {
     updateTimer = null;
-    execFileFn("qmd", ["update"], { timeout: 30_000 }, () => {});
+    execFileFn("qmd", ["update"], {}, () => {});
   }, 500);
 }
 
@@ -1108,7 +1157,7 @@ async function runQmdUpdateNow() {
   if (getQmdUpdateMode() !== "background") return;
   if (!qmdAvailable) return;
   await new Promise<void>((resolve) => {
-    execFileFn("qmd", ["update"], { timeout: 30_000 }, () => resolve());
+    execFileFn("qmd", ["update"], {}, () => resolve());
   });
 }
 
@@ -1121,7 +1170,10 @@ interface RelevantMemorySearch {
 }
 
 /** Search for memories relevant to the user's prompt. Returns formatted markdown or null on error/no results. */
-export async function searchRelevantMemories(prompt: string): Promise<RelevantMemorySearch | null> {
+export async function searchRelevantMemories(
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<RelevantMemorySearch | null> {
   if (!qmdAvailable || !prompt.trim()) return null;
 
   // Sanitize: strip control chars, limit to 200 chars for the search query
@@ -1132,10 +1184,16 @@ export async function searchRelevantMemories(prompt: string): Promise<RelevantMe
   if (!sanitized) return null;
 
   try {
-    const hasCollection = await checkCollection("pi-memory");
+    const hasCollection = await checkCollection("pi-memory", signal);
     if (!hasCollection) return null;
 
-    const results = await runQmdSearchAll("keyword", sanitized, 3, ["pi-memory", "pi-projects"]);
+    const results = await runQmdSearchAll(
+      "keyword",
+      sanitized,
+      3,
+      ["pi-memory", "pi-projects"],
+      signal,
+    );
 
     if (!results || results.results.length === 0) return null;
 
@@ -1163,19 +1221,23 @@ export async function runQmdSearch(
   query: string,
   limit: number,
   collection = "pi-memory",
+  signal?: AbortSignal,
 ): Promise<{ results: QmdSearchResult[]; stderr: string; transport: string; debug: string }> {
-  if (await ensureQmdDaemon()) {
+  // Deep mode makes the daemon rerank, which never finishes inside the request bound,
+  // so the CLI is the only path where it can complete without duplicating the work.
+  if (mode !== "deep" && (await raceAbort(ensureQmdDaemon(), signal))) {
     try {
-      const result = await runQmdSearchHttp(mode, query, limit, collection);
+      const result = await runQmdSearchHttp(mode, query, limit, collection, signal);
       return { ...result, debug: qmdLastDebug };
     } catch (err) {
+      if (signal?.aborted) throw err;
       qmdDaemonHealthy = false;
       qmdDaemonRetryAfter = Date.now() + QMD_DAEMON_RETRY_COOLDOWN_MS;
       qmdLastDebug = `http search failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 
-  const result = await runQmdSearchCli(mode, query, limit, collection);
+  const result = await runQmdSearchCli(mode, query, limit, collection, signal);
   return { ...result, debug: qmdLastDebug };
 }
 
@@ -1212,7 +1274,7 @@ export default function (pi: ExtensionAPI) {
             execFileFn(
               "qmd",
               ["collection", "add", SESSIONS_INDEX_DIR, "--name", "pi-sessions"],
-              { timeout: 10_000 },
+              {},
               () => resolve(),
             );
           });
@@ -1261,14 +1323,14 @@ export default function (pi: ExtensionAPI) {
   // All automatic memory injection is opt-in. Running qmd or re-inserting operating memory
   // on every model request is noisy; use memory_brief/memory_search for deliberate lookups,
   // or set PI_MEMORY_OPERATING_CONTEXT=1 / PI_MEMORY_AUTO_SEARCH=1 to restore injection.
-  pi.on("before_agent_start", async (event, _ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     const autoSearchEnabled = isAutoMemorySearchEnabled();
     // 1.2.0 split the event: custom-triggered turns have no user prompt, so
     // they search on (and record) the empty query like before.
     const prompt = event.messageType === "user" ? event.prompt : "";
     const [searchResults, currentProjectKey] = await Promise.all([
-      autoSearchEnabled ? searchRelevantMemories(prompt) : Promise.resolve(null),
-      getProjectKey(),
+      autoSearchEnabled ? searchRelevantMemories(prompt, ctx.signal) : Promise.resolve(null),
+      getProjectKey(process.cwd(), ctx.signal),
     ]);
     const operatingContext = isOperatingMemoryEnabled() ? buildOperatingMemoryBrief() : "";
     const searchContext = buildMemoryContext(searchResults?.text, currentProjectKey);
@@ -1382,12 +1444,12 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       ensureDirs();
       const { target, content, mode } = params;
       const sid = shortSessionId(ctx.sessionManager.getSessionId());
       const ts = nowTimestamp();
-      const projectKey = target === "project" ? await getProjectKey() : null;
+      const projectKey = target === "project" ? await getProjectKey(process.cwd(), signal) : null;
 
       if (target === "self" || target === "user") {
         const filePath = target === "self" ? SELF_FILE : USER_FILE;
@@ -1405,7 +1467,7 @@ export default function (pi: ExtensionAPI) {
             "utf-8",
           );
         }
-        await ensureQmdAvailableForUpdate();
+        await ensureQmdAvailableForUpdate(signal);
         scheduleQmdUpdate();
         return {
           content: [
@@ -1440,7 +1502,7 @@ export default function (pi: ExtensionAPI) {
         const separator = existing.trim() ? "\n\n" : "";
         const stamped = `<!-- ${ts} [${sid}] -->\n${content}`;
         fs.writeFileSync(filePath, existing + separator + stamped, "utf-8");
-        await ensureQmdAvailableForUpdate();
+        await ensureQmdAvailableForUpdate(signal);
         scheduleQmdUpdate();
         return {
           content: [
@@ -1479,7 +1541,7 @@ export default function (pi: ExtensionAPI) {
 
         // Upsert frontmatter with current hostname → git root.
         const hostname = os.hostname();
-        const gitRoot = await getGitRoot();
+        const gitRoot = await getGitRoot(process.cwd(), signal);
         const existing = readFileSafe(filePath) ?? "";
         const withFrontmatter = gitRoot
           ? upsertProjectFrontmatter(existing, hostname, gitRoot)
@@ -1500,7 +1562,7 @@ export default function (pi: ExtensionAPI) {
           // Re-apply frontmatter on top of the new content.
           const final = gitRoot ? upsertProjectFrontmatter(stamped, hostname, gitRoot) : stamped;
           fs.writeFileSync(filePath, final, "utf-8");
-          await ensureQmdAvailableForUpdate();
+          await ensureQmdAvailableForUpdate(signal);
           scheduleQmdUpdate();
           return {
             content: [
@@ -1524,7 +1586,7 @@ export default function (pi: ExtensionAPI) {
         const newBody = body + separator + stamped;
         const final = gitRoot ? upsertProjectFrontmatter(newBody, hostname, gitRoot) : newBody;
         fs.writeFileSync(filePath, final, "utf-8");
-        await ensureQmdAvailableForUpdate();
+        await ensureQmdAvailableForUpdate(signal);
         scheduleQmdUpdate();
         return {
           content: [
@@ -1556,7 +1618,7 @@ export default function (pi: ExtensionAPI) {
         const backupPath = backupFile(MEMORY_FILE);
         const stamped = `<!-- last updated: ${ts} [${sid}] -->\n${content}`;
         fs.writeFileSync(MEMORY_FILE, stamped, "utf-8");
-        await ensureQmdAvailableForUpdate();
+        await ensureQmdAvailableForUpdate(signal);
         scheduleQmdUpdate();
         return {
           content: [{ type: "text", text: `Overwrote MEMORY.md${existingSnippet}` }],
@@ -1577,7 +1639,7 @@ export default function (pi: ExtensionAPI) {
       const separator = existing.trim() ? "\n\n" : "";
       const stamped = `<!-- ${ts} [${sid}] -->\n${content}`;
       fs.writeFileSync(MEMORY_FILE, existing + separator + stamped, "utf-8");
-      await ensureQmdAvailableForUpdate();
+      await ensureQmdAvailableForUpdate(signal);
       scheduleQmdUpdate();
       return {
         content: [{ type: "text", text: `Appended to MEMORY.md${existingSnippet}` }],
@@ -1613,7 +1675,7 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       ensureDirs();
       const { action, text } = params;
       const sid = shortSessionId(ctx.sessionManager.getSessionId());
@@ -1665,7 +1727,7 @@ export default function (pi: ExtensionAPI) {
           mode: "start",
         });
         fs.writeFileSync(SCRATCHPAD_FILE, serialized, "utf-8");
-        await ensureQmdAvailableForUpdate();
+        await ensureQmdAvailableForUpdate(signal);
         scheduleQmdUpdate();
         return {
           content: [
@@ -1724,7 +1786,7 @@ export default function (pi: ExtensionAPI) {
           mode: "start",
         });
         fs.writeFileSync(SCRATCHPAD_FILE, serialized, "utf-8");
-        await ensureQmdAvailableForUpdate();
+        await ensureQmdAvailableForUpdate(signal);
         scheduleQmdUpdate();
         return {
           content: [
@@ -1754,7 +1816,7 @@ export default function (pi: ExtensionAPI) {
           mode: "start",
         });
         fs.writeFileSync(SCRATCHPAD_FILE, serialized, "utf-8");
-        await ensureQmdAvailableForUpdate();
+        await ensureQmdAvailableForUpdate(signal);
         scheduleQmdUpdate();
         return {
           content: [
@@ -1800,10 +1862,10 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
       ensureDirs();
       const { target, date } = params;
-      const projectKey = target === "project" ? await getProjectKey() : null;
+      const projectKey = target === "project" ? await getProjectKey(process.cwd(), signal) : null;
 
       if (target === "self" || target === "user") {
         const filePath = target === "self" ? SELF_FILE : USER_FILE;
@@ -1989,10 +2051,10 @@ export default function (pi: ExtensionAPI) {
       ),
       limit: Type.Optional(Type.Number({ description: "Max results." })),
     }),
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
       if (!qmdAvailable) {
         // Re-check on demand in case qmd was installed after session start.
-        qmdAvailable = await detectQmd();
+        qmdAvailable = await detectQmd(signal);
       }
 
       if (!qmdAvailable) {
@@ -2008,11 +2070,11 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      if (!(await checkCollection("pi-memory"))) {
-        await setupQmdCollection();
+      if (!(await checkCollection("pi-memory", signal))) {
+        await setupQmdCollection(signal);
       }
-      if (!(await checkCollection("pi-projects"))) {
-        await setupProjectsCollection();
+      if (!(await checkCollection("pi-projects", signal))) {
+        await setupProjectsCollection(signal);
       }
 
       const mode = params.mode ?? "keyword";
@@ -2023,6 +2085,8 @@ export default function (pi: ExtensionAPI) {
           mode,
           params.query,
           limit,
+          undefined,
+          signal,
         );
         const needsEmbed = /need embeddings/i.test(stderr ?? "");
 

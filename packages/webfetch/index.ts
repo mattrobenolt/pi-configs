@@ -6,7 +6,14 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
 import { loadWebfetchConfig } from "./config.ts";
-import { readResponseBytes, transformContent, validateAndNormalizeUrl } from "./core.ts";
+import {
+  discoverLlmsTxt,
+  extractLlmsTxtUrl,
+  parseLinkHeader,
+  readResponseBytes,
+  transformContent,
+  validateAndNormalizeUrl,
+} from "./core.ts";
 import { formatSearchResponse, searchWithFailover } from "./search.ts";
 import { narrowMarkdown } from "./narrow.ts";
 
@@ -130,6 +137,8 @@ Behavior:
 - GitHub blob URLs return raw file content; tree URLs return directory listings; repo URLs return README content.
 - Image URLs return an image attachment.
 - Non-GitHub web pages return markdown by default, with best-effort cleanup and truncation.
+- Honors llmstxt.org markdown variants: content negotiation, the HTTP Link header and HTML link relations, then conventional .md / .html.md URLs.
+- For directory URLs, adds a one-line pointer to the path's llms.txt when the site publishes one.
 - Responses over 5MB are rejected. Output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} lines when needed.`;
 
 const WEBSEARCH_DESCRIPTION = `Search the web for current or unknown information and return a consolidated result snippet.
@@ -235,9 +244,10 @@ async function fetchGitHubContent(
   repo: string,
   path: string,
   ref: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const endpoint = `repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`;
-  const result = await pi.exec("gh", ["api", endpoint]);
+  const result = await pi.exec("gh", ["api", endpoint], { signal });
   const parsed = JSON.parse(result.stdout) as {
     content?: string;
     encoding?: string;
@@ -291,6 +301,7 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Use webfetch when the user provides a specific URL to inspect.",
       "Prefer format=markdown for readable page extraction unless the original response body is required.",
+      "For documentation sites, fetch <directory>/llms.txt when you need an index of the available pages.",
     ],
     parameters: WEBFETCH_PARAMS,
     renderCall(args, theme) {
@@ -315,7 +326,14 @@ export default function (pi: ExtensionAPI) {
       const gh = parseGitHubUrl(url);
       if (gh) {
         if (gh.type === "blob") {
-          const content = await fetchGitHubContent(pi, gh.owner, gh.repo, gh.path, gh.branch);
+          const content = await fetchGitHubContent(
+            pi,
+            gh.owner,
+            gh.repo,
+            gh.path,
+            gh.branch,
+            signal,
+          );
           const text = gh.lineRange
             ? extractLines(content, gh.lineRange.start, gh.lineRange.end)
             : content;
@@ -331,7 +349,7 @@ export default function (pi: ExtensionAPI) {
 
         if (gh.type === "tree") {
           const endpoint = `repos/${gh.owner}/${gh.repo}/contents/${gh.path}?ref=${gh.branch}`;
-          const result = await pi.exec("gh", ["api", endpoint]);
+          const result = await pi.exec("gh", ["api", endpoint], { signal });
           const parsed = JSON.parse(result.stdout) as unknown;
           if (!Array.isArray(parsed)) {
             const msg =
@@ -361,15 +379,19 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (gh.type === "pull") {
-          const result = await pi.exec("gh", [
-            "pr",
-            "view",
-            `${gh.number}`,
-            "--repo",
-            `${gh.owner}/${gh.repo}`,
-            "--json",
-            "number,title,state,author,body,url,baseRefName,headRefName,isDraft,mergeable,reviewDecision,comments,reviews,files",
-          ]);
+          const result = await pi.exec(
+            "gh",
+            [
+              "pr",
+              "view",
+              `${gh.number}`,
+              "--repo",
+              `${gh.owner}/${gh.repo}`,
+              "--json",
+              "number,title,state,author,body,url,baseRefName,headRefName,isDraft,mergeable,reviewDecision,comments,reviews,files",
+            ],
+            { signal },
+          );
           const pull = JSON.parse(result.stdout) as any;
           const comments = (pull.comments ?? []) as any[];
           const reviews = (pull.reviews ?? []) as any[];
@@ -413,15 +435,19 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (gh.type === "issue") {
-          const result = await pi.exec("gh", [
-            "issue",
-            "view",
-            `${gh.number}`,
-            "--repo",
-            `${gh.owner}/${gh.repo}`,
-            "--json",
-            "number,title,state,author,body,url,comments",
-          ]);
+          const result = await pi.exec(
+            "gh",
+            [
+              "issue",
+              "view",
+              `${gh.number}`,
+              "--repo",
+              `${gh.owner}/${gh.repo}`,
+              "--json",
+              "number,title,state,author,body,url,comments",
+            ],
+            { signal },
+          );
           const issue = JSON.parse(result.stdout) as any;
           const comments = (issue.comments ?? []) as any[];
           const lines = [
@@ -449,7 +475,9 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (gh.type === "repo") {
-          const result = await pi.exec("gh", ["api", `repos/${gh.owner}/${gh.repo}/readme`]);
+          const result = await pi.exec("gh", ["api", `repos/${gh.owner}/${gh.repo}/readme`], {
+            signal,
+          });
           const readme = JSON.parse(result.stdout) as {
             content?: string;
             name?: string;
@@ -519,14 +547,19 @@ export default function (pi: ExtensionAPI) {
       }
 
       const raw = new TextDecoder().decode(responseBytes);
+      // Relative Link headers and page links resolve against the final URL after redirects.
+      const finalUrl = response.url || normalizedUrl;
+      const linkRelations = parseLinkHeader(response.headers.get("link"), finalUrl);
+      const htmlLlmsTxtUrl = mime === "text/html" ? extractLlmsTxtUrl(raw, finalUrl) : null;
       const transformed = await transformContent(
         raw,
         contentType,
         format,
-        normalizedUrl,
+        finalUrl,
         undefined,
         signal,
         MAX_RESPONSE_SIZE,
+        linkRelations,
       );
 
       // Optional: LLM-based objective narrowing. Best-effort — falls back to full markdown.
@@ -546,6 +579,23 @@ export default function (pi: ExtensionAPI) {
         narrowingDiagnostics = result.diagnostics;
       }
 
+      // Surface the llms.txt index for the path when the site publishes one. The
+      // pointer goes after narrowing so objective extraction never sees it.
+      let llmsTxtUrl: string | null = null;
+      if (format === "markdown") {
+        llmsTxtUrl =
+          linkRelations.llmsTxtUrl ??
+          htmlLlmsTxtUrl ??
+          (await discoverLlmsTxt(finalUrl, undefined, signal));
+        if (
+          llmsTxtUrl &&
+          !new URL(finalUrl).pathname.toLowerCase().endsWith("llms.txt") &&
+          !finalContent.includes(llmsTxtUrl)
+        ) {
+          finalContent = `${finalContent.trimEnd()}\n\n---\n\nLLM index (llms.txt): ${llmsTxtUrl}`;
+        }
+      }
+
       const truncated = await truncateForModelWithTempFile(finalContent, "webfetch");
 
       return {
@@ -555,6 +605,7 @@ export default function (pi: ExtensionAPI) {
           format,
           contentType,
           bytes: responseBytes.byteLength,
+          llmsTxtUrl,
           narrowed,
           narrowingModel,
           narrowingDiagnostics,
