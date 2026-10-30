@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "description": "Linear issue tracker: find, create, and update issues, projects, and comments"
+    },
+    "playwright": {
+      "command": "~/.pi/agent/scripts/playwright-mcp",
+      "description": "Playwright browser automation: navigate pages, click, type, fill forms, read accessibility snapshots, take screenshots"
+    },
+    "buildkite": {
+      "url": "https://mcp.buildkite.com/mcp"
+    }
+  }
+}

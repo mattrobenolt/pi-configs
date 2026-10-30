@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Launcher for the Playwright MCP server.
+#
+# Playwright downloads its own Chromium, which does not run on this NixOS host:
+# the bundled binary needs Ubuntu system libraries that are not here, and nix-ld
+# is not wired up. Point Playwright at the Chromium from this repo's devShell
+# instead. The path comes from the flake, so `nix flake update` keeps working.
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+browser=${PLAYWRIGHT_MCP_BROWSER:-}
+
+if [[ -z $browser ]]; then
+  browser=$(nix develop "$root" --command bash -c 'command -v chromium') || {
+    echo "playwright-mcp: chromium is not in the devShell at $root" >&2
+    exit 1
+  }
+fi
+
+exec npx -y @playwright/mcp@latest \
+  --browser chromium \
+  --executable-path "$browser" \
+  --headless \
+  --output-dir "$HOME/.cache/playwright-mcp" \
+  "$@"
