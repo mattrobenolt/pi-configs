@@ -1,18 +1,5 @@
 export type GitHubJson = Record<string, any>;
 
-export type CommandResult = {
-  stdout: string;
-  stderr: string;
-  code: number;
-  killed?: boolean;
-};
-
-export type CommandRunner = (
-  command: string,
-  args: string[],
-  options?: { signal?: AbortSignal; timeout?: number; cwd?: string },
-) => Promise<CommandResult>;
-
 export type GitHubClientOptions = {
   token: (signal?: AbortSignal) => Promise<string>;
   fetch?: typeof globalThis.fetch;
@@ -229,24 +216,6 @@ export function splitRepo(repo: string): { owner: string; name: string; path: st
   };
 }
 
-/**
- * Extracts owner/repo from a git remote URL pointing at github.com.
- * Handles https, ssh scp-style, and ssh:// forms, with or without .git.
- */
-export function parseGitHubRemote(url: string): string | undefined {
-  const text = url.trim().replace(/\.git$/, "");
-  const match =
-    text.match(/^git@github\.com:([^/]+\/[^/]+)$/) ??
-    text.match(/^(?:https|ssh):\/\/(?:git@)?github\.com\/([^/]+\/[^/]+)$/);
-  if (!match) return undefined;
-  try {
-    const { owner, name } = splitRepo(match[1]);
-    return `${owner}/${name}`;
-  } catch {
-    return undefined;
-  }
-}
-
 export type GitHubRefKind = "issue_comment" | "review_comment" | "review";
 
 export function parseNumericRef(
@@ -399,6 +368,15 @@ const FAILURE_CONCLUSIONS = new Set([
   "startup_failure",
 ]);
 
+export function checkPassed(check: CheckItem): boolean {
+  return PASSING_CONCLUSIONS.has(check.conclusion ?? check.status);
+}
+
+export function checkFailed(check: CheckItem): boolean {
+  const state = check.conclusion ?? check.status;
+  return FAILURE_CONCLUSIONS.has(state) || state === "error";
+}
+
 export function summarizeChecks(checkRuns: GitHubJson[], statuses: GitHubJson[]): CheckSnapshot {
   const checks: CheckItem[] = [];
 
@@ -434,9 +412,8 @@ export function summarizeChecks(checkRuns: GitHubJson[], statuses: GitHubJson[])
   let failed = 0;
   let pending = 0;
   for (const check of checks) {
-    const state = check.conclusion ?? check.status;
-    if (PASSING_CONCLUSIONS.has(state)) passed++;
-    else if (FAILURE_CONCLUSIONS.has(state) || state === "error") failed++;
+    if (checkPassed(check)) passed++;
+    else if (checkFailed(check)) failed++;
     else pending++;
   }
 
@@ -634,9 +611,14 @@ export async function waitForChecks(options: {
   }
 }
 
-export function checkProgressText(snapshot: CheckSnapshot, elapsedMs: number): string {
-  const elapsedSeconds = Math.floor(elapsedMs / 1000);
-  const minutes = Math.floor(elapsedSeconds / 60);
-  const seconds = elapsedSeconds % 60;
-  return `CI: ${snapshot.completed}/${snapshot.total} complete — ${snapshot.passed} passed, ${snapshot.failed} failed, ${snapshot.pending} pending — ${minutes}m${String(seconds).padStart(2, "0")}s elapsed`;
+export function formatChecks(snapshot: CheckSnapshot): string {
+  const lines = [
+    `CI: ${snapshot.status} — ${snapshot.passed} passed, ${snapshot.failed} failed, ${snapshot.pending} pending`,
+  ];
+  for (const check of snapshot.checks) {
+    lines.push(
+      `- [${check.status}] ${check.name}${check.run_id ? ` (run ${check.run_id})` : ""}${check.url ? ` — ${check.url}` : ""}`,
+    );
+  }
+  return lines.join("\n");
 }

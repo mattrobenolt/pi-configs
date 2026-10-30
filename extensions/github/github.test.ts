@@ -8,21 +8,22 @@ import {
   loadPullChecks,
   loadRefChecks,
   normalizeInlineComment,
-  parseGitHubRemote,
   parseNumericRef,
   splitRepo,
   summarizeChecks,
   waitForChecks,
   type CheckSnapshot,
+  type CIWaitResult,
 } from "./core.ts";
-import { DEFAULT_CI_WATCH_CONFIG, type CiWatchConfig } from "./config.ts";
+import { CiWatchRegistry } from "./jobs.ts";
 import {
-  CiWatcher,
-  formatFailure,
-  makeGitProbe,
-  type GitProbe,
-  type WatchTarget,
-} from "./watch.ts";
+  PrWatchRegistry,
+  loadPrActivity,
+  prWatchRecords,
+  type PrActivity,
+  type PrActivityItem,
+  type PrWatchRecord,
+} from "./pr-watch.ts";
 
 function jsonResponse(body: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(status === 204 ? null : JSON.stringify(body), {
@@ -1097,78 +1098,8 @@ test("extension registers four user-facing GitHub tools", () => {
     on() {},
   } as any);
   assert.deepEqual(names, ["github_pr", "github_review", "github_issue", "github_ci"]);
-  assert.deepEqual(commands, ["ci-watch"]);
+  assert.deepEqual(commands, ["pr-watch", "ci-watch"]);
 });
-
-test("parseGitHubRemote extracts owner/repo from common remote URL forms", () => {
-  assert.equal(parseGitHubRemote("git@github.com:planetscale/vitess.git"), "planetscale/vitess");
-  assert.equal(parseGitHubRemote("git@github.com:planetscale/vitess"), "planetscale/vitess");
-  assert.equal(
-    parseGitHubRemote("https://github.com/planetscale/vitess.git"),
-    "planetscale/vitess",
-  );
-  assert.equal(parseGitHubRemote("https://github.com/planetscale/vitess"), "planetscale/vitess");
-  assert.equal(
-    parseGitHubRemote("ssh://git@github.com/planetscale/vitess.git"),
-    "planetscale/vitess",
-  );
-  assert.equal(parseGitHubRemote("https://gitlab.com/planetscale/vitess.git"), undefined);
-  assert.equal(parseGitHubRemote("not a url"), undefined);
-});
-
-type WatcherHarness = {
-  watcher: CiWatcher;
-  reported: string[];
-  informed: string[];
-  notices: string[];
-  timers: Array<{ ms: number }>;
-  advance: (ms: number) => void;
-};
-
-function makeWatcher(
-  probe: GitProbe,
-  snapshots: CheckSnapshot[],
-  config: Partial<CiWatchConfig> = {},
-): WatcherHarness {
-  const reported: string[] = [];
-  const informed: string[] = [];
-  const notices: string[] = [];
-  const timers: Array<{ fn: () => void; ms: number }> = [];
-  let now = 1_000_000;
-  const watcher = new CiWatcher(
-    { ...DEFAULT_CI_WATCH_CONFIG, ...config },
-    {
-      probeGit: async () => probe,
-      loadChecks: async () => {
-        const next = snapshots.shift();
-        if (!next) throw new Error("script ran out of snapshots");
-        return next;
-      },
-      report: (text) => reported.push(text),
-      inform: (text) => informed.push(text),
-      notify: (text) => notices.push(text),
-      schedule: (fn, ms) => {
-        const timer = { fn, ms };
-        timers.push(timer);
-        return timer;
-      },
-      cancel: (handle) => {
-        const index = timers.indexOf(handle as (typeof timers)[number]);
-        if (index >= 0) timers.splice(index, 1);
-      },
-      now: () => now,
-    },
-  );
-  return { watcher, reported, informed, notices, timers, advance: (ms) => (now += ms) };
-}
-
-const pushedProbe: GitProbe = {
-  headSha: "deadbeefcafe",
-  branch: "main",
-  upstreamRef: "origin/main",
-  upstreamSha: "deadbeefcafe",
-  repo: "owner/repo",
-};
 
 const pendingSnapshot: CheckSnapshot = summarizeChecks(
   [{ name: "unit", status: "in_progress" }],
@@ -1190,177 +1121,964 @@ const passedSnapshot: CheckSnapshot = summarizeChecks(
   [],
 );
 
-test("ci watcher reports a failure seen in transition exactly once", async () => {
-  const harness = makeWatcher(pushedProbe, [pendingSnapshot, failedSnapshot]);
-  await harness.watcher.refresh();
-  assert.match(harness.watcher.status, /watching owner\/repo@deadbee/);
+type PendingWait = {
+  resolve: (result: CIWaitResult) => void;
+  reject: (error: Error) => void;
+  progress: (update: { head_sha: string; snapshot: CheckSnapshot; elapsed_ms: number }) => void;
+};
 
-  await harness.watcher.pollNow();
-  assert.equal(harness.reported.length, 0);
-  assert.equal(harness.timers.length, 1, "pending checks keep the poll timer alive");
+type WatchHarness = {
+  registry: CiWatchRegistry;
+  delivered: Array<{ id: string; text: string }>;
+  pending: PendingWait[];
+  next: () => PendingWait;
+  take: () => PendingWait;
+};
 
-  await harness.watcher.pollNow();
-  assert.equal(harness.reported.length, 1);
-  assert.match(harness.reported[0], /CI failed for owner\/repo @ deadbee \(main\)/);
-  assert.match(harness.reported[0], /run 123/);
-  assert.equal(harness.informed.length, 0);
-  assert.equal(harness.timers.length, 0, "terminal failure stops polling");
-
-  // A repeat refresh for the same sha must not re-arm the watcher.
-  await harness.watcher.refresh();
-  assert.match(harness.watcher.status, /idle/);
-  assert.equal(harness.timers.length, 0);
-});
-
-test("ci watcher only informs when the first observation is already failed", async () => {
-  const harness = makeWatcher(pushedProbe, [failedSnapshot]);
-  await harness.watcher.refresh();
-  await harness.watcher.pollNow();
-  assert.equal(harness.reported.length, 0, "pre-broken heads never steer or wake the agent");
-  assert.equal(harness.informed.length, 1);
-  assert.match(harness.informed[0], /CI failed for owner\/repo @ deadbee/);
-});
-
-test("ci watcher goes quiet when checks pass", async () => {
-  const harness = makeWatcher(pushedProbe, [pendingSnapshot, passedSnapshot]);
-  await harness.watcher.refresh();
-  await harness.watcher.pollNow();
-  await harness.watcher.pollNow();
-  assert.equal(harness.reported.length, 0);
-  assert.equal(harness.informed.length, 0);
-  assert.match(harness.watcher.status, /idle/);
-});
-
-test("ci watcher ignores unpushed and non-GitHub heads", async () => {
-  const unpushed = makeWatcher({ ...pushedProbe, upstreamSha: "elsewhere" }, [failedSnapshot]);
-  await unpushed.watcher.refresh();
-  assert.match(unpushed.watcher.status, /idle/);
-  assert.equal(unpushed.timers.length, 0);
-
-  const noRemote = makeWatcher({ headSha: "deadbeefcafe", branch: "main" }, [failedSnapshot]);
-  await noRemote.watcher.refresh();
-  assert.match(noRemote.watcher.status, /idle/);
-  assert.equal(noRemote.timers.length, 0);
-});
-
-test("ci watcher drops heads whose checks never register", async () => {
-  const noChecks = summarizeChecks([], []);
-  const harness = makeWatcher(pushedProbe, [noChecks, noChecks], { discoveryGraceSeconds: 90 });
-  await harness.watcher.refresh();
-  await harness.watcher.pollNow();
-  assert.equal(harness.timers.length, 1, "still waiting for checks to register");
-
-  harness.advance(120_000);
-  await harness.watcher.pollNow();
-  assert.equal(harness.reported.length, 0);
-  assert.match(harness.watcher.status, /idle/);
-  assert.equal(harness.timers.length, 0);
-});
-
-test("ci watcher notifies and gives up after repeated poll errors", async () => {
-  const harness = makeWatcher(pushedProbe, [], { pollSeconds: 30 });
-  await harness.watcher.refresh();
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await harness.watcher.pollNow();
-  }
-  assert.equal(harness.notices.length, 1);
-  assert.match(harness.notices[0], /stopped watching deadbee/);
-  assert.match(harness.watcher.status, /idle/);
-});
-
-test("makeGitProbe resolves the pushed head from the upstream remote", async () => {
-  const commands: string[] = [];
-  const probe = makeGitProbe(async (command, args) => {
-    commands.push(`${command} ${args.join(" ")}`);
-    const key = args.join(" ");
-    if (key === "rev-parse HEAD") return { stdout: "deadbeefcafe\n", stderr: "", code: 0 };
-    if (key === "symbolic-ref --quiet --short HEAD")
-      return { stdout: "main\n", stderr: "", code: 0 };
-    if (key === "rev-parse --abbrev-ref --symbolic-full-name @{upstream}")
-      return { stdout: "origin/main\n", stderr: "", code: 0 };
-    if (key === "rev-parse @{upstream}") return { stdout: "deadbeefcafe\n", stderr: "", code: 0 };
-    if (key === "remote get-url origin")
-      return { stdout: "git@github.com:owner/repo.git\n", stderr: "", code: 0 };
-    return { stdout: "", stderr: "unexpected", code: 1 };
+function makeWatchHarness(options: { retainFinished?: number } = {}): WatchHarness {
+  const delivered: Array<{ id: string; text: string }> = [];
+  const pending: PendingWait[] = [];
+  let now = 1_000_000;
+  const registry = new CiWatchRegistry({
+    load: async () => ({ head_sha: "abc1234", snapshot: passedSnapshot }),
+    wait(waitOptions) {
+      return new Promise<CIWaitResult>((resolve, reject) => {
+        pending.push({ resolve, reject, progress: waitOptions.onProgress! });
+        waitOptions.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+      });
+    },
+    deliver: (job, text) => delivered.push({ id: job.id, text }),
+    now: () => now,
+    ...options,
   });
-  assert.deepEqual(await probe(), pushedProbe);
-});
-
-test("makeGitProbe stays dormant outside a git repo", async () => {
-  const probe = makeGitProbe(async () => ({ stdout: "", stderr: "fatal", code: 128 }));
-  assert.deepEqual(await probe(), {});
-});
-
-test("formatFailure lists only the failing checks with run ids", () => {
-  const target: WatchTarget = {
-    repo: "owner/repo",
-    sha: "deadbeefcafe",
-    branch: "main",
-    startedAt: 0,
-    sawActivity: true,
+  const next = () => {
+    const entry = pending[0];
+    if (!entry) throw new Error("no pending wait");
+    return entry;
   };
-  const snapshot = summarizeChecks(
+  const take = () => {
+    const entry = pending.shift();
+    if (!entry) throw new Error("no pending wait");
+    return entry;
+  };
+  return { registry, delivered, pending, next, take };
+}
+
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test("ci watch starts in the background and delivers one completion notice", async () => {
+  const harness = makeWatchHarness();
+  const { job, created } = harness.registry.start({
+    repo: "o/r",
+    pr_number: 42,
+    timeout_ms: 60_000,
+  });
+
+  assert.equal(created, true);
+  assert.equal(job.id, "ci-1");
+  assert.equal(job.state, "pending");
+  assert.equal(harness.pending.length, 1, "start returns without waiting for the first poll");
+
+  harness.next().progress({ head_sha: "abc1234", snapshot: pendingSnapshot, elapsed_ms: 1_000 });
+  assert.equal(job.snapshot?.status, "pending");
+  assert.equal(job.polls, 1);
+
+  harness.take().resolve({
+    status: "passed",
+    head_sha: "abc1234",
+    elapsed_ms: 5_000,
+    snapshot: passedSnapshot,
+  });
+  await tick();
+  await tick();
+
+  assert.equal(job.state, "passed");
+  assert.equal(harness.delivered.length, 1);
+  assert.match(harness.delivered[0].text, /CI passed for o\/r #42 @abc1234/);
+  assert.match(harness.delivered[0].text, /\(watch ci-1\)/);
+});
+
+test("ci watch reuses an equivalent pending watch instead of polling twice", () => {
+  const harness = makeWatchHarness();
+  const first = harness.registry.start({ repo: "o/r", pr_number: 42, timeout_ms: 60_000 });
+  const second = harness.registry.start({
+    repo: "o/r",
+    pr_number: 42,
+    expected_head_sha: undefined,
+    timeout_ms: 10_000,
+  });
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.equal(second.job.id, first.job.id);
+  assert.equal(harness.pending.length, 1);
+});
+
+test("ci watch failure notice lists failing checks with run ids", async () => {
+  const harness = makeWatchHarness();
+  harness.registry.start({ repo: "o/r", ref: "fix/flaky", timeout_ms: 60_000 });
+  harness.take().resolve({
+    status: "failed",
+    head_sha: "abc1234",
+    elapsed_ms: 2_000,
+    snapshot: failedSnapshot,
+  });
+  await tick();
+  await tick();
+
+  assert.equal(harness.delivered.length, 1);
+  const text = harness.delivered[0].text;
+  assert.match(text, /CI failed for o\/r fix\/flaky @abc1234/);
+  assert.match(text, /- unit \[failure\] \(run 123\)/);
+  assert.match(text, /github_ci failed_logs run_id=<id>/);
+});
+
+test("ci watch cancel stops polling and suppresses the notice", async () => {
+  const harness = makeWatchHarness();
+  const { job } = harness.registry.start({ repo: "o/r", pr_number: 7, timeout_ms: 60_000 });
+
+  assert.equal(harness.registry.cancel(job.id), true);
+  await tick();
+
+  assert.equal(job.state, "cancelled");
+  assert.equal(harness.delivered.length, 0);
+  assert.equal(harness.registry.cancel(job.id), false, "already finished");
+});
+
+test("ci watch close cancels pending jobs without notifying", async () => {
+  const harness = makeWatchHarness();
+  const { job } = harness.registry.start({ repo: "o/r", pr_number: 7, timeout_ms: 60_000 });
+
+  harness.registry.close();
+  harness.take().resolve({
+    status: "passed",
+    head_sha: "abc1234",
+    elapsed_ms: 2_000,
+    snapshot: passedSnapshot,
+  });
+  await tick();
+  await tick();
+
+  assert.equal(job.state, "cancelled");
+  assert.equal(harness.delivered.length, 0);
+  assert.throws(
+    () => harness.registry.start({ repo: "o/r", pr_number: 8, timeout_ms: 60_000 }),
+    /closed/,
+  );
+});
+
+test("ci watch retains finished jobs up to the limit", async () => {
+  const harness = makeWatchHarness({ retainFinished: 1 });
+  for (const pr of [1, 2, 3]) {
+    harness.registry.start({ repo: "o/r", pr_number: pr, timeout_ms: 60_000 });
+    harness.take().resolve({
+      status: "passed",
+      head_sha: "abc1234",
+      elapsed_ms: 1_000,
+      snapshot: passedSnapshot,
+    });
+    await tick();
+    await tick();
+  }
+
+  assert.deepEqual(
+    harness.registry.list().map((job) => job.id),
+    ["ci-3"],
+  );
+  assert.equal(harness.delivered.length, 3);
+});
+
+test("github_ci watch actions start, inspect, and cancel a background watch", async () => {
+  const harness = makeWatchHarness();
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () => {
+      throw new Error("watch actions must not block on the network");
+    },
+  });
+
+  const started = await executeCI(
+    {} as any,
+    client,
+    { action: "watch", repo: "o/r", ref: "fix/flaky", timeout_minutes: 5 },
+    undefined,
+    harness.registry,
+  );
+  const startText = (started.content[0] as any).text;
+  assert.match(startText, /Started background CI watch ci-1 for o\/r fix\/flaky/);
+  assert.equal((started.details as any).created, true);
+
+  harness.next().progress({ head_sha: "abc1234", snapshot: pendingSnapshot, elapsed_ms: 1_000 });
+  const listed = await executeCI(
+    {} as any,
+    client,
+    { action: "watches", repo: "o/r" },
+    undefined,
+    harness.registry,
+  );
+  assert.match((listed.content[0] as any).text, /ci-1 o\/r fix\/flaky @abc1234: 0\/1 complete/);
+
+  const single = await executeCI(
+    {} as any,
+    client,
+    { action: "watches", repo: "o/r", watch_id: "ci-1" },
+    undefined,
+    harness.registry,
+  );
+  assert.match((single.content[0] as any).text, /^watch ci-1 o\/r fix\/flaky @abc1234:/);
+
+  const stopped = await executeCI(
+    {} as any,
+    client,
+    { action: "unwatch", repo: "o/r", watch_id: "ci-1" },
+    undefined,
+    harness.registry,
+  );
+  assert.match((stopped.content[0] as any).text, /Cancelled CI watch ci-1/);
+  assert.equal((stopped.details as any).cancelled, true);
+});
+
+test("github_ci watch requires exactly one target", async () => {
+  const harness = makeWatchHarness();
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () => new Response(),
+  });
+  await assert.rejects(
+    () =>
+      executeCI(
+        {} as any,
+        client,
+        { action: "watch", repo: "o/r", pr_number: 1, ref: "main" },
+        undefined,
+        harness.registry,
+      ),
+    /not both/,
+  );
+  await assert.rejects(
+    () =>
+      executeCI({} as any, client, { action: "watch", repo: "o/r" }, undefined, harness.registry),
+    /requires pr_number or ref/,
+  );
+  await assert.rejects(
+    () =>
+      executeCI(
+        {} as any,
+        client,
+        { action: "watch", repo: "o/r", pr_number: 42 },
+        undefined,
+        harness.registry,
+      ),
+    /watched automatically/,
+  );
+});
+
+const PR_TEST_NOW = Date.parse("2026-10-28T10:00:00Z");
+
+function prActivity(overrides: Partial<PrActivity> = {}): PrActivity {
+  return {
+    pull: {
+      number: 42,
+      title: "Fix retries",
+      state: "open",
+      merged: false,
+      draft: false,
+      head_sha: "abc1234",
+      url: "https://github.com/o/r/pull/42",
+    },
+    comments: [],
+    reviews: [],
+    review_comments: [],
+    ...overrides,
+  };
+}
+
+function prItem(id: number, overrides: Partial<PrActivityItem> = {}): PrActivityItem {
+  return {
+    id,
+    kind: "comment",
+    author: "alice",
+    author_type: "User",
+    body: `body ${id}`,
+    url: `https://github.com/o/r/pull/42#issuecomment-${id}`,
+    created_at: "2026-10-28T09:59:00Z",
+    ...overrides,
+  };
+}
+
+type PrHarness = {
+  registry: PrWatchRegistry;
+  delivered: Array<{ id: string; text: string }>;
+  persisted: PrWatchRecord[];
+  activity: (next: PrActivity) => void;
+  checks: (next: CheckSnapshot[]) => void;
+  now: () => number;
+  advance: (ms: number) => void;
+};
+
+function makePrHarness(options: { ttlMs?: number } = {}): PrHarness {
+  let now = PR_TEST_NOW;
+  let activities: PrActivity[] = [prActivity()];
+  let checks: CheckSnapshot[] = [pendingSnapshot];
+  const delivered: Array<{ id: string; text: string }> = [];
+  const persisted: PrWatchRecord[] = [];
+  const timers: Array<{ fn: () => void; ms: number }> = [];
+  const registry = new PrWatchRegistry({
+    loadActivity: async () => (activities.length > 1 ? activities.shift()! : activities[0]),
+    loadChecks: async () => (checks.length > 1 ? checks.shift()! : checks[0]),
+    deliver: (record, text) => delivered.push({ id: record.id, text }),
+    persist: (record) => persisted.push(structuredClone(record)),
+    now: () => now,
+    random: () => 0.5,
+    schedule: (fn, ms) => {
+      const timer = { fn, ms };
+      timers.push(timer);
+      return timer;
+    },
+    cancel: (handle) => {
+      const index = timers.indexOf(handle as (typeof timers)[number]);
+      if (index >= 0) timers.splice(index, 1);
+    },
+    ttlMs: options.ttlMs ?? 7 * 24 * 3_600_000,
+    firstPollMs: 1,
+  });
+  return {
+    registry,
+    delivered,
+    persisted,
+    activity: (next) => {
+      activities = [next];
+    },
+    checks: (next) => {
+      checks = [...next];
+    },
+    now: () => now,
+    advance: (ms) => {
+      now += ms;
+    },
+  };
+}
+
+test("pr watch baselines existing feedback and notifies once per new item", async () => {
+  const harness = makePrHarness();
+  harness.activity(prActivity({ comments: [prItem(10, { body: "old" })] }));
+  const { record, created } = harness.registry.start({
+    repo: "o/r",
+    number: 42,
+    head_sha: "abc1234",
+  });
+  assert.equal(created, true);
+
+  await harness.registry.pollNow("o/r", 42);
+  assert.equal(harness.delivered.length, 0, "baseline records cursors without notifying");
+  assert.equal(record.cursor.comments, 10);
+
+  harness.activity(
+    prActivity({ comments: [prItem(10, { body: "old" }), prItem(11, { body: "new" })] }),
+  );
+  await harness.registry.pollNow("o/r", 42);
+  assert.equal(harness.delivered.length, 1);
+  assert.match(harness.delivered[0].text, /1 new item/);
+  assert.match(harness.delivered[0].text, /comment 11 alice/);
+  assert.match(harness.delivered[0].text, /^  new$/m);
+  assert.equal(record.cursor.comments, 11);
+
+  await harness.registry.pollNow("o/r", 42);
+  assert.equal(harness.delivered.length, 1, "seen items do not notify twice");
+});
+
+test("pr watch surfaces every author, including the user and bots", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+
+  harness.activity(
+    prActivity({
+      comments: [
+        prItem(20, { author: "me", body: "my own comment" }),
+        prItem(21, { author: "dependabot[bot]", author_type: "Bot", body: "bump" }),
+        prItem(22, { author: "alice", body: "real feedback" }),
+        prItem(23, { author: "drew-barry[bot]", author_type: "Bot", body: "review bot" }),
+      ],
+    }),
+  );
+  await harness.registry.pollNow("o/r", 42);
+
+  assert.equal(harness.delivered.length, 1);
+  const text = harness.delivered[0].text;
+  assert.match(text, /comment 20 me/);
+  assert.match(text, /comment 21 dependabot\[bot\]/);
+  assert.match(text, /comment 22 alice/);
+  assert.match(text, /comment 23 drew-barry\[bot\]/);
+});
+
+test("pr watch suppresses the agent's submitted review and its inline comments", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+  harness.registry.markSelfReview("o/r", 42, 70);
+
+  harness.activity(
+    prActivity({
+      reviews: [prItem(70, { kind: "review", author: "me", body: "my review" })],
+      review_comments: [
+        prItem(71, {
+          kind: "review_comment",
+          author: "me",
+          body: "my inline comment",
+          review_id: 70,
+        }),
+        prItem(72, {
+          kind: "review_comment",
+          author: "me",
+          body: "user reply to the agent",
+          review_id: 70,
+          in_reply_to_id: 71,
+        }),
+      ],
+    }),
+  );
+  await harness.registry.pollNow("o/r", 42);
+
+  const text = harness.delivered[0].text;
+  assert.doesNotMatch(text, /comment 71 me|my inline comment|review 70/);
+  assert.match(text, /comment 72 me/);
+  assert.match(text, /user reply to the agent/);
+});
+
+test("pr watch surfaces a user review not submitted by the agent", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+
+  harness.activity(
+    prActivity({
+      reviews: [prItem(80, { kind: "review", author: "me", body: "user review" })],
+      review_comments: [
+        prItem(81, {
+          kind: "review_comment",
+          author: "me",
+          body: "use Steve here",
+          review_id: 80,
+        }),
+      ],
+    }),
+  );
+  await harness.registry.pollNow("o/r", 42);
+
+  const text = harness.delivered[0].text;
+  assert.match(text, /review 80/);
+  assert.match(text, /comment 81 me/);
+  assert.match(text, /use Steve here/);
+});
+
+test("pr watch batches a review and its inline comments into one notice", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+
+  harness.activity(
+    prActivity({
+      reviews: [
+        prItem(30, {
+          kind: "review",
+          author: "bob",
+          body: "Please fix the retry loop",
+          state: "CHANGES_REQUESTED",
+          url: "https://github.com/o/r/pull/42#pullrequestreview-30",
+        }),
+      ],
+      review_comments: [
+        prItem(31, {
+          kind: "review_comment",
+          author: "bob",
+          body: "This swallows the timeout",
+          path: "src/retry.ts",
+          line: 42,
+          in_reply_to_id: 29,
+        }),
+      ],
+    }),
+  );
+  await harness.registry.pollNow("o/r", 42);
+
+  assert.equal(harness.delivered.length, 1);
+  const text = harness.delivered[0].text;
+  assert.match(text, /2 new items/);
+  assert.match(text, /review 30 \[changes_requested\] bob/);
+  assert.match(text, /comment 31 bob on src\/retry.ts:42 \(reply to 29\)/);
+});
+
+test("pr watch announces a CI failure with run ids", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline pending
+
+  harness.checks([failedSnapshot]);
+  await harness.registry.pollNow("o/r", 42);
+
+  assert.equal(harness.delivered.length, 1);
+  const text = harness.delivered[0].text;
+  assert.match(text, /CI failed/);
+  assert.match(text, /- unit \[failure\] \(run 123\)/);
+  assert.match(text, /github_ci failed_logs/);
+});
+
+test("pr watch announces a pass only after seeing the head pending", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline pending
+
+  harness.checks([passedSnapshot]);
+  await harness.registry.pollNow("o/r", 42);
+  assert.equal(harness.delivered.length, 1);
+  assert.match(harness.delivered[0].text, /CI passed/);
+});
+
+test("pr watch stops on merge and does not poll again", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+
+  harness.activity(prActivity({ pull: { ...prActivity().pull, merged: true, state: "closed" } }));
+  await harness.registry.pollNow("o/r", 42);
+  assert.equal(harness.delivered.length, 1);
+  assert.match(harness.delivered[0].text, /merged. Stopped watching/);
+
+  harness.activity(prActivity({ comments: [prItem(99, { body: "after merge" })] }));
+  await harness.registry.pollNow("o/r", 42);
+  assert.equal(harness.delivered.length, 1, "a finished watch ignores further polls");
+});
+
+test("pr watch reports a moved head and resets CI tracking", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+
+  harness.activity(
+    prActivity({
+      pull: { ...prActivity().pull, head_sha: "def5678" },
+      comments: [prItem(40, { body: "pushed a fix" })],
+    }),
+  );
+  await harness.registry.pollNow("o/r", 42);
+
+  assert.equal(harness.delivered.length, 1);
+  assert.match(harness.delivered[0].text, /Head moved from abc1234 to def5678/);
+});
+
+test("pr watch expires after the TTL", async () => {
+  const harness = makePrHarness({ ttlMs: 1_000 });
+  const { record } = harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  harness.advance(2_000);
+  await harness.registry.pollNow("o/r", 42);
+
+  assert.equal(record.stopped, "expired");
+  assert.equal(harness.delivered.length, 1);
+  assert.match(harness.delivered[0].text, /expired/);
+});
+
+test("pr watch restore catches up from the persisted cursor", async () => {
+  const persisted = prWatchRecords([
+    {
+      type: "custom",
+      customType: "github-pr-watch",
+      data: {
+        id: "pr-7",
+        repo: "o/r",
+        number: 42,
+        started_at: 1_000,
+        last_touch_at: 1_000,
+        expires_at: Date.now() + 60_000,
+        cursor: { comments: 10, reviews: 0, review_comments: 0 },
+        head_sha: "abc1234",
+        ci: { head_sha: "abc1234", state: "passed" },
+      },
+    },
+  ]);
+  assert.equal(persisted.length, 1);
+
+  const harness = makePrHarness();
+  harness.activity(prActivity({ comments: [prItem(10), prItem(11, { body: "while away" })] }));
+  harness.registry.restore(persisted);
+  await harness.registry.pollNow("o/r", 42);
+
+  assert.equal(harness.delivered.length, 1);
+  assert.match(harness.delivered[0].text, /comment 11 alice/);
+  assert.match(harness.delivered[0].text, /while away/);
+});
+
+test("prWatchRecords keeps the latest record per PR and ignores garbage", () => {
+  const base = {
+    type: "custom" as const,
+    customType: "github-pr-watch",
+  };
+  const records = prWatchRecords([
+    {
+      ...base,
+      data: {
+        id: "pr-1",
+        repo: "o/r",
+        number: 42,
+        started_at: 1,
+        last_touch_at: 1,
+        expires_at: 2,
+        cursor: { comments: 1, reviews: 1, review_comments: 1 },
+      },
+    },
+    {
+      ...base,
+      data: {
+        id: "pr-1",
+        repo: "o/r",
+        number: 42,
+        started_at: 1,
+        last_touch_at: 2,
+        expires_at: 3,
+        cursor: { comments: 5, reviews: 2, review_comments: 3 },
+      },
+    },
+    { ...base, data: { id: "bad" } },
+    { type: "custom" as const, customType: "other", data: {} },
+  ]);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].cursor.comments, 5);
+  assert.equal(records[0].cursor.reviews, 2);
+});
+
+test("loadPrActivity requests the newest comments and normalizes review fields", async () => {
+  const seen: string[] = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      seen.push(url.pathname + url.search);
+      if (url.pathname.endsWith("/pulls/42")) {
+        return jsonResponse({
+          number: 42,
+          title: "Fix retries",
+          state: "open",
+          merged: false,
+          draft: false,
+          head: { sha: "abc1234" },
+          html_url: "https://github.com/o/r/pull/42",
+        });
+      }
+      if (url.pathname.endsWith("/issues/42/comments")) {
+        return jsonResponse([
+          {
+            id: 10,
+            user: { login: "alice", type: "User" },
+            body: "top level",
+            html_url: "https://github.com/o/r/pull/42#issuecomment-10",
+            created_at: "2026-10-28T10:00:00Z",
+          },
+        ]);
+      }
+      if (url.pathname.endsWith("/pulls/42/comments")) {
+        return jsonResponse([
+          {
+            id: 11,
+            user: { login: "bob", type: "User" },
+            body: "inline",
+            path: "src/retry.ts",
+            line: 42,
+            in_reply_to_id: 9,
+            pull_request_review_id: 12,
+            html_url: "https://github.com/o/r/pull/42#discussion_r11",
+            created_at: "2026-10-28T10:01:00Z",
+          },
+        ]);
+      }
+      if (url.pathname.endsWith("/pulls/42/reviews")) {
+        return jsonResponse([
+          {
+            id: 12,
+            user: { login: "carol", type: "User" },
+            state: "CHANGES_REQUESTED",
+            body: "needs work",
+            submitted_at: "2026-10-28T10:02:00Z",
+            html_url: "https://github.com/o/r/pull/42#pullrequestreview-12",
+          },
+          { id: 13, user: { login: "me" }, state: "PENDING", body: "" },
+        ]);
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  });
+
+  const activity = await loadPrActivity(client, "o/r", 42);
+  assert.equal(activity.comments[0].body, "top level");
+  assert.equal(activity.review_comments[0].path, "src/retry.ts");
+  assert.equal(activity.review_comments[0].line, 42);
+  assert.equal(activity.review_comments[0].in_reply_to_id, 9);
+  assert.equal(activity.review_comments[0].review_id, 12);
+  assert.equal(activity.reviews.length, 1, "pending reviews are not feedback");
+  assert.equal(activity.reviews[0].state, "CHANGES_REQUESTED");
+  assert.ok(
+    seen.some((url) =>
+      url.startsWith("/repos/o/r/issues/42/comments?per_page=100&sort=created&direction=desc"),
+    ),
+  );
+  assert.ok(
+    seen.some((url) =>
+      url.startsWith("/repos/o/r/pulls/42/comments?per_page=100&sort=created&direction=desc"),
+    ),
+  );
+});
+
+test("pr watch reuses an existing watch instead of polling twice", () => {
+  const harness = makePrHarness();
+  const first = harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  const second = harness.registry.touch({ repo: "o/r", number: 42 }, { comments: 10 });
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.equal(second.record.id, first.record.id);
+  assert.equal(second.record.cursor.comments, 10);
+});
+
+test("pr watch does not announce a pass it never saw pending", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  harness.checks([passedSnapshot]);
+  await harness.registry.pollNow("o/r", 42); // baseline sees an already-green head
+  await harness.registry.pollNow("o/r", 42);
+  assert.equal(harness.delivered.length, 0);
+});
+
+test("pr watch gives up after repeated poll errors", async () => {
+  let attempts = 0;
+  const registry = new PrWatchRegistry({
+    loadActivity: async () => {
+      attempts += 1;
+      throw new Error("boom");
+    },
+    loadChecks: async () => passedSnapshot,
+    deliver: () => {},
+    persist: () => {},
+    now: () => 1_000_000,
+    random: () => 0.5,
+    schedule: (fn) => {
+      // Run retries inline so the test does not depend on fake timers.
+      setImmediate(fn);
+      return fn;
+    },
+    cancel: () => {},
+    maxConsecutiveErrors: 3,
+  });
+  registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  for (let index = 0; index < 10 && attempts < 3; index++) {
+    await registry.pollNow("o/r", 42);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(attempts, 3);
+  registry.close();
+});
+
+test("pr watch rearm after inspect suppresses feedback that was already read", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+
+  harness.activity(
+    prActivity({ comments: [prItem(10, { body: "read it" }), prItem(11, { body: "also read" })] }),
+  );
+  harness.registry.rearm({ repo: "o/r", number: 42 }, { comments: 11 });
+  await harness.registry.pollNow("o/r", 42);
+
+  assert.equal(harness.delivered.length, 0);
+});
+
+test("pr watch rearm does not start a watch", () => {
+  const harness = makePrHarness();
+  assert.equal(harness.registry.rearm({ repo: "o/r", number: 7 }, {}), undefined);
+  assert.equal(harness.persisted.length, 0);
+});
+
+test("pr watch stop suppresses the notice and stopAll clears active watches", async () => {
+  const harness = makePrHarness();
+  const first = harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  harness.registry.start({ repo: "o/r", number: 43, head_sha: "def5678" });
+
+  assert.equal(harness.registry.stop(first.record.id), true);
+  assert.equal(harness.registry.stop(first.record.id), false);
+  assert.equal(harness.registry.stopAll(), 1);
+  await harness.registry.pollNow("o/r", 42);
+  await harness.registry.pollNow("o/r", 43);
+  assert.equal(harness.delivered.length, 0);
+});
+
+test("pr watch keeps provenance text and drops only the details wrapper", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+
+  harness.activity(
+    prActivity({
+      reviews: [
+        prItem(50, {
+          kind: "review",
+          author: "drew-barry[bot]",
+          author_type: "Bot",
+          state: "APPROVED",
+          body: "Looks good.\n<details><summary>Provenance: what was reviewed</summary>\n- Verified: noise\n</details>",
+        }),
+        prItem(51, {
+          kind: "review",
+          author: "drew-barry[bot]",
+          author_type: "Bot",
+          state: "APPROVED",
+          body: "<details><summary>Provenance: what was reviewed</summary>\n- Verified: only provenance\n</details>",
+        }),
+      ],
+    }),
+  );
+  await harness.registry.pollNow("o/r", 42);
+
+  const text = harness.delivered[0].text;
+  assert.match(text, /review 50 \[approved\] drew-barry\[bot\]/);
+  assert.match(text, /^  Looks good\.$/m);
+  assert.match(text, /^  Provenance: what was reviewed$/m);
+  assert.match(text, /^  - Verified: noise$/m);
+  assert.match(text, /^  - Verified: only provenance$/m);
+  assert.doesNotMatch(text, /<details>|<\/details>|<summary>/);
+});
+
+test("pr watch points at check URLs when a failure has no workflow run id", async () => {
+  const noRunSnapshot = summarizeChecks(
     [
       {
-        name: "unit",
+        name: "Drew",
         status: "completed",
         conclusion: "failure",
-        html_url: "https://github.com/owner/repo/actions/runs/123/job/1",
+        html_url: "https://github.com/o/r/runs/99",
       },
-      { name: "lint", status: "completed", conclusion: "success" },
     ],
     [],
   );
-  const text = formatFailure(target, snapshot);
-  assert.match(text, /unit \[failure\] \(run 123\)/);
-  assert.doesNotMatch(text, /lint \[/);
-  assert.match(text, /github_ci failed_logs/);
-  assert.doesNotMatch(text, /resume the task/);
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline pending
+
+  harness.checks([noRunSnapshot]);
+  await harness.registry.pollNow("o/r", 42);
+
+  const text = harness.delivered[0].text;
+  assert.match(text, /Inspect the failing check URLs above/);
+  assert.doesNotMatch(text, /failed_logs run_id/);
 });
 
-test("formatFailure includes resume instruction when resumeAfterFix is set", () => {
-  const target: WatchTarget = {
-    repo: "owner/repo",
-    sha: "deadbeefcafe",
-    branch: "main",
-    startedAt: 0,
-    sawActivity: true,
-  };
-  const snapshot = summarizeChecks(
-    [{ name: "unit", status: "completed", conclusion: "failure", run_id: 123 }],
-    [],
+test("pr watch bounds total excerpt text and points at inspect", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  await harness.registry.pollNow("o/r", 42); // baseline
+
+  const body = `start ${"x".repeat(10_000)} END`;
+  harness.activity(
+    prActivity({
+      reviews: [
+        prItem(60, {
+          kind: "review",
+          author: "alice",
+          state: "COMMENTED",
+          body,
+          url: "https://github.com/o/r/pull/42#pullrequestreview-60",
+        }),
+      ],
+    }),
   );
-  const text = formatFailure(target, snapshot, { resumeAfterFix: true });
-  assert.match(text, /resume the task you were working on/);
+  await harness.registry.pollNow("o/r", 42);
+
+  const text = harness.delivered[0].text;
+  assert.match(text, /Some excerpts are truncated; github_pr inspect has the full text\./);
+  assert.match(text, /pullrequestreview-60/);
+  assert.doesNotMatch(text, /END/);
+  assert.ok(text.length < 8_500, `notice was ${text.length} chars`);
 });
 
-test("ci watcher includes resume instruction in steer path only", async () => {
-  const harness = makeWatcher(pushedProbe, [pendingSnapshot, failedSnapshot], {
-    resumeAfterFix: true,
+test("pr watch lists active watches and stops by PR", async () => {
+  const harness = makePrHarness();
+  harness.registry.start({ repo: "o/r", number: 42, head_sha: "abc1234" });
+  harness.registry.start({ repo: "o/r", number: 43, head_sha: "def5678" });
+
+  assert.deepEqual(
+    harness.registry
+      .list()
+      .map((record) => record.number)
+      .sort(),
+    [42, 43],
+  );
+  assert.equal(harness.registry.stopPr("o/r", 42), true);
+  assert.equal(harness.registry.stopPr("o/r", 42), false);
+  assert.deepEqual(
+    harness.registry.list().map((record) => record.number),
+    [43],
+  );
+  assert.equal(harness.registry.stopAll(), 1);
+  assert.deepEqual(harness.registry.list(), []);
+});
+
+test("github_pr watch actions list, start, and stop PR watches", async () => {
+  const harness = makePrHarness();
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () => {
+      throw new Error("watch management must not hit the network");
+    },
   });
-  await harness.watcher.refresh();
-  await harness.watcher.pollNow(); // pending
-  await harness.watcher.pollNow(); // failed → report (steer path)
-  assert.equal(harness.reported.length, 1);
-  assert.match(harness.reported[0], /resume the task you were working on/);
-  assert.equal(harness.informed.length, 0);
-});
 
-test("ci watcher omits resume instruction when resumeAfterFix is false", async () => {
-  const harness = makeWatcher(pushedProbe, [pendingSnapshot, failedSnapshot], {
-    resumeAfterFix: false,
-  });
-  await harness.watcher.refresh();
-  await harness.watcher.pollNow(); // pending
-  await harness.watcher.pollNow(); // failed → report (steer path)
-  assert.equal(harness.reported.length, 1);
-  assert.doesNotMatch(harness.reported[0], /resume the task/);
-});
+  const started = await executePull(
+    client,
+    { action: "watch", repo: "o/r", pr_number: 42 },
+    undefined,
+    harness.registry,
+  );
+  assert.match((started.content[0] as any).text, /^Watching #42 for CI and new feedback\.$/);
+  assert.equal((started.details as any).created, true);
 
-test("ci watcher never includes resume instruction in inform path", async () => {
-  const harness = makeWatcher(pushedProbe, [failedSnapshot], { resumeAfterFix: true });
-  await harness.watcher.refresh();
-  await harness.watcher.pollNow(); // already failed → inform path
-  assert.equal(harness.informed.length, 1);
-  assert.doesNotMatch(harness.informed[0], /resume the task/);
+  const listed = await executePull(
+    client,
+    { action: "watches", repo: "o/r" },
+    undefined,
+    harness.registry,
+  );
+  assert.match((listed.content[0] as any).text, /pr-1 o\/r#42/);
+  assert.equal((listed.details as any).watches.length, 1);
+
+  const again = await executePull(
+    client,
+    { action: "watch", repo: "o/r", pr_number: 42 },
+    undefined,
+    harness.registry,
+  );
+  assert.match((again.content[0] as any).text, /^Already watching #42\.$/);
+  assert.equal((again.details as any).created, false);
+
+  const stopped = await executePull(
+    client,
+    { action: "unwatch", repo: "o/r", pr_number: 42 },
+    undefined,
+    harness.registry,
+  );
+  assert.match((stopped.content[0] as any).text, /^Cancelled the PR watch for #42\.$/);
+  assert.equal((stopped.details as any).cancelled, true);
+
+  const none = await executePull(
+    client,
+    { action: "unwatch", repo: "o/r", pr_number: 42 },
+    undefined,
+    harness.registry,
+  );
+  assert.match((none.content[0] as any).text, /^No active PR watch for #42\.$/);
+  assert.equal((none.details as any).cancelled, false);
+
+  const empty = await executePull(
+    client,
+    { action: "watches", repo: "o/r" },
+    undefined,
+    harness.registry,
+  );
+  assert.equal((empty.content[0] as any).text, "No active PR watches.");
 });

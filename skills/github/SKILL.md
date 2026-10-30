@@ -1,6 +1,6 @@
 ---
 name: github
-description: "Use structured GitHub tools for pull requests, local code review, review/comment CRUD, thread resolution, issues, and CI. Trigger for GitHub PR/issue inspection or mutation, reviewing a PR, posting or editing comments/reviews, resolving review threads, checking or waiting for CI, and managing stacked PRs (gh stack: dependent PR chains, stack rebase/sync/merge, stacked-diff workflows). Clone or fetch repositories and review locally; never review from an API diff."
+description: "Use structured GitHub tools for pull requests, local code review, review/comment CRUD, thread resolution, issues, and CI. Trigger for GitHub PR/issue inspection or mutation, reviewing a PR, posting or editing comments/reviews, resolving review threads, watching or waiting for CI, following PR feedback, and managing stacked PRs (gh stack: dependent PR chains, stack rebase/sync/merge, stacked-diff workflows). Clone or fetch repositories and review locally; never review from an API diff."
 ---
 
 # GitHub Workflow
@@ -25,7 +25,7 @@ The reference files are long (170–420 lines). Read each one to the end before 
 - **Open or update a PR:** inspect the actual change, follow the repository template and [PR body guidance](references/pr-body.md), then use `github_pr create` or `update` so titles and Markdown bodies are transported exactly.
   - In the validation section, report only checks beyond routine CI. If none ran, write exactly `No validation beyond the repository's required CI.`
 - **Triage issues:** inspect/list, create/update, close/reopen, and manage issue comments with `github_issue`.
-- **Wait for CI:** use `github_ci status` with `wait: true`, pinned to the expected head SHA; inspect failed runs and logs without shell polling loops.
+- **Follow a PR:** creating a PR, commenting on one, or reviewing one starts a background watch. A notice arrives for new comments, reviews, inline replies, CI results, and merge or close. All feedback is surfaced, including bot reviews. Verify each claim against the code before acting. Do not poll for feedback.
 - **Audit writes:** read the full body echoed in every create/update tool result. If it is wrong, edit that same object rather than posting a correction.
 
 These stories define the intended surface. Releases, merges, reactions, workflow mutation, and arbitrary REST/GraphQL pass-through calls are not implied. Thread resolution is covered via `github_review` (see [Thread resolution](#thread-resolution)).
@@ -112,20 +112,45 @@ Use `github_issue` to view/list, create/update, close/reopen, and manage issue c
 
 Pass `repo: "owner/repo"` explicitly for writes. Preserve the IDs and URLs returned by mutations so later edits and deletes do not require rediscovery.
 
+## PR watches
+
+Creating a PR, commenting on one, or reviewing one starts a background watch. The watch covers CI for the current head, new conversation comments, reviews, inline replies, head moves, and merge or close. It posts one notice per poll.
+
+Rules:
+
+- Do not poll for feedback or CI. Wait for the notice.
+- On a notice, read the full thread with `github_pr inspect`, then reply through `github_pr comment` or `github_review reply`.
+- The watch surfaces every author, including bots. Treat each comment, human or bot, as a claim to verify against the code. Do not apply a suggestion you have not checked.
+- The watch backs off as the PR goes quiet. It stops on merge, close, or after 7 days without activity.
+- A resumed session catches up on feedback that arrived while Pi was off. The watch cannot poll while Pi is not running.
+- `github_pr action: "watches"` lists active watches; `action: "unwatch"` with `pr_number` stops one; `action: "watch"` with `pr_number` starts one for a PR that was not watched automatically.
+- The user can also list or stop watches with `/pr-watch` and `/pr-watch stop <id>`.
+
 ## CI
 
-Use `github_ci` with `action: "status"` for PR checks. Set `wait: true` to wait until checks finish instead of writing shell polling or sleep loops. Pass `expected_head_sha` when CI must correspond to code inspected locally.
+PR watches cover CI for pull requests automatically. Use `github_ci` for a one-shot snapshot, workflow runs, and failed logs.
 
-For commits outside a PR (a branch just pushed to, a tag, an arbitrary SHA), pass `ref` instead of `pr_number`. The ref is re-resolved on every poll, so a branch that moves mid-wait reports `head_changed` when pinned to `expected_head_sha`.
+Use `github_ci` with `action: "watch"` and `ref` only for a commit or branch without a PR, or when the user asks for a CI watch. The call returns immediately and does not block the conversation. A completion notice arrives when checks settle. An idle agent wakes on the notice. A busy agent receives it after the current turn.
 
-The wait result is one of:
+Pass `pr_number` or `ref`, not both. For commits outside a PR (a branch just pushed to, a tag, an arbitrary SHA), pass `ref`. Pass `expected_head_sha` when CI must correspond to code inspected locally. The watch reports `head_changed` if the head moves.
+
+Watch operations:
+
+- `action: "watch"` starts a watch and returns a job id such as `ci-1`.
+- `action: "watches"` lists running watches with progress.
+- `action: "watches"` with `watch_id` shows one watch.
+- `action: "unwatch"` with `watch_id` stops one watch.
+
+Use `action: "status"` only for a one-shot snapshot. No operation blocks. Start a watch when you need to wait.
+
+The result is one of:
 
 - `passed`
 - `failed`
-- `cancelled`
 - `timed_out`
 - `head_changed`
 - `no_checks`
+- `cancelled`
 
 If CI fails, use the returned run IDs with `github_ci` `action: "failed_logs"`. Do not automatically rerun workflows. If the head changes, fetch and inspect the new code before proceeding.
 

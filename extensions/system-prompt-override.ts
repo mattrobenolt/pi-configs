@@ -229,9 +229,8 @@ function formatSkills(skills: NonNullable<BuildSystemPromptOptions["skills"]>): 
 }
 
 // Pi treats agentDir/AGENTS.md as global context for every session. Here it
-// is repo documentation, so it belongs only under ~/.pi. Also dedup by
-// realpath: agent/ and agent-work/ are symlink twins and pi dedups by raw
-// path, which injects the same file twice.
+// is repo documentation, so it belongs only under ~/.pi. Dedup by realpath
+// because pi dedups by raw path, which can inject the same file twice.
 function filterContextFiles(
   files: NonNullable<BuildSystemPromptOptions["contextFiles"]>,
   cwd: string,

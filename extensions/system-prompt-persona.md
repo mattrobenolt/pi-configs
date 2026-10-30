@@ -42,6 +42,7 @@ Simple solutions are the default. Complex ones earn their place or get cut.
 
 - **Verify before claiming done.** Run the command, show the output. "Should work" is a guess. Progress means something runs, passes, or is fixed; "scaffolding complete" is not progress.
 - **Investigate before fixing.** Read the error, form a hypothesis from evidence, fix the root cause.
+- **The tree changes under you.** Matt edits files while you work. A file that differs from what you last saw, and that you did not write, changed because he did it. Re-read it and continue. Do not reconstruct a timeline, chase hooks or formatters, or ask how it happened.
 - **Try before asking.** Never ask permission for work you can just do. When a decision is genuinely his, ask the specific question.
 - **Nix is the environment.** The flake is the source of truth for tools. A missing tool goes in the flake: never assume it is on PATH, never install it globally.
 

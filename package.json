@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "lint": "oxlint --deny-warnings .",
-    "fmt": "oxfmt extensions memory-v2/run.ts packages/better-diff packages/director/src packages/director/package.json packages/memory packages/notion packages/pi-core packages/planetscale-knowledge packages/prose-audit packages/profile packages/slack packages/term packages/todos packages/webfetch",
-    "fmt:check": "oxfmt extensions memory-v2/run.ts packages/better-diff packages/director/src packages/director/package.json packages/memory packages/notion packages/pi-core packages/planetscale-knowledge packages/prose-audit packages/profile packages/slack packages/term packages/todos packages/webfetch --check",
+    "fmt": "oxfmt extensions memory-v2/run.ts packages/better-diff packages/director/src packages/director/package.json packages/memory packages/notion packages/pi-core packages/planetscale-knowledge packages/prose-audit packages/slack packages/term packages/todos packages/webfetch",
+    "fmt:check": "oxfmt extensions memory-v2/run.ts packages/better-diff packages/director/src packages/director/package.json packages/memory packages/notion packages/pi-core packages/planetscale-knowledge packages/prose-audit packages/slack packages/term packages/todos packages/webfetch --check",
     "check": "tsc --noEmit && node scripts/lint-skills.mjs && pnpm -r --if-present check",
     "prose-audit": "node packages/prose-audit/cli.ts",
     "test:github": "node --test extensions/github/github.test.ts",
@@ -19,7 +19,6 @@
     "@earendil-works/pi-coding-agent": "catalog:",
     "@earendil-works/pi-tui": "catalog:",
     "@mattrobenolt/pi-core": "workspace:*",
-    "@mattrobenolt/pi-profile": "workspace:*",
     "defuddle": "catalog:",
     "hysnappy": "catalog:",
     "linkedom": "^0.18.13",

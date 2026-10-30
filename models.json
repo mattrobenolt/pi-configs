@@ -41,6 +41,46 @@
             }
           },
           "type": "chat"
+        },
+        {
+          "id": "accounts/fireworks/models/deepseek-v4p1-flash-ultrafast",
+          "name": "DeepSeek V4.1 Flash (Ultrafast)",
+          "provider": "fireworks",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "cost": { "input": 0.3, "output": 1.2, "cacheRead": 0.006, "cacheWrite": 0 },
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
+          "api": "anthropic-messages",
+          "baseUrl": "https://api.fireworks.ai/inference",
+          "compat": {
+            "allowEmptySignature": true,
+            "sendSessionAffinityHeaders": true,
+            "supportsEagerToolInputStreaming": false,
+            "supportsCacheControlOnTools": false,
+            "supportsLongCacheRetention": false,
+            "forceAdaptiveThinking": true
+          },
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "inputLimits": {
+            "images": {
+              "resize": {
+                "maxWidth": 2000,
+                "maxHeight": 2000,
+                "maxBytes": 4718592,
+                "jpegQuality": 80
+              }
+            }
+          },
+          "type": "chat"
         }
       ]
     },

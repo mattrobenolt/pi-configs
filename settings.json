@@ -11,12 +11,13 @@
     "git:github.com/ocodista/pi-token-bloat",
     "git:github.com/HazAT/pi-ghostty",
     "git:github.com/championswimmer/pi-cache-graph",
-    "git:github.com/nicobailon/pi-subagents"
+    "git:github.com/nicobailon/pi-subagents",
+    "git:github.com/baskingspot/skills"
   ],
   "lastChangelogVersion": "1.4.0",
   "defaultProvider": "fireworks",
-  "defaultModel": "accounts/fireworks/models/glm-5p3",
-  "defaultThinkingLevel": "xhigh",
+  "defaultModel": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+  "defaultThinkingLevel": "max",
   "theme": "dracula",
   "transport": "auto",
   "compaction": {
@@ -124,5 +125,7 @@
       }
     }
   },
-  "deviceId": "21b7f501-9a10-4f48-ab79-2de8c5f175f0"
+  "enableInstallTelemetry": false,
+  "deviceId": "21b7f501-9a10-4f48-ab79-2de8c5f175f0",
+  "outputPad": 0
 }

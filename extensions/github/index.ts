@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
@@ -15,7 +15,8 @@ import path from "node:path";
 import {
   GitHubClient,
   assertPullHead,
-  checkProgressText,
+  formatChecks,
+  loadCommitChecks,
   loadPullChecks,
   loadRefChecks,
   normalizeInlineComment,
@@ -25,11 +26,16 @@ import {
   positiveInteger,
   requireString,
   splitRepo,
-  waitForChecks,
-  type CheckSnapshot,
   type GitHubJson,
 } from "./core.ts";
-import { setupCiWatch } from "./watch.ts";
+import {
+  CiWatchRegistry,
+  formatWatchDetails,
+  formatWatchLine,
+  formatWatchStatus,
+  type CiWatchJob,
+} from "./jobs.ts";
+import { PrWatchRegistry, loadPrActivity, prWatchRecords, type PrWatchCursor } from "./pr-watch.ts";
 
 const RepoParam = Type.String({ description: "Repository as owner/repo." });
 const PositiveIntegerParam = (description: string) => Type.Integer({ description, minimum: 1 });
@@ -62,11 +68,18 @@ const PullRequestParams = Type.Object({
       "comment",
       "update_comment",
       "delete_comment",
+      "watch",
+      "watches",
+      "unwatch",
     ] as const,
     { description: "Pull request operation." },
   ),
   repo: RepoParam,
-  pr_number: Type.Optional(PositiveIntegerParam("Pull request number.")),
+  pr_number: Type.Optional(
+    PositiveIntegerParam(
+      "Pull request number. Required for view, inspect, update, comment, update_comment, delete_comment, watch, and unwatch; omit for list, search, and watches.",
+    ),
+  ),
   state: Type.Optional(
     StringEnum(["open", "closed", "all"] as const, {
       description:
@@ -222,9 +235,13 @@ const IssueParams = Type.Object({
 type IssueInput = Static<typeof IssueParams>;
 
 const CIParams = Type.Object({
-  action: StringEnum(["status", "runs", "run", "failed_logs"] as const, {
-    description: "CI/check operation.",
-  }),
+  action: StringEnum(
+    ["watch", "status", "watches", "unwatch", "runs", "run", "failed_logs"] as const,
+    {
+      description:
+        "CI operation. watch waits on a ref in the background and returns immediately; PRs are watched automatically. status is a one-shot snapshot. No operation blocks.",
+    },
+  ),
   repo: RepoParam,
   pr_number: Type.Optional(
     PositiveIntegerParam("Pull request number for status. Required unless ref is provided."),
@@ -232,22 +249,24 @@ const CIParams = Type.Object({
   ref: Type.Optional(
     Type.String({
       description:
-        "Git ref (branch, tag, or SHA) for status on a commit outside a PR. Mutually exclusive with pr_number.",
+        "Git ref (branch, tag, or SHA) for status or watch on a commit outside a PR. Mutually exclusive with pr_number.",
     }),
   ),
   expected_head_sha: Type.Optional(
     Type.String({
-      description: "Optional head SHA pin. Waiting stops with head_changed if the head moves.",
+      description: "Optional head SHA pin. A watch stops with head_changed if the head moves.",
     }),
-  ),
-  wait: Type.Optional(
-    Type.Boolean({ description: "For status, wait until checks finish. Defaults to false." }),
   ),
   timeout_minutes: Type.Optional(
     Type.Integer({
-      description: "Maximum wait time. Default 30 minutes; max 120.",
+      description: "Maximum watch time. Default 30 minutes; max 120.",
       minimum: 1,
       maximum: 120,
+    }),
+  ),
+  watch_id: Type.Optional(
+    Type.String({
+      description: "Background watch id such as ci-1, for watches (single job) or unwatch.",
     }),
   ),
   run_id: Type.Optional(PositiveIntegerParam("Workflow run ID for run or failed_logs.")),
@@ -309,18 +328,6 @@ function endpoint(repo: string): string {
 
 function userLogin(value: GitHubJson): string {
   return value.user?.login ?? value.author?.login ?? "unknown";
-}
-
-function renderChecks(snapshot: CheckSnapshot): string {
-  const lines = [
-    `CI: ${snapshot.status} — ${snapshot.passed} passed, ${snapshot.failed} failed, ${snapshot.pending} pending`,
-  ];
-  for (const check of snapshot.checks) {
-    lines.push(
-      `- [${check.status}] ${check.name}${check.run_id ? ` (run ${check.run_id})` : ""}${check.url ? ` — ${check.url}` : ""}`,
-    );
-  }
-  return lines.join("\n");
 }
 
 function renderPull(pull: GitHubJson): string {
@@ -640,8 +647,46 @@ export async function executePull(
   client: GitHubClient,
   params: PullRequestInput,
   signal?: AbortSignal,
+  prWatches?: PrWatchRegistry,
 ) {
   const basePath = endpoint(params.repo);
+
+  if (params.action === "watches") {
+    if (!prWatches) throw new Error("PR watches are unavailable in this context.");
+    const lines = prWatches.describe();
+    return toolResult(
+      lines.length > 0 ? ["PR watches:", ...lines].join("\n") : "No active PR watches.",
+      { action: params.action, repo: params.repo, watches: prWatches.list() },
+    );
+  }
+
+  if (params.action === "unwatch") {
+    if (!prWatches) throw new Error("PR watches are unavailable in this context.");
+    const number = prNumber(params.pr_number);
+    const cancelled = prWatches.stopPr(params.repo, number);
+    return toolResult(
+      cancelled ? `Cancelled the PR watch for #${number}.` : `No active PR watch for #${number}.`,
+      { action: params.action, repo: params.repo, pr_number: number, cancelled },
+    );
+  }
+
+  if (params.action === "watch") {
+    if (!prWatches) throw new Error("PR watches are unavailable in this context.");
+    const number = prNumber(params.pr_number);
+    const start = prWatches.start({ repo: params.repo, number });
+    return toolResult(
+      start.created
+        ? `Watching #${number} for CI and new feedback.`
+        : `Already watching #${number}.`,
+      {
+        action: params.action,
+        repo: params.repo,
+        pr_number: number,
+        created: start.created,
+        watch: start.record,
+      },
+    );
+  }
 
   if (params.action === "view") {
     const number = prNumber(params.pr_number);
@@ -658,7 +703,7 @@ export async function executePull(
       paginateList<GitHubJson>(client, `${basePath}/issues/${number}/comments`, { signal }),
       loadPullChecks(client, params.repo, number, signal),
     ]);
-    const lines = [renderPull(pull), "", renderChecks(checks.snapshot)];
+    const lines = [renderPull(pull), "", formatChecks(checks.snapshot)];
     if (reviews.length) {
       lines.push("", "Reviews:");
       for (const review of reviews) {
@@ -1214,7 +1259,7 @@ export async function executeCI(
   client: GitHubClient,
   params: CIInput,
   signal?: AbortSignal,
-  onProgress?: (text: string, details: Record<string, unknown>) => void,
+  watches?: CiWatchRegistry,
 ) {
   const basePath = endpoint(params.repo);
 
@@ -1225,37 +1270,94 @@ export async function executeCI(
     if (params.pr_number === undefined && params.ref === undefined) {
       throw new Error("status requires pr_number or ref (branch, tag, or commit SHA).");
     }
-    const load =
+    const current =
       params.ref !== undefined
-        ? () => loadRefChecks(client, params.repo, requireString(params.ref, "ref"), signal)
-        : () => loadPullChecks(client, params.repo, prNumber(params.pr_number), signal);
-    if (params.wait) {
-      const result = await waitForChecks({
-        load,
-        expectedHeadSha: params.expected_head_sha,
-        timeoutMs: (params.timeout_minutes ?? 30) * 60_000,
-        signal,
-        onProgress(update) {
-          onProgress?.(checkProgressText(update.snapshot, update.elapsed_ms), update);
-        },
-      });
-      return toolResult(
-        `${result.status}: ${renderChecks(result.snapshot)}\nhead: ${result.head_sha}${result.expected_head_sha ? ` (expected ${result.expected_head_sha})` : ""}`,
-        { action: params.action, repo: params.repo, ...result },
-      );
-    }
-
-    const current = await load();
+        ? await loadRefChecks(client, params.repo, requireString(params.ref, "ref"), signal)
+        : await loadPullChecks(client, params.repo, prNumber(params.pr_number), signal);
     const status =
       params.expected_head_sha && current.head_sha !== params.expected_head_sha
         ? "head_changed"
         : current.snapshot.status;
-    return toolResult(`${status}: ${renderChecks(current.snapshot)}\nhead: ${current.head_sha}`, {
+    return toolResult(`${status}: ${formatChecks(current.snapshot)}\nhead: ${current.head_sha}`, {
       action: params.action,
       repo: params.repo,
       status,
       expected_head_sha: params.expected_head_sha,
       ...current,
+    });
+  }
+
+  if (params.action === "watch") {
+    if (!watches) throw new Error("Background CI watches are unavailable in this context.");
+    if (params.pr_number !== undefined && params.ref !== undefined) {
+      throw new Error("Pass either pr_number or ref for a watch, not both.");
+    }
+    if (params.pr_number === undefined && params.ref === undefined) {
+      throw new Error("watch requires pr_number or ref (branch, tag, or commit SHA).");
+    }
+    if (params.pr_number !== undefined) {
+      throw new Error(
+        "Pull requests are watched automatically on create and participation. Pass ref to watch a commit or branch without a PR.",
+      );
+    }
+    const { job, created } = watches.start({
+      repo: params.repo,
+      pr_number: params.pr_number !== undefined ? prNumber(params.pr_number) : undefined,
+      ref: params.ref !== undefined ? requireString(params.ref, "ref") : undefined,
+      expected_head_sha: params.expected_head_sha,
+      timeout_ms: (params.timeout_minutes ?? 30) * 60_000,
+    });
+    const target = `${job.spec.repo} ${job.spec.pr_number !== undefined ? `#${job.spec.pr_number}` : job.spec.ref}`;
+    const pin = job.spec.expected_head_sha ? `, pinned to ${job.spec.expected_head_sha}` : "";
+    const text = created
+      ? [
+          `Started background CI watch ${job.id} for ${target}${pin}.`,
+          "It polls until checks settle and posts a notice in this conversation. Continue with other work; the notice wakes an idle agent.",
+          `Query progress with github_ci action=watches watch_id=${job.id}, or stop it with action=unwatch.`,
+        ].join("\n")
+      : `CI watch ${job.id} is already running for ${target}${pin}. Use github_ci action=watches watch_id=${job.id} for progress.`;
+    return toolResult(text, { action: params.action, repo: params.repo, created, watch: job });
+  }
+
+  if (params.action === "watches") {
+    if (!watches) throw new Error("Background CI watches are unavailable in this context.");
+    if (params.watch_id) {
+      const job = watches.get(params.watch_id);
+      if (!job) throw new Error(`Unknown CI watch ${params.watch_id}.`);
+      return toolResult(formatWatchDetails(job, watches.now()), {
+        action: params.action,
+        repo: params.repo,
+        watch: job,
+      });
+    }
+    const jobs = watches.list();
+    const text = jobs.length
+      ? ["Background CI watches:", ...jobs.map((job) => formatWatchLine(job, watches.now()))].join(
+          "\n",
+        )
+      : "No background CI watches.";
+    return toolResult(text, { action: params.action, repo: params.repo, watches: jobs });
+  }
+
+  if (params.action === "unwatch") {
+    if (!watches) throw new Error("Background CI watches are unavailable in this context.");
+    const id = params.watch_id?.trim();
+    if (!id) throw new Error("unwatch requires watch_id.");
+    const job = watches.get(id);
+    if (!job) throw new Error(`Unknown CI watch ${id}.`);
+    if (!watches.cancel(id)) {
+      return toolResult(`CI watch ${id} already finished (${job.state}).`, {
+        action: params.action,
+        repo: params.repo,
+        cancelled: false,
+        watch: job,
+      });
+    }
+    return toolResult(`Cancelled CI watch ${id}.`, {
+      action: params.action,
+      repo: params.repo,
+      cancelled: true,
+      watch: job,
     });
   }
 
@@ -1338,22 +1440,249 @@ export default function githubExtension(pi: ExtensionAPI) {
   };
   const client = new GitHubClient({ token });
 
+  let lastCtx: ExtensionContext | undefined;
+  // The user stopped a run. A notice that lands while held is appended for
+  // the next prompt instead of starting a run they just cancelled.
+  let held = false;
+
+  const notifyUser = (text: string, level: "info" | "warning" | "error") => {
+    const ctx = lastCtx;
+    if (!ctx?.hasUI) return;
+    try {
+      ctx.ui.notify(text.split("\n")[0], level);
+    } catch {
+      // The session is going away; nothing sensible to do with the notice.
+    }
+  };
+
+  const refreshCiStatus = () => {
+    const ctx = lastCtx;
+    if (!ctx?.hasUI || ctx.mode !== "tui") return;
+    try {
+      ctx.ui.setStatus("github-ci", formatWatchStatus(watches.list(), watches.now()));
+    } catch {
+      // Status rendering is advisory only.
+    }
+  };
+
+  const deliverNotice = (
+    customType: string,
+    text: string,
+    details: unknown,
+    level: "info" | "warning" | "error",
+  ) => {
+    notifyUser(text, level);
+    const message = { customType, content: text, display: true, details };
+    try {
+      if (held) {
+        pi.sendMessage(message, { triggerTurn: false });
+        return;
+      }
+      // Idle: starts a run. Busy: delivered after the current turn, so the
+      // notice never cuts into an in-flight tool call.
+      pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" });
+    } catch (error) {
+      notifyUser(
+        `github: could not deliver a notice: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    }
+  };
+
+  const watches = new CiWatchRegistry({
+    load: (spec, signal) =>
+      spec.pr_number !== undefined
+        ? loadPullChecks(client, spec.repo, spec.pr_number, signal)
+        : loadRefChecks(client, spec.repo, spec.ref ?? "", signal),
+    deliver: (job: CiWatchJob, text: string) =>
+      deliverNotice(
+        "github-ci-watch",
+        text,
+        { watch: job },
+        job.state === "failed" ? "warning" : "info",
+      ),
+    onUpdate: refreshCiStatus,
+  });
+
+  const prWatches = new PrWatchRegistry({
+    loadActivity: (spec, signal) => loadPrActivity(client, spec.repo, spec.number, signal),
+    loadChecks: (repo, head, signal) => loadCommitChecks(client, repo, head, signal),
+    deliver: (record, text) =>
+      deliverNotice(
+        "github-pr-watch",
+        text,
+        { watch: record },
+        text.includes("CI failed") || record.stopped === "error" ? "warning" : "info",
+      ),
+    persist: (record) => {
+      try {
+        pi.appendEntry("github-pr-watch", record);
+      } catch {
+        // Session persistence is best-effort; watching continues without it.
+      }
+    },
+  });
+
+  const appendResultText = (result: { content: unknown[] }, text: string) => {
+    const first = result.content[0] as { type?: string; text?: string } | undefined;
+    if (first?.type === "text" && typeof first.text === "string") {
+      first.text = `${first.text}\n\n${text}`;
+    }
+    return result;
+  };
+
+  const maxId = (items: unknown): number => {
+    if (!Array.isArray(items)) return 0;
+    let max = 0;
+    for (const item of items) {
+      const id = Number((item as { id?: unknown } | undefined)?.id);
+      if (Number.isSafeInteger(id) && id > max) max = id;
+    }
+    return max;
+  };
+
+  const observePullResult = (
+    params: PullRequestInput,
+    result: Awaited<ReturnType<typeof executePull>>,
+  ) => {
+    const details = result.details as Record<string, any>;
+    if (params.action === "create") {
+      const pull = details.pull ?? {};
+      if (typeof pull.number !== "number") return result;
+      const start = prWatches.start({
+        repo: params.repo,
+        number: pull.number,
+        title: typeof pull.title === "string" ? pull.title : undefined,
+        url: typeof pull.html_url === "string" ? pull.html_url : undefined,
+        head_sha: typeof pull.head?.sha === "string" ? pull.head.sha : undefined,
+      });
+      if (start.created) {
+        appendResultText(
+          result,
+          `Watching #${pull.number} for CI and new comments, reviews, or replies. No polling is needed; a notice arrives when something changes.`,
+        );
+      }
+      return result;
+    }
+
+    const number = params.pr_number;
+    if (number === undefined) return result;
+    if (params.action === "view" || params.action === "inspect") {
+      const cursor: PrWatchCursor =
+        params.action === "inspect"
+          ? {
+              comments: maxId(details.conversation),
+              reviews: maxId(details.reviews),
+              review_comments: maxId(details.reviewComments),
+            }
+          : {};
+      prWatches.rearm({ repo: params.repo, number }, cursor);
+      return result;
+    }
+    if (params.action === "comment") {
+      const commentId = details.comment?.id;
+      const cursor: PrWatchCursor = typeof commentId === "number" ? { comments: commentId } : {};
+      const start = prWatches.touch({ repo: params.repo, number }, cursor);
+      if (start.created) {
+        appendResultText(result, `Watching #${number} for replies and new feedback.`);
+      }
+    } else if (params.action === "update") {
+      const start = prWatches.touch({ repo: params.repo, number });
+      if (start.created) {
+        appendResultText(result, `Watching #${number} for CI and new feedback.`);
+      }
+    }
+    return result;
+  };
+
+  const observeReviewResult = (
+    params: ReviewInput,
+    result: Awaited<ReturnType<typeof executeReview>>,
+  ) => {
+    const details = result.details as Record<string, any>;
+    const number = params.pr_number;
+    if (number === undefined) return result;
+    if (params.action === "list_threads") {
+      let max = 0;
+      for (const thread of details.threads ?? []) {
+        for (const comment of thread.comments ?? []) {
+          const id = Number(comment.databaseId);
+          if (Number.isSafeInteger(id) && id > max) max = id;
+        }
+      }
+      if (max > 0) prWatches.rearm({ repo: params.repo, number }, { review_comments: max });
+      return result;
+    }
+    let cursor: PrWatchCursor = {};
+    if (params.action === "submit" && typeof details.review?.id === "number") {
+      cursor = { reviews: details.review.id };
+    } else if (
+      (params.action === "comment" || params.action === "reply") &&
+      typeof details.comment?.id === "number"
+    ) {
+      cursor = { review_comments: details.comment.id };
+    } else if (
+      params.action !== "update_review" &&
+      params.action !== "update_comment" &&
+      params.action !== "delete_comment" &&
+      params.action !== "resolve_thread" &&
+      params.action !== "unresolve_thread"
+    ) {
+      return result;
+    }
+    const start = prWatches.touch({ repo: params.repo, number }, cursor);
+    if (params.action === "submit" && typeof details.review?.id === "number") {
+      prWatches.markSelfReview(params.repo, number, details.review.id);
+    }
+    if (start.created) {
+      appendResultText(result, `Watching #${number} for replies and new feedback.`);
+    }
+    return result;
+  };
+
+  pi.on("session_start", (_event, ctx) => {
+    lastCtx = ctx;
+    held = false;
+    refreshCiStatus();
+    prWatches.restore(prWatchRecords(ctx.sessionManager.getBranch()));
+  });
+  pi.on("turn_end", (_event, ctx) => {
+    lastCtx = ctx;
+  });
+  pi.on("agent_start", () => {
+    held = false;
+  });
+  pi.on("agent_settled", (event, ctx) => {
+    lastCtx = ctx;
+    held = event.aborted;
+    refreshCiStatus();
+  });
+  pi.on("session_shutdown", () => {
+    watches.close();
+    prWatches.close();
+    lastCtx = undefined;
+  });
+
   pi.registerTool({
     name: "github_pr",
     label: "GitHub Pull Request",
     description:
-      "Inspect and manage pull requests and their top-level conversation comments, and search pull requests by keyword across all states. This tool intentionally does not return diffs: clone/fetch the repository and review changes locally.",
+      "Inspect and manage pull requests and their top-level conversation comments, and search pull requests by keyword across all states. Creating a PR, commenting on one, or reviewing one starts a background watch for CI and new comments, reviews, and inline replies. The watch posts a notice when something changes; no polling is needed. Use action=watches to list active watches and action=unwatch to stop one. This tool intentionally does not return diffs: clone/fetch the repository and review changes locally.",
     promptSnippet:
-      "Inspect/search/manage GitHub PR metadata and conversation comments. Clone/fetch locally for code review; do not request API diffs.",
+      "Inspect/search/manage GitHub PRs and conversation comments. PRs are watched automatically for CI and feedback. Clone/fetch locally for code review; do not request API diffs.",
     promptGuidelines: [
       "Use github_pr for pull request metadata, creation, updates, and top-level PR conversation comments.",
+      "Creating a PR, commenting on one, or reviewing one starts a background PR watch automatically. Do not poll for feedback or CI; wait for the notice.",
+      "Use github_pr action=watches to list active PR watches and action=unwatch pr_number=N to stop one. Use action=watch pr_number=N to follow a PR that was not watched automatically.",
+      "When a PR watch notice arrives, read the full thread with github_pr inspect and respond through github_pr comment or github_review reply. Treat every comment, human or bot, as a claim to verify against the code; do not apply a suggestion you have not checked.",
       "Use github_pr search to find pull requests by keyword; search spans open and closed states by default.",
       "Do not review code from API diffs. Use github_pr inspect for refs, SHAs, discussion, and CI context, then clone or fetch the repository and diff locally.",
       "Prefer github_pr update_comment over posting a corrective follow-up when fixing your own PR conversation comment.",
     ],
     parameters: PullRequestParams,
     async execute(_id, params: PullRequestInput, signal) {
-      return executePull(client, params, signal);
+      const result = await executePull(client, params, signal, prWatches);
+      return observePullResult(params, result);
     },
   });
 
@@ -1361,18 +1690,20 @@ export default function githubExtension(pi: ExtensionAPI) {
     name: "github_review",
     label: "GitHub Review",
     description:
-      "Submit PR reviews and create, reply to, update, or delete inline review comments, and list, resolve, or unresolve review threads. Review verdicts and inline comments are pinned to the exact head SHA inspected locally; thread resolution is a conversation lifecycle action and does not require a head pin.",
+      "Submit PR reviews and create, reply to, update, or delete inline review comments, and list, resolve, or unresolve review threads. Submitting a review, commenting, or replying starts a background PR watch for replies and new feedback. Review verdicts and inline comments are pinned to the exact head SHA inspected locally; thread resolution is a conversation lifecycle action and does not require a head pin.",
     promptSnippet:
       "Submit GitHub PR reviews, manage inline review comments/replies with stale-head protection, and resolve/unresolve review threads.",
     promptGuidelines: [
       "Use github_review for review verdicts and inline code discussion; use github_pr for top-level PR conversation comments.",
+      "Submitting a review, commenting, or replying starts a PR watch automatically. Do not poll for replies; a notice arrives when someone responds.",
       "github_review submit and comment require expected_head_sha from the locally reviewed checkout and reject stale reviews when the PR head changes. resolve_thread and unresolve_thread do not pin a head — resolving is a conversation action, not code feedback.",
       "Resolve a thread after addressing its feedback with resolve_thread, passing any inline comment in the thread (comment ID or #discussion_r URL) or the thread node ID from list_threads. Use list_threads to see which threads are still open before resolving. pr_number is optional for resolve_thread/unresolve_thread: omit it with a thread node ID, or omit it when resolving by comment (the PR is looked up automatically).",
       "Prefer github_review update_comment or update_review for corrections and formatting fixes. Reply when the discussion genuinely advances; delete only accidental or misplaced comments.",
     ],
     parameters: ReviewParams,
     async execute(_id, params: ReviewInput, signal) {
-      return executeReview(client, params, signal);
+      const result = await executeReview(client, params, signal);
+      return observeReviewResult(params, result);
     },
   });
 
@@ -1397,21 +1728,71 @@ export default function githubExtension(pi: ExtensionAPI) {
     name: "github_ci",
     label: "GitHub CI",
     description:
-      "Read commit checks (by PR number or git ref) and GitHub Actions runs, wait for checks to finish, and retrieve failed logs. Waiting is cancellable and can be pinned to an expected head SHA.",
-    promptSnippet: "Read or wait for GitHub CI checks and inspect failed workflow logs.",
+      "Read commit checks (by PR number or git ref), watch checks in the background, and retrieve GitHub Actions runs and failed logs. Waiting is asynchronous: action=watch returns immediately and posts a completion notice when checks settle. action=status reads one snapshot and never blocks.",
+    promptSnippet:
+      "Read GitHub CI state, watch checks in the background, and inspect progress or failed workflow logs.",
     promptGuidelines: [
-      "Use github_ci status with wait=true instead of writing shell sleep/poll loops.",
-      "Pass ref (branch, tag, or SHA) instead of pr_number for status on commits outside a PR, such as CI on a branch just pushed to.",
-      "Pass expected_head_sha when waiting on reviewed code. If github_ci returns head_changed, fetch and inspect the new head before proceeding.",
-      "After github_ci reports failed checks, use github_ci failed_logs with the returned run ID.",
+      "PR watches cover CI for pull requests automatically. Use github_ci for one-shot status reads, workflow runs, and failed logs.",
+      "Use github_ci action=watch only with ref, for a commit or branch without a PR, or when the user explicitly asks for a CI watch. Never write shell sleep/poll loops.",
+      "After starting a github_ci watch, continue with other work or end the turn. The completion notice wakes an idle agent and joins a busy agent after its current turn.",
+      "Use github_ci action=watches only for on-demand progress, and action=unwatch to stop a watch. Do not poll watches in a loop.",
+      "Use github_ci action=status only for a one-shot snapshot when no waiting is needed.",
+      "Pass ref (branch, tag, or SHA) instead of pr_number for checks on commits outside a PR, such as CI on a branch just pushed to.",
+      "Pass expected_head_sha when watching reviewed code. If a watch reports head_changed, fetch and inspect the new head before proceeding.",
+      "After a watch reports failed checks, use github_ci failed_logs with the returned run ID. Do not rerun workflows automatically.",
     ],
     parameters: CIParams,
-    async execute(_id, params: CIInput, signal, onUpdate) {
-      return executeCI(pi, client, params, signal, (text, details) => {
-        onUpdate?.({ content: [{ type: "text", text }], details });
-      });
+    async execute(_id, params: CIInput, signal) {
+      return executeCI(pi, client, params, signal, watches);
     },
   });
 
-  setupCiWatch(pi, client);
+  pi.registerCommand("pr-watch", {
+    description: "Show or stop automatic PR watches: /pr-watch [stop <id...>|stop-all]",
+    handler: async (args, ctx) => {
+      const text = args.trim();
+      if (!text) {
+        const lines = prWatches.describe();
+        ctx.ui.notify(
+          lines.length > 0 ? ["PR watches:", ...lines].join("\n") : "No active PR watches.",
+          "info",
+        );
+        return;
+      }
+      const [verb, ...ids] = text.split(/\s+/);
+      if (verb === "stop-all") {
+        const count = prWatches.stopAll();
+        ctx.ui.notify(`Stopped ${count} PR watch${count === 1 ? "" : "es"}.`, "info");
+        return;
+      }
+      if (verb === "stop" && ids.length > 0) {
+        const count = ids.filter((id) => prWatches.stop(id)).length;
+        ctx.ui.notify(`Stopped ${count} PR watch${count === 1 ? "" : "es"}.`, "info");
+        return;
+      }
+      ctx.ui.notify("Usage: /pr-watch [stop <id...>|stop-all]", "warning");
+    },
+  });
+
+  pi.registerCommand("ci-watch", {
+    description: "Show active background CI and PR watches",
+    handler: async (_args, ctx) => {
+      const sections: string[] = [];
+      const background = watches.list();
+      if (background.length > 0) {
+        sections.push(
+          [
+            "background CI watches:",
+            ...background.map((job) => formatWatchLine(job, watches.now())),
+          ].join("\n"),
+        );
+      }
+      const prLines = prWatches.describe();
+      if (prLines.length > 0) sections.push(["PR watches:", ...prLines].join("\n"));
+      ctx.ui.notify(
+        sections.length > 0 ? sections.join("\n\n") : "No active CI or PR watches.",
+        "info",
+      );
+    },
+  });
 }

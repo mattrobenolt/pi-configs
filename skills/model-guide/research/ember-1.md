@@ -3,19 +3,20 @@
 Fireworks model path: `accounts/fireworks/models/ember-1`
 Confirmed pi ID: `fireworks/accounts/fireworks/models/ember-1` (1M context, 131.1K max output, thinking and vision enabled — same serving envelope as kimi-k3)
 Prepared: 2026-09-24 · Status: launch teardown + live route probe; zero neutral reproduction exists
+Updated: 2026-10-23 · **Permanence confirmed (Matt; model page state "Ready", preview banner gone)** — the durability ban lifts; seat status unchanged (challenger, not seated; zero neutral coverage)
 
 ---
 
 ## 1. Routing verdict
 
-Ember-1 is a **K3-seat challenger on a research-preview clock — not seated**.
+Ember-1 is a **K3-seat challenger — permanent on the route since 2026-10-23, not seated**.
 
 - It is Fireworks Research's post-train of Kimi K3, trained to reason more concisely: claimed K3-max quality at 35-50% fewer tokens, at the **identical $3.00/$0.30/$15.00 sticker**. None of the savings is per-token price; all of it is tokens per task.
 - **Every quality number is Fireworks-run.** No third party has published a run ([Orcarouter, 2026-09-23](https://www.orcarouter.ai/blog/ember-1-release): "no third party has published a run of Ember-1 as of writing"); Artificial Analysis has not indexed it; the DeepSWE leaderboard has no ember-1 entry. The 75.2% DeepSWE figure is a single vendor run at n=113.
-- **The two-week research-preview window (released 2026-09-22 → ~2026-10-07, permanence "based on community demand") bars durable routing.** On-demand deployment (dedicated GPUs, no rate limits) exists as the only durability path.
+- ~~The two-week research-preview window bars durable routing.~~ **Resolved 2026-10-23: Ember-1 is sticking around (Matt); the model page reads state "Ready" with the preview banner gone.** Durable routing is allowed.
 - Every K3-family behavioral ban carries until probed: never verifier, never self-acceptance, explicit non-goals, external acceptance, bounded runs. The fine-tune targets token count, not the imaginary-grader behavior or the hallucination trajectory.
 - Not a quorum family — a K3 derivative (Moonshot lineage); "Fireworks is a host, not a family" still holds. An ember-1 vote is not independent of K3.
-- Right use inside the window: A/B against K3 on real traffic (the duel harness at `evals/model-duel/` is the natural instrument), plus K3-shaped work where a failed attempt is cheap to retry. **Promotion requires permanence + local parity — not vendor tables.**
+- Right use: A/B against K3 on real traffic (the duel harness at `evals/model-duel/` is the natural instrument), plus K3-shaped work where a failed attempt is cheap to retry. **Promotion requires local parity + any neutral landing — not vendor tables.**
 
 ---
 
@@ -25,7 +26,7 @@ Ember-1 is a **K3-seat challenger on a research-preview clock — not seated**.
 - **Base:** Kimi K3 (2.8T MoE). Post-train, not a new architecture — the [model page](https://fireworks.ai/models/fireworks/ember-1) lists 2.78T params, MoE, provider Fireworks. Training collection spans mathematics, coding, instruction following, conversation, search, tool use, and software engineering — standalone problems plus extended interactions, with task/environment feedback to preserve self-reflection while cutting excess reasoning.
 - **Route envelope:** identical to K3 on our host — 1M context, 131.1K max output, thinking + vision. Vision verified live 2026-09-24 (64×64 red PNG → "Solid bright red").
 - **Pricing:** $3.00 input / $0.30 cached / $15.00 output per 1M — identical to K3's sticker on the same route. ([Model page](https://fireworks.ai/models/fireworks/ember-1); OpenRouter lists the same rates.)
-- **Release status:** Research Preview on serverless; **two-week access window, permanent "based on community demand"**; on-demand deployment available. No published weights — a Fireworks-proprietary checkpoint on an open base; not itself an open-weight model.
+- **Release status:** ~~Research Preview~~ **Permanent on serverless (state "Ready", confirmed 2026-10-23)**; on-demand deployment available. No published weights — a Fireworks-proprietary checkpoint on an open base; not itself an open-weight model.
 
 The mechanism claim is specific and worth taking seriously: K3 spends >90% of generated tokens on reasoning, and in multi-turn agent loops those traces are replayed and re-billed every turn (context grows ~quadratically with turns). Fireworks' experiments found 35-50% of K3's reasoning removable without accuracy loss; the fine-tune internalizes the cut (and claims restrained token use on unsuccessful attempts — cheaper failures, not fewer failures).
 
@@ -127,7 +128,7 @@ One anomaly in the good direction: under a tight cap (`max_tokens: 30`, default 
 **Cons**
 
 - **Zero neutral coverage** — every number from the vendor that sells it; first guide model added in this state.
-- **Research preview** — ~2026-10-07 serverless clock, permanence demand-gated, no weights, no SLA. Nothing durable can route to it.
+- ~~Research preview~~ — permanent since 2026-10-23; still no weights, no SLA.
 - **Unpinned default is a trap** — heavy reasoning that truncates capped calls all-reasoning (reproduced day one); the inverse of Astra's default-low.
 - Savings uneven (5.9-51.9%) — low-deliberation workloads won't feel the headline.
 - DeepSWE +8.8 is one vendor run, n=113, on a benchmark family the training set targets.
@@ -145,21 +146,21 @@ One anomaly in the good direction: under a tight cap (`max_tokens: 30`, default 
 
 **Do not use for:**
 
-- anything durable — production commitments, seat changes, configs that outlive ~2026-10-07;
+- seat changes on vendor evidence (durability is settled; parity is not);
 - verifier, self-acceptance, or factual roles (K3 bans);
 - unpinned effort on output-capped calls (probe result);
 - routing on the vendor table, including the DeepSWE 75.2;
 - quorum votes (not an independent family);
 - low-deliberation volume where the savings evaporate (τ-2 end of the spread).
 
-**Promotion criteria** (all three): permanence past the window (or an on-demand commitment); local parity vs K3 on the duel packs; and if it lands anywhere neutral (AA, DeepSWE leaderboard), the usual neutral-first read. Seat math if parity holds: K3's seats at ~60% cost — Matt's call, not a launch-day edit.
+**Promotion criteria** (permanence met 2026-10-23; two remain): local parity vs K3 on the duel packs; and if it lands anywhere neutral (AA, DeepSWE leaderboard), the usual neutral-first read. Seat math if parity holds: K3's seats at ~60% cost — Matt's call, not a launch-day edit.
 
 ---
 
 ## 9. Watch items
 
-- **Permanence decision ~2026-10-07** (community-demand-gated) — the gating fact for everything.
-- AA / DeepSWE leaderboard indexing; any third-party run.
+- ~~Permanence decision~~ — **resolved 2026-10-23: permanent.**
+- AA / DeepSWE leaderboard indexing; any third-party run — now the gating evidence.
 - Local duel vs K3 (routine + hard packs, `low`/`high` vs K3 `max`) — the real parity test.
 - Quality at `none` (extraction viability) and at `low` on hard tasks (the blog's own K3-low table shows what low-effort did to the parent).
 - Preserved-thinking contract; long-run throughput; cache-hit rate on the route.
