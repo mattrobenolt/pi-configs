@@ -30,7 +30,6 @@ import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { injectEphemeralCustomContextMessage } from "@mattrobenolt/pi-core/context";
 import {
@@ -38,7 +37,7 @@ import {
   formatPreviewBlock as formatCorePreviewBlock,
   type TruncateMode,
 } from "@mattrobenolt/pi-core/preview";
-import { Type } from "typebox";
+import { StringEnum, Type } from "@mattrobenolt/pi-core/schema";
 
 const DEFAULT_MEMORY_DIR =
   process.env.PI_MEMORY_DIR ?? path.join(process.env.HOME ?? "~", ".pi", "agent", "memory");

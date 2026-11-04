@@ -8,6 +8,7 @@
     "./context": "./context.ts",
     "./files": "./files.ts",
     "./preview": "./preview.ts",
+    "./schema": "./schema.ts",
     "./terminal-focus": "./terminal-focus.ts",
     "./tool-output": "./tool-output.ts"
   },
@@ -18,7 +19,8 @@
     "lint": "oxlint ."
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "catalog:"
+    "@earendil-works/pi-coding-agent": "catalog:",
+    "typebox": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

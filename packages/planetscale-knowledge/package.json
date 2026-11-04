@@ -13,7 +13,9 @@
     "fmt:check": "oxfmt index.ts index.test.ts --check",
     "lint": "oxlint index.ts index.test.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@mattrobenolt/pi-core": "workspace:*"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "catalog:",
     "@earendil-works/pi-coding-agent": "catalog:",

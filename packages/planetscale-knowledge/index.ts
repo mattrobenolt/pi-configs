@@ -6,9 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { StringEnum, Type } from "@mattrobenolt/pi-core/schema";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_ROOT = path.join(os.homedir(), ".pi", "agent", "planetscale-knowledge");

@@ -2082,3 +2082,416 @@ test("github_pr watch actions list, start, and stop PR watches", async () => {
   );
   assert.equal((empty.content[0] as any).text, "No active PR watches.");
 });
+
+function pullJson(number: number, head: string, base: string, extra: Record<string, any> = {}) {
+  return {
+    number,
+    title: `PR ${number}`,
+    state: "open",
+    draft: false,
+    html_url: `https://github.com/o/r/pull/${number}`,
+    head: { ref: head, sha: `${head}-sha`, label: `o:${head}` },
+    base: { ref: base, sha: `${base}-sha` },
+    ...extra,
+  };
+}
+
+function stackJson(number: number, base: string, pulls: Array<Record<string, any>>) {
+  return {
+    id: number * 10,
+    number,
+    node_id: `PRS_${number}`,
+    url: `https://api.github.com/repos/o/r/stacks/${number}`,
+    base: { ref: base },
+    open: true,
+    created_at: "2026-11-03T00:00:00Z",
+    pull_requests: pulls,
+  };
+}
+
+test("create_stack chains PR bases and creates a GitHub stack", async () => {
+  const requests: Array<{
+    method: string;
+    path: string;
+    body?: Record<string, any>;
+    apiVersion?: string;
+  }> = [];
+  const byHead = new Map<string, Record<string, any>>();
+  const byNumber = new Map<number, Record<string, any>>();
+  let next = 101;
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      const headers = init?.headers as Record<string, string>;
+      requests.push({
+        method,
+        path: `${url.pathname}${url.search}`,
+        body,
+        apiVersion: headers["X-GitHub-Api-Version"],
+      });
+      if (url.pathname === "/repos/o/r/pulls" && method === "GET") {
+        const head = (url.searchParams.get("head") ?? "").replace(/^o:/, "");
+        const existing = byHead.get(head);
+        return jsonResponse(existing ? [existing] : []);
+      }
+      if (url.pathname === "/repos/o/r/pulls" && method === "POST") {
+        const pull = pullJson(next++, body.head, body.base, {
+          title: body.title,
+          draft: body.draft ?? false,
+        });
+        byHead.set(body.head, pull);
+        byNumber.set(pull.number, pull);
+        return jsonResponse(pull, 201);
+      }
+      if (url.pathname === "/repos/o/r/stacks" && method === "POST") {
+        return jsonResponse(
+          stackJson(
+            7,
+            "main",
+            body.pull_requests.map((number: number) => byNumber.get(number)),
+          ),
+          201,
+        );
+      }
+      throw new Error(`Unexpected ${method} ${url}`);
+    },
+  });
+
+  const result = await executePull(client, {
+    action: "create_stack",
+    repo: "o/r",
+    base: "main",
+    pull_requests: [
+      { head: "feat-a", title: "Add auth" },
+      { head: "feat-b", title: "Add routes", draft: false },
+    ],
+  });
+  const details = result.details as any;
+
+  assert.deepEqual(
+    requests.map((request) => `${request.method} ${request.path}`),
+    [
+      "GET /repos/o/r/pulls?state=open&head=o%3Afeat-a&per_page=10",
+      "POST /repos/o/r/pulls",
+      "GET /repos/o/r/pulls?state=open&head=o%3Afeat-b&per_page=10",
+      "POST /repos/o/r/pulls",
+      "POST /repos/o/r/stacks",
+    ],
+  );
+  assert.deepEqual(requests[1].body, { title: "Add auth", head: "feat-a", base: "main" });
+  assert.deepEqual(requests[3].body, {
+    title: "Add routes",
+    head: "feat-b",
+    base: "feat-a",
+    draft: false,
+  });
+  assert.deepEqual(requests[4].body, { pull_requests: [101, 102] });
+  assert.equal(requests[4].apiVersion, "2026-03-10");
+  assert.equal(details.stack.number, 7);
+  assert.equal(details.created.length, 2);
+  const text = (result.content[0] as any).text;
+  assert.match(text, /Stack #7 open on main — 2 pull requests/);
+  assert.match(text, /1\. #101 \[open\] Add auth — feat-a — https:\/\/github.com\/o\/r\/pull\/101/);
+  assert.match(text, /Created #101, #102/);
+});
+
+test("create_stack reuses open PRs and retargets them onto the chain", async () => {
+  const requests: Array<{ method: string; path: string; body?: Record<string, any> }> = [];
+  const existing = [pullJson(41, "feat-a", "main"), pullJson(42, "feat-b", "main")];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      requests.push({ method, path: `${url.pathname}${url.search}`, body });
+      if (url.pathname === "/repos/o/r/pulls" && method === "GET") {
+        const head = (url.searchParams.get("head") ?? "").replace(/^o:/, "");
+        return jsonResponse(existing.filter((pull) => pull.head.ref === head));
+      }
+      if (url.pathname === "/repos/o/r/pulls/42" && method === "PATCH") {
+        existing[1] = { ...existing[1], base: { ref: body.base, sha: `${body.base}-sha` } };
+        return jsonResponse(existing[1]);
+      }
+      if (url.pathname === "/repos/o/r/stacks" && method === "POST") {
+        return jsonResponse(stackJson(8, "main", existing), 201);
+      }
+      throw new Error(`Unexpected ${method} ${url}`);
+    },
+  });
+
+  const result = await executePull(client, {
+    action: "create_stack",
+    repo: "o/r",
+    base: "main",
+    pull_requests: [
+      { head: "feat-a", title: "Add auth" },
+      { head: "feat-b", title: "Add routes" },
+    ],
+  });
+
+  assert.deepEqual(
+    requests.map((request) => `${request.method} ${request.path}`),
+    [
+      "GET /repos/o/r/pulls?state=open&head=o%3Afeat-a&per_page=10",
+      "GET /repos/o/r/pulls?state=open&head=o%3Afeat-b&per_page=10",
+      "PATCH /repos/o/r/pulls/42",
+      "POST /repos/o/r/stacks",
+    ],
+  );
+  assert.deepEqual(requests[2].body, { base: "feat-a" });
+  assert.deepEqual(requests[3].body, { pull_requests: [41, 42] });
+  const text = (result.content[0] as any).text;
+  assert.match(text, /Retargeted #42 base main -> feat-a\./);
+  assert.match(text, /#41 \[open\] PR 41/);
+});
+
+test("create_stack appends only new entries to an existing stack", async () => {
+  const requests: Array<{ method: string; path: string; body?: Record<string, any> }> = [];
+  const stackTop = pullJson(41, "feat-a", "main", {
+    stack: { number: 7, position: 1, size: 1, base: { ref: "main" } },
+  });
+  const added = pullJson(42, "feat-b", "feat-a");
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      requests.push({ method, path: `${url.pathname}${url.search}`, body });
+      if (url.pathname === "/repos/o/r/stacks/7" && method === "GET") {
+        return jsonResponse(stackJson(7, "main", [stackTop]));
+      }
+      if (url.pathname === "/repos/o/r/pulls/41" && method === "GET") {
+        return jsonResponse(stackTop);
+      }
+      if (url.pathname === "/repos/o/r/pulls" && method === "GET") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/repos/o/r/pulls" && method === "POST") {
+        return jsonResponse(added, 201);
+      }
+      if (url.pathname === "/repos/o/r/stacks/7/add" && method === "POST") {
+        return jsonResponse(stackJson(7, "main", [{ ...stackTop, stack: undefined }, added]));
+      }
+      throw new Error(`Unexpected ${method} ${url}`);
+    },
+  });
+
+  const result = await executePull(client, {
+    action: "create_stack",
+    repo: "o/r",
+    stack_number: 7,
+    pull_requests: [{ pr_number: 41 }, { head: "feat-b", title: "Add routes" }],
+  });
+  const details = result.details as any;
+
+  assert.deepEqual(requests.at(-1), {
+    method: "POST",
+    path: "/repos/o/r/stacks/7/add",
+    body: { pull_requests: [42] },
+  });
+  assert.equal(details.created.length, 1);
+  assert.equal(details.reused.length, 1);
+  assert.match((result.content[0] as any).text, /1 pull request was already in the stack\./);
+});
+
+test("create_stack appends nothing when every entry is already in the stack", async () => {
+  let writes = 0;
+  const member = pullJson(41, "feat-a", "main", {
+    stack: { number: 7, position: 1, size: 1, base: { ref: "main" } },
+  });
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      if ((init?.method ?? "GET") !== "GET") writes++;
+      if (url.pathname === "/repos/o/r/stacks/7")
+        return jsonResponse(stackJson(7, "main", [member]));
+      if (url.pathname === "/repos/o/r/pulls/41") return jsonResponse(member);
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+
+  const result = await executePull(client, {
+    action: "create_stack",
+    repo: "o/r",
+    stack_number: 7,
+    pull_requests: [{ pr_number: 41 }],
+  });
+
+  assert.equal(writes, 0);
+  assert.equal((result.details as any).unchanged, true);
+  assert.match((result.content[0] as any).text, /already in stack #7/);
+});
+
+test("create_stack refuses to move a PR out of another stack without retargeting it", async () => {
+  const methods: string[] = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      methods.push(`${init?.method ?? "GET"} ${url.pathname}`);
+      if (url.pathname === "/repos/o/r/stacks/7") {
+        return jsonResponse(stackJson(7, "main", [pullJson(40, "feat-root", "main")]));
+      }
+      if (url.pathname === "/repos/o/r/pulls/41") {
+        return jsonResponse(
+          pullJson(41, "feat-a", "main", {
+            stack: { number: 5, position: 1, size: 2, base: { ref: "main" } },
+          }),
+        );
+      }
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      executePull(client, {
+        action: "create_stack",
+        repo: "o/r",
+        stack_number: 7,
+        pull_requests: [{ pr_number: 41 }],
+      }),
+    /already belongs to stack #5/,
+  );
+  assert.deepEqual(methods, ["GET /repos/o/r/stacks/7", "GET /repos/o/r/pulls/41"]);
+});
+
+test("create_stack refuses a new stack when a reused PR is already stacked", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/repos/o/r/pulls") {
+        const head = (url.searchParams.get("head") ?? "").replace(/^o:/, "");
+        return jsonResponse([
+          pullJson(41, head, "main", {
+            stack: { number: 5, position: 1, size: 1, base: { ref: "main" } },
+          }),
+        ]);
+      }
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      executePull(client, {
+        action: "create_stack",
+        repo: "o/r",
+        base: "main",
+        pull_requests: [{ head: "feat-a", title: "Add auth" }],
+      }),
+    /pass stack_number=5/i,
+  );
+});
+
+test("create_stack defaults the bottom base to the repository default branch", async () => {
+  const bases: string[] = [];
+  const pull = pullJson(101, "feat-a", "develop");
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/repos/o/r" && method === "GET") {
+        return jsonResponse({ default_branch: "develop" });
+      }
+      if (url.pathname === "/repos/o/r/pulls" && method === "GET") return jsonResponse([]);
+      if (url.pathname === "/repos/o/r/pulls" && method === "POST") {
+        bases.push(JSON.parse(String(init?.body)).base);
+        return jsonResponse(pull, 201);
+      }
+      if (url.pathname === "/repos/o/r/stacks" && method === "POST") {
+        return jsonResponse(stackJson(9, "develop", [pull]), 201);
+      }
+      throw new Error(`Unexpected ${method} ${url}`);
+    },
+  });
+
+  await executePull(client, {
+    action: "create_stack",
+    repo: "o/r",
+    pull_requests: [{ head: "feat-a", title: "Add auth" }],
+  });
+
+  assert.deepEqual(bases, ["develop"]);
+});
+
+test("view_stack resolves a pull request to its stack and renders positions", async () => {
+  const stack = stackJson(7, "main", [
+    pullJson(41, "feat-a", "main"),
+    pullJson(42, "feat-b", "feat-a", { draft: true }),
+  ]);
+  const paths: string[] = [];
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input) => {
+      const url = new URL(String(input));
+      paths.push(`${url.pathname}${url.search}`);
+      if (url.pathname === "/repos/o/r/stacks") return jsonResponse([{ number: 7 }]);
+      if (url.pathname === "/repos/o/r/stacks/7") return jsonResponse(stack);
+      throw new Error(`Unexpected ${url}`);
+    },
+  });
+
+  const result = await executePull(client, {
+    action: "view_stack",
+    repo: "o/r",
+    pr_number: 42,
+  });
+
+  assert.deepEqual(paths, ["/repos/o/r/stacks?pull_request=42", "/repos/o/r/stacks/7"]);
+  const text = (result.content[0] as any).text;
+  assert.match(text, /1\. #41 \[open\] PR 41 — feat-a/);
+  assert.match(text, /2\. #42 \[open, draft\] PR 42 — feat-b/);
+});
+
+test("unstack reports a dissolved stack on 204 and keeps PRs", async () => {
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      assert.equal(init?.method, "POST");
+      assert.equal(url.pathname, "/repos/o/r/stacks/7/unstack");
+      return jsonResponse(null, 204);
+    },
+  });
+
+  const result = await executePull(client, { action: "unstack", repo: "o/r", stack_number: 7 });
+  assert.equal((result.details as any).dissolved, true);
+  assert.match((result.content[0] as any).text, /Dissolved stack #7/);
+});
+
+test("view and inspect report a pull request's stack position", async () => {
+  const pull = pullJson(42, "feat-b", "feat-a", {
+    stack: { number: 7, position: 2, size: 2, base: { ref: "main" } },
+  });
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async () => jsonResponse(pull),
+  });
+
+  const result = await executePull(client, { action: "view", repo: "o/r", pr_number: 42 });
+  assert.match((result.content[0] as any).text, /stack #7, position 2 of 2 \(base main\)/);
+});
+
+test("GitHubClient honors a per-request API version", async () => {
+  let version = "";
+  const client = new GitHubClient({
+    token: async () => "token",
+    fetch: async (_input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      version = headers["X-GitHub-Api-Version"];
+      return jsonResponse({});
+    },
+  });
+
+  await client.request("GET", "/repos/o/r/stacks", { apiVersion: "2026-03-10" });
+  assert.equal(version, "2026-03-10");
+});

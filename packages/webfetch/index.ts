@@ -2,14 +2,15 @@ import { truncateForModelWithTempFile } from "./tool-output.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { Type, type Static } from "typebox";
+import { StringEnum, Type, type Static } from "@mattrobenolt/pi-core/schema";
 import { loadWebfetchConfig } from "./config.ts";
+import type { LinkRelations } from "./core.ts";
 import {
   discoverLlmsTxt,
   extractLlmsTxtUrl,
   parseLinkHeader,
+  readLocalFileUrl,
   readResponseBytes,
   transformContent,
   validateAndNormalizeUrl,
@@ -28,7 +29,10 @@ const WEBSEARCH_BASE_URL = "https://mcp.exa.ai";
 const WEBSEARCH_ENDPOINT = "/mcp";
 
 const WEBFETCH_PARAMS = Type.Object({
-  url: Type.String({ description: "The URL to fetch content from" }),
+  url: Type.String({
+    description:
+      "The URL to fetch content from. Use http:// or https:// for the web, or file:// for a local file.",
+  }),
   format: Type.Optional(
     StringEnum(["markdown", "raw"] as const, {
       description:
@@ -128,7 +132,7 @@ const WEBFETCH_DESCRIPTION = `Fetch a specific URL and return agent-readable con
 Use webfetch when the user gives a URL to inspect, quote, summarize, debug, or use as context. Prefer format="markdown" unless the task specifically needs the original response body.
 
 Arguments:
-- url: required fully-qualified http:// or https:// URL.
+- url: required fully-qualified http:// or https:// URL, or a file:// URL for a local file.
 - format: "markdown" (default) or "raw". Use raw only for original HTML, JSON, or plain text.
 - timeout: request timeout in seconds, default ${DEFAULT_WEBFETCH_TIMEOUT_SECONDS}, max ${MAX_WEBFETCH_TIMEOUT_SECONDS}.
 - objective: optional focus query for markdown output. Use this when only part of a long page is relevant, e.g. "authentication options", "POST request example", or "pricing limits". The page is fetched normally, then narrowed to objective-relevant markdown. Ignore objective for format="raw".
@@ -137,6 +141,7 @@ Behavior:
 - GitHub blob URLs return raw file content; tree URLs return directory listings; repo URLs return README content.
 - Image URLs return an image attachment.
 - Non-GitHub web pages return markdown by default, with best-effort cleanup and truncation.
+- file:// URLs read a local file. HTML converts to markdown, images return as image attachments, and other text returns as-is with the same markdown cleanup.
 - Honors llmstxt.org markdown variants: content negotiation, the HTTP Link header and HTML link relations, then conventional .md / .html.md URLs.
 - For directory URLs, adds a one-line pointer to the path's llms.txt when the site publishes one.
 - Responses over 5MB are rejected. Output is truncated to ${formatSize(DEFAULT_MAX_BYTES)} / ${DEFAULT_MAX_LINES} lines when needed.`;
@@ -499,40 +504,59 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // General URL fetch
-      const normalizedUrl = validateAndNormalizeUrl(url);
+      // General fetch: local file, or http(s) URL.
       const format = params.format ?? "markdown";
-      const timeoutSeconds = Math.min(
-        Math.max(params.timeout ?? DEFAULT_WEBFETCH_TIMEOUT_SECONDS, 1),
-        MAX_WEBFETCH_TIMEOUT_SECONDS,
-      );
-      const { signal: requestSignal, cleanup } = mergeAbortSignals(signal, timeoutSeconds * 1000);
+      const localFile = await readLocalFileUrl(url, MAX_RESPONSE_SIZE);
 
-      let response: Response;
+      let normalizedUrl: string;
       let responseBytes: Uint8Array;
-      try {
-        const headers = buildWebFetchHeaders(format);
-        const initial = await fetch(normalizedUrl, { signal: requestSignal, headers });
-        response =
-          initial.status === 403 && initial.headers.get("cf-mitigated") === "challenge"
-            ? await fetch(normalizedUrl, {
-                signal: requestSignal,
-                headers: { ...headers, "User-Agent": "pi-web-tools" },
-              })
-            : initial;
+      let contentType: string;
+      let finalUrl: string;
+      let linkRelations: LinkRelations;
 
-        if (!response.ok) throw new Error(`Request failed with status code: ${response.status}`);
+      if (localFile) {
+        normalizedUrl = localFile.url;
+        responseBytes = localFile.bytes;
+        contentType = localFile.contentType;
+        finalUrl = localFile.url;
+        linkRelations = { alternateMarkdownUrl: null, llmsTxtUrl: null };
+      } else {
+        normalizedUrl = validateAndNormalizeUrl(url);
+        const timeoutSeconds = Math.min(
+          Math.max(params.timeout ?? DEFAULT_WEBFETCH_TIMEOUT_SECONDS, 1),
+          MAX_WEBFETCH_TIMEOUT_SECONDS,
+        );
+        const { signal: requestSignal, cleanup } = mergeAbortSignals(signal, timeoutSeconds * 1000);
 
-        responseBytes = await readResponseBytes(response, MAX_RESPONSE_SIZE);
-      } catch (error) {
-        if (requestSignal.aborted || isAbortError(error))
-          throw new Error(`Request timed out after ${timeoutSeconds} seconds`);
-        throw error;
-      } finally {
-        cleanup();
+        let response: Response;
+        try {
+          const headers = buildWebFetchHeaders(format);
+          const initial = await fetch(normalizedUrl, { signal: requestSignal, headers });
+          response =
+            initial.status === 403 && initial.headers.get("cf-mitigated") === "challenge"
+              ? await fetch(normalizedUrl, {
+                  signal: requestSignal,
+                  headers: { ...headers, "User-Agent": "pi-web-tools" },
+                })
+              : initial;
+
+          if (!response.ok) throw new Error(`Request failed with status code: ${response.status}`);
+
+          responseBytes = await readResponseBytes(response, MAX_RESPONSE_SIZE);
+        } catch (error) {
+          if (requestSignal.aborted || isAbortError(error))
+            throw new Error(`Request timed out after ${timeoutSeconds} seconds`);
+          throw error;
+        } finally {
+          cleanup();
+        }
+
+        contentType = response.headers.get("content-type") ?? "application/octet-stream";
+        // Relative Link headers and page links resolve against the final URL after redirects.
+        finalUrl = response.url || normalizedUrl;
+        linkRelations = parseLinkHeader(response.headers.get("link"), finalUrl);
       }
 
-      const contentType = response.headers.get("content-type") ?? "application/octet-stream";
       const mime = contentType.split(";")[0]?.trim().toLowerCase() || "application/octet-stream";
       const isImage = mime.startsWith("image/") && mime !== "image/svg+xml";
 
@@ -547,9 +571,6 @@ export default function (pi: ExtensionAPI) {
       }
 
       const raw = new TextDecoder().decode(responseBytes);
-      // Relative Link headers and page links resolve against the final URL after redirects.
-      const finalUrl = response.url || normalizedUrl;
-      const linkRelations = parseLinkHeader(response.headers.get("link"), finalUrl);
       const htmlLlmsTxtUrl = mime === "text/html" ? extractLlmsTxtUrl(raw, finalUrl) : null;
       const transformed = await transformContent(
         raw,
@@ -606,6 +627,7 @@ export default function (pi: ExtensionAPI) {
           contentType,
           bytes: responseBytes.byteLength,
           llmsTxtUrl,
+          ...(localFile ? { file: localFile.path } : {}),
           narrowed,
           narrowingModel,
           narrowingDiagnostics,

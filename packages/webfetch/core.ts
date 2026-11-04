@@ -1,4 +1,7 @@
 import { Defuddle } from "defuddle/node";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import TurndownService from "turndown";
 
 // UTM and common tracking params to strip from markdown link URLs.
@@ -73,6 +76,77 @@ export async function readResponseBytes(response: Response, maxBytes: number): P
     offset += chunk.byteLength;
   }
   return output;
+}
+
+const FILE_CONTENT_TYPES: Record<string, string> = {
+  ".bmp": "image/bmp",
+  ".css": "text/css",
+  ".gif": "image/gif",
+  ".htm": "text/html",
+  ".html": "text/html",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript",
+  ".json": "application/json",
+  ".md": "text/markdown",
+  ".markdown": "text/markdown",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".ts": "text/typescript",
+  ".txt": "text/plain",
+  ".webp": "image/webp",
+  ".xml": "application/xml",
+};
+
+export type LocalFileSource = {
+  url: string;
+  path: string;
+  bytes: Uint8Array;
+  contentType: string;
+};
+
+/**
+ * Read a local file when the value is a `file://` URL. Returns null for any
+ * other scheme so the caller can fall through to normal HTTP fetching.
+ */
+export async function readLocalFileUrl(
+  value: string,
+  maxBytes: number,
+): Promise<LocalFileSource | null> {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "file:") return null;
+  if (parsed.hostname && parsed.hostname !== "localhost")
+    throw new Error(`file:// URLs must refer to the local machine: ${parsed.hostname}`);
+
+  const filePath = fileURLToPath(parsed);
+  let stats;
+  try {
+    stats = await stat(filePath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") throw new Error(`File not found: ${filePath}`);
+    if (code === "EACCES") throw new Error(`Permission denied: ${filePath}`);
+    throw error;
+  }
+  if (stats.isDirectory()) throw new Error(`Path is a directory, not a file: ${filePath}`);
+  if (stats.size > maxBytes)
+    throw new Error(`File too large (exceeds ${Math.floor(maxBytes / 1024 / 1024)}MB limit)`);
+
+  const bytes = new Uint8Array(await readFile(filePath));
+  const contentType = fileContentType(filePath);
+  if (!contentType.startsWith("image/") && bytes.subarray(0, 8192).includes(0))
+    throw new Error(`File is binary, not text: ${filePath}`);
+
+  return { url: parsed.toString(), path: filePath, bytes, contentType };
+}
+
+function fileContentType(filePath: string): string {
+  return FILE_CONTENT_TYPES[path.extname(filePath).toLowerCase()] ?? "text/plain";
 }
 
 export function validateAndNormalizeUrl(value: string): string {

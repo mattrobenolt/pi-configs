@@ -1,5 +1,5 @@
 import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "@mattrobenolt/pi-core/schema";
 import os from "node:os";
 import path from "node:path";
 

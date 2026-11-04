@@ -30,7 +30,13 @@ type Data = {
   truncated: boolean;
   terminals?: { name: string; status: string }[];
 };
-const ok = (stdout = "", stderr = ""): ExecResult => ({ stdout, stderr, code: 0, killed: false });
+const ok = (stdout = "", stderr = ""): ExecResult => ({
+  stdout,
+  stderr,
+  code: 0,
+  killed: false,
+  truncated: false,
+});
 
 function harness(t: TestContext) {
   let tool: Definition;

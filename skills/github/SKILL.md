@@ -1,6 +1,6 @@
 ---
 name: github
-description: "Use structured GitHub tools for pull requests, local code review, review/comment CRUD, thread resolution, issues, and CI. Trigger for GitHub PR/issue inspection or mutation, reviewing a PR, posting or editing comments/reviews, resolving review threads, watching or waiting for CI, following PR feedback, and managing stacked PRs (gh stack: dependent PR chains, stack rebase/sync/merge, stacked-diff workflows). Clone or fetch repositories and review locally; never review from an API diff."
+description: "Use structured GitHub tools for pull requests, local code review, review/comment CRUD, thread resolution, issues, and CI. Trigger for GitHub PR/issue inspection or mutation, reviewing a PR, posting or editing comments/reviews, resolving review threads, watching or waiting for CI, following PR feedback, and managing stacked PRs (create_stack for chained PRs; gh stack for local rebase, sync, and merge). Clone or fetch repositories and review locally; never review from an API diff."
 ---
 
 # GitHub Workflow
@@ -24,6 +24,7 @@ The reference files are long (170–420 lines). Read each one to the end before 
 - **Manage the PR conversation:** create, update, or delete top-level PR comments with `github_pr`; prefer editing corrections over posting follow-up noise.
 - **Open or update a PR:** inspect the actual change, follow the repository template and [PR body guidance](references/pr-body.md), then use `github_pr create` or `update` so titles and Markdown bodies are transported exactly.
   - In the validation section, report only checks beyond routine CI. If none ran, write exactly `No validation beyond the repository's required CI.`
+- **Open a stacked PR:** push the branches, then use `github_pr action=create_stack` with `pull_requests` ordered bottom to top. Read [references/stacked-prs.md](references/stacked-prs.md) for layer planning and merge behavior; `gh pr merge` cannot merge a stack.
 - **Triage issues:** inspect/list, create/update, close/reopen, and manage issue comments with `github_issue`.
 - **Follow a PR:** creating a PR, commenting on one, or reviewing one starts a background watch. A notice arrives for new comments, reviews, inline replies, CI results, and merge or close. All feedback is surfaced, including bot reviews. Verify each claim against the code before acting. Do not poll for feedback.
 - **Audit writes:** read the full body echoed in every create/update tool result. If it is wrong, edit that same object rather than posting a correction.
@@ -106,7 +107,7 @@ Keep the body current when review changes the scope, behavior, validation, rollo
 
 ## PR and issue lifecycle
 
-Use `github_pr` to view/list, create, or update pull requests. Use its comment actions only for the top-level PR conversation; route inline code discussion through `github_review`.
+Use `github_pr` to view/list, create, update, or stack pull requests. Use its comment actions only for the top-level PR conversation; route inline code discussion through `github_review`.
 
 Use `github_issue` to view/list, create/update, close/reopen, and manage issue comments. Even though GitHub implements PR conversation comments through its issue-comment API, keep the user-facing distinction: PR work goes through `github_pr`, issue work through `github_issue`.
 
@@ -154,13 +155,19 @@ The result is one of:
 
 If CI fails, use the returned run IDs with `github_ci` `action: "failed_logs"`. Do not automatically rerun workflows. If the head changes, fetch and inspect the new code before proceeding.
 
-## Stacked PRs (gh stack)
+## Stacked PRs
 
-For dependent PR chains, use the `gh stack` CLI extension (`gh extension install github/gh-stack`) — the structured tools do not cover stack mechanics, so this is a legitimate `gh` use, not an escape-hatch violation. PR bodies, reviews, and CI for stack layers still go through `github_pr`, `github_review`, and `github_ci` as usual.
+A stack is a server-side GitHub object: each branch maps to one PR whose base is the branch below it, rooted on trunk. Merge from any layer lands that PR plus everything below it, bottom-up; GitHub auto-rebases the remainder after partial merges. Stack only one cohesive story (foundational layers low, dependents high); ordering constraints that are not code dependencies stay the operator's job. The feature is enabled per repository; without it, everything degrades to an ordinary manual stack.
 
-The model: each branch maps to one PR whose base is the branch below it, rooted on trunk. Merge from any layer lands that PR plus everything below it, bottom-up; GitHub auto-rebases the remainder after partial merges; `gh stack sync` is the local counterpart. Stack only one cohesive story (foundational layers low, dependents high); ordering constraints that aren't code dependencies stay the operator's job. It's a private-preview platform feature — without it, everything degrades to an ordinary manual stack.
+Use `github_pr` for stack membership and creation:
 
-Hard agent rules: `gh stack` branches on whether stdout is a TTY, so never run commands bare — `view --json`, `submit --auto`, `merge <target> --yes`, positional branch names always; `switch` and `modify` are TUI-only with no non-interactive path. Adopt existing branch chains with `gh stack init <bottom>...<top>` — it links existing PRs without duplicating or rewriting them (titles/bodies survive). `submit --auto` creates draft PRs (`--open` for ready-for-review) with titles generated from commits; rewrite titles and bodies with `github_pr update` per [references/pr-body.md](references/pr-body.md). Merge with `gh stack merge <pr|stack> --yes` — `gh pr merge` cannot merge a stack.
+- `create_stack` with `pull_requests` ordered bottom to top creates the PR chain and the stack in one call. Each entry is `{head, title}` for a branch or `{pr_number}` for an existing PR. It reuses an open PR for a branch, so rerunning after a partial failure is safe. `base` sets the bottom of a new stack; `stack_number` appends to an existing stack.
+- `view_stack` takes `stack_number` or `pr_number`. `view` and `inspect` also report a PR's stack and position.
+- `unstack` removes the unmerged PRs that can leave a stack; locked or queued PRs stay. The stack dissolves when none remain. PRs, branches, and code are untouched.
+
+Push the branches before `create_stack`. Do not create the PRs one at a time and then shell out to `gh stack link`.
+
+Use the `gh stack` CLI for local stack tracking, rebase, sync, checkout, and merge. Hard agent rules: `gh stack` branches on whether stdout is a TTY, so never run commands bare — `view --json`, `submit --auto`, `merge <target> --yes`, positional branch names always; `switch` and `modify` are TUI-only with no non-interactive path. Adopt existing branch chains with `gh stack init <bottom>...<top>` when you need local tracking; for remote membership alone, `create_stack` with `pr_number` entries is enough. Merge with `gh stack merge <pr|stack> --yes` — `gh pr merge` cannot merge a stack.
 
 Read [references/stacked-prs.md](references/stacked-prs.md) before building or managing a stack — layer planning, mid-stack changes, merging, sync traps, exit codes, restructuring, and the manual fallback.
 

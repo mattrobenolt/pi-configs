@@ -6,13 +6,13 @@ import {
   truncateHead,
   truncateTail,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type, type Static } from "typebox";
+import { StringEnum, Type, type Static } from "@mattrobenolt/pi-core/schema";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import {
+  GitHubApiError,
   GitHubClient,
   assertPullHead,
   formatChecks,
@@ -56,6 +56,29 @@ const ReviewRefParam = referenceParam(
   "Numeric review ID or GitHub review URL containing #pullrequestreview- or /reviews/.",
 );
 
+const StackEntryParams = Type.Object({
+  pr_number: Type.Optional(
+    PositiveIntegerParam("Existing pull request number to include in the stack."),
+  ),
+  head: Type.Optional(
+    Type.String({
+      description:
+        "Head branch. Reuses that branch's open pull request when one exists, otherwise creates one.",
+    }),
+  ),
+  title: Type.Optional(
+    Type.String({
+      description: "Title for a newly created pull request. Required when no open PR exists.",
+    }),
+  ),
+  body: Type.Optional(Type.String({ description: "Body for a newly created pull request." })),
+  draft: Type.Optional(
+    Type.Boolean({
+      description: "Create this pull request as a draft. Defaults to the top-level draft.",
+    }),
+  ),
+});
+
 const PullRequestParams = Type.Object({
   action: StringEnum(
     [
@@ -64,7 +87,10 @@ const PullRequestParams = Type.Object({
       "list",
       "search",
       "create",
+      "create_stack",
       "update",
+      "view_stack",
+      "unstack",
       "comment",
       "update_comment",
       "delete_comment",
@@ -77,7 +103,7 @@ const PullRequestParams = Type.Object({
   repo: RepoParam,
   pr_number: Type.Optional(
     PositiveIntegerParam(
-      "Pull request number. Required for view, inspect, update, comment, update_comment, delete_comment, watch, and unwatch; omit for list, search, and watches.",
+      "Pull request number. Required for view, inspect, update, comment, update_comment, delete_comment, watch, and unwatch. Optional for view_stack and unstack, which resolve a PR to its stack. Omit for list, search, and watches.",
     ),
   ),
   state: Type.Optional(
@@ -101,9 +127,26 @@ const PullRequestParams = Type.Object({
   ),
   title: Type.Optional(Type.String({ description: "Pull request title." })),
   body: Type.Optional(Type.String({ description: "Markdown body or comment text." })),
-  base: Type.Optional(Type.String({ description: "Base branch for create or update." })),
+  base: Type.Optional(
+    Type.String({
+      description:
+        "Base branch for create or update, or the bottom branch for create_stack. Defaults to the repository default branch when create_stack creates the bottom PR.",
+    }),
+  ),
   head: Type.Optional(Type.String({ description: "Head branch for create." })),
   draft: Type.Optional(Type.Boolean({ description: "Create the pull request as a draft." })),
+  pull_requests: Type.Optional(
+    Type.Array(StackEntryParams, {
+      minItems: 1,
+      description:
+        "Stack entries ordered from the bottom (closest to base) to the top, for create_stack. Each entry is an existing PR (pr_number) or a branch (head, with title when a new PR is needed).",
+    }),
+  ),
+  stack_number: Type.Optional(
+    PositiveIntegerParam(
+      "Stack number. For create_stack, appends to the top of that stack; for view_stack and unstack, selects the stack.",
+    ),
+  ),
   comment: Type.Optional(IssueCommentRefParam),
 });
 
@@ -331,15 +374,204 @@ function userLogin(value: GitHubJson): string {
 }
 
 function renderPull(pull: GitHubJson): string {
+  const stack = pull.stack;
   return [
     `#${pull.number} ${pull.title}`,
     `${pull.state}${pull.draft ? " (draft)" : ""} by ${userLogin(pull)} — ${pull.html_url}`,
     `base ${pull.base?.ref}@${pull.base?.sha} <- head ${pull.head?.label ?? pull.head?.ref}@${pull.head?.sha}`,
+    stack
+      ? `stack #${stack.number}, position ${stack.position} of ${stack.size} (base ${stack.base?.ref ?? "unknown"})`
+      : "",
     `clone: ${pull.base?.repo?.clone_url ?? pull.head?.repo?.clone_url ?? "unknown"}`,
     pull.body ? `\n${pull.body}` : "",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+// Stacked pull requests are a GitHub preview feature. The dedicated Stacks API
+// uses the 2026-03-10 version; older versions do not promise it.
+const STACK_API_VERSION = "2026-03-10";
+
+type RequestOptions = NonNullable<Parameters<GitHubClient["request"]>[2]>;
+
+type ResolvedStackEntry = {
+  pull: GitHubJson;
+  created: boolean;
+  base_changed: boolean;
+  previous_base?: string;
+};
+
+async function stackRequest<T = GitHubJson>(
+  client: GitHubClient,
+  method: "GET" | "POST",
+  path: string,
+  options: RequestOptions = {},
+): Promise<T> {
+  try {
+    return await client.request<T>(method, path, { ...options, apiVersion: STACK_API_VERSION });
+  } catch (error) {
+    if (error instanceof GitHubApiError && error.status === 404) {
+      // A 404 from the collection endpoints means stacks are not enabled for
+      // the repository. A single-stack 404 usually means a stale stack number.
+      const hint = /\/stacks(?:\?|$)/.test(path)
+        ? " Stacked pull requests are enabled per repository; confirm the repository has the feature."
+        : "";
+      throw new Error(`${error.message}${hint}`, { cause: error });
+    }
+    throw error;
+  }
+}
+
+function requireStackEntries(
+  value: PullRequestInput["pull_requests"],
+): Array<NonNullable<PullRequestInput["pull_requests"]>[number]> {
+  if (!value?.length) {
+    throw new Error(
+      "create_stack requires pull_requests, ordered from the bottom of the stack to the top",
+    );
+  }
+  return value;
+}
+
+function renderStack(stack: GitHubJson): string {
+  const pullRequests = Array.isArray(stack.pull_requests) ? stack.pull_requests : [];
+  const lines = [
+    `Stack #${stack.number} ${stack.open === false ? "closed" : "open"} on ${stack.base?.ref ?? "unknown base"} — ${pullRequests.length} pull request${pullRequests.length === 1 ? "" : "s"}`,
+  ];
+  pullRequests.forEach((pull: GitHubJson, index: number) => {
+    const state = pull.merged_at
+      ? "merged"
+      : `${pull.state ?? "unknown"}${pull.draft ? ", draft" : ""}`;
+    const summary = [`${index + 1}. #${pull.number}`, `[${state}]`, pull.title]
+      .filter(Boolean)
+      .join(" ");
+    const meta = [pull.head?.ref, pull.html_url].filter(Boolean).join(" — ");
+    lines.push(meta ? `${summary} — ${meta}` : summary);
+  });
+  return lines.join("\n");
+}
+
+async function findOpenPull(
+  client: GitHubClient,
+  repo: string,
+  head: string,
+  signal?: AbortSignal,
+): Promise<GitHubJson | undefined> {
+  const { owner } = splitRepo(repo);
+  const query = new URLSearchParams({ state: "open", head: `${owner}:${head}`, per_page: "10" });
+  const pulls = await client.request<GitHubJson[]>("GET", `${endpoint(repo)}/pulls?${query}`, {
+    signal,
+  });
+  return pulls.find((pull) => pull.head?.ref === head);
+}
+
+async function repositoryDefaultBranch(
+  client: GitHubClient,
+  repo: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const data = await client.request<GitHubJson>("GET", endpoint(repo), { signal });
+  return requireString(data.default_branch, "repository default_branch");
+}
+
+/**
+ * Resolve stack entries in bottom-to-top order. Existing open PRs for a head
+ * branch are reused so that a failed or repeated create_stack does not collide
+ * with PRs it already made. Each PR is retargeted onto the head of the entry
+ * below it, which is the chain rule the Stacks API enforces.
+ */
+async function resolveStackEntries(
+  client: GitHubClient,
+  params: PullRequestInput,
+  signal?: AbortSignal,
+): Promise<{ entries: ResolvedStackEntry[]; stack?: GitHubJson }> {
+  const repo = params.repo;
+  const path = endpoint(repo);
+  const inputs = requireStackEntries(params.pull_requests);
+  const rootBase = params.base === undefined ? undefined : requireString(params.base, "base");
+
+  let stack: GitHubJson | undefined;
+  let previousHead: string | undefined;
+  if (params.stack_number !== undefined) {
+    if (rootBase !== undefined) {
+      throw new Error(
+        "base cannot be combined with stack_number: an appended pull request bases on the current top of the stack",
+      );
+    }
+    stack = await stackRequest<GitHubJson>(client, "GET", `${path}/stacks/${params.stack_number}`, {
+      signal,
+    });
+    const top = (stack.pull_requests ?? []).at(-1);
+    if (!top?.head?.ref) {
+      throw new Error(`Stack #${params.stack_number} has no pull requests to append to`);
+    }
+    previousHead = top.head.ref;
+  }
+
+  const resolved: ResolvedStackEntry[] = [];
+  for (const [index, input] of inputs.entries()) {
+    const hasNumber = input.pr_number !== undefined;
+    const hasHead = input.head !== undefined;
+    if (hasNumber === hasHead) {
+      throw new Error(`pull_requests[${index}] needs exactly one of pr_number or head`);
+    }
+    const expectedBase = index === 0 ? rootBase : previousHead;
+    let pull: GitHubJson;
+    let created = false;
+
+    if (hasNumber) {
+      const number = positiveInteger(input.pr_number, `pull_requests[${index}].pr_number`);
+      pull = await client.request<GitHubJson>("GET", `${path}/pulls/${number}`, { signal });
+    } else {
+      const head = requireString(input.head, `pull_requests[${index}].head`).trim();
+      const existing = await findOpenPull(client, repo, head, signal);
+      if (existing) {
+        pull = existing;
+      } else {
+        const base = expectedBase ?? (await repositoryDefaultBranch(client, repo, signal));
+        const payload: GitHubJson = {
+          title: requireString(input.title, `pull_requests[${index}].title`),
+          head,
+          base,
+        };
+        if (input.body !== undefined) payload.body = input.body;
+        const draft = input.draft ?? params.draft;
+        if (draft !== undefined) payload.draft = draft;
+        pull = await client.request<GitHubJson>("POST", `${path}/pulls`, { body: payload, signal });
+        created = true;
+      }
+    }
+
+    const previousBase = typeof pull.base?.ref === "string" ? pull.base.ref : undefined;
+    const memberStack = pull.stack?.number;
+    let baseChanged = false;
+    if (memberStack !== undefined) {
+      // A PR already on a stack is positioned by that stack. Refuse a move
+      // before retargeting anything, and never retarget a stack member.
+      if (params.stack_number === undefined) {
+        throw new Error(
+          `#${pull.number} already belongs to stack #${memberStack}. Pass stack_number=${memberStack} to append to it, or view_stack to inspect it.`,
+        );
+      }
+      if (memberStack !== params.stack_number) {
+        throw new Error(
+          `#${pull.number} already belongs to stack #${memberStack}; a pull request cannot join stack #${params.stack_number}.`,
+        );
+      }
+    } else if (expectedBase !== undefined && previousBase !== expectedBase) {
+      pull = await client.request<GitHubJson>("PATCH", `${path}/pulls/${pull.number}`, {
+        body: { base: expectedBase },
+        signal,
+      });
+      baseChanged = true;
+    }
+
+    previousHead = requireString(pull.head?.ref, `pull_requests[${index}] head ref`);
+    resolved.push({ pull, created, base_changed: baseChanged, previous_base: previousBase });
+  }
+
+  return { entries: resolved, stack };
 }
 
 function renderIssue(issue: GitHubJson): string {
@@ -781,6 +1013,179 @@ export async function executePull(
       repo: params.repo,
       pull,
     });
+  }
+
+  if (params.action === "create_stack") {
+    const { entries, stack: existingStack } = await resolveStackEntries(client, params, signal);
+    const created = entries.filter((entry) => entry.created);
+    const baseChanges = entries.filter((entry) => entry.base_changed);
+    let additions = entries;
+
+    if (params.stack_number !== undefined) {
+      additions = entries.filter((entry) => entry.pull.stack?.number !== params.stack_number);
+      if (additions.length === 0) {
+        const unchanged =
+          existingStack ??
+          (await stackRequest<GitHubJson>(
+            client,
+            "GET",
+            `${basePath}/stacks/${params.stack_number}`,
+            { signal },
+          ));
+        return toolResult(
+          [
+            `All ${entries.length} pull request${entries.length === 1 ? " is" : "s are"} already in stack #${params.stack_number}.`,
+            renderStack(unchanged),
+          ].join("\n"),
+          {
+            action: params.action,
+            repo: params.repo,
+            stack: unchanged,
+            created: [],
+            reused: entries.map((entry) => entry.pull),
+            unchanged: true,
+          },
+        );
+      }
+    }
+
+    let stack: GitHubJson;
+    try {
+      stack =
+        params.stack_number !== undefined
+          ? await stackRequest(client, "POST", `${basePath}/stacks/${params.stack_number}/add`, {
+              body: { pull_requests: additions.map((entry) => entry.pull.number) },
+              signal,
+            })
+          : await stackRequest(client, "POST", `${basePath}/stacks`, {
+              body: { pull_requests: entries.map((entry) => entry.pull.number) },
+              signal,
+            });
+    } catch (error) {
+      const createdNumbers = created.map((entry) => `#${entry.pull.number}`).join(", ");
+      if (createdNumbers) {
+        throw new Error(
+          `${(error as Error).message}\nCreated ${createdNumbers}, but the stack was not updated. Rerun create_stack: existing open pull requests are reused.`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+
+    const lines = [renderStack(stack)];
+    if (created.length) {
+      lines.push(`Created ${created.map((entry) => `#${entry.pull.number}`).join(", ")}.`);
+    }
+    if (baseChanges.length) {
+      lines.push(
+        ...baseChanges.map(
+          (entry) =>
+            `Retargeted #${entry.pull.number} base ${entry.previous_base ?? "unknown"} -> ${entry.pull.base?.ref}.`,
+        ),
+      );
+    }
+    const alreadyThere = entries.length - additions.length;
+    if (alreadyThere > 0) {
+      lines.push(
+        `${alreadyThere} pull request${alreadyThere === 1 ? " was" : "s were"} already in the stack.`,
+      );
+    }
+    lines.push(
+      "Merge the stack with GitHub's asynchronous stack merge (gh stack merge); gh pr merge does not merge a stack.",
+    );
+    return toolResult(lines.join("\n"), {
+      action: params.action,
+      repo: params.repo,
+      stack,
+      created: created.map((entry) => entry.pull),
+      reused: entries.filter((entry) => !entry.created).map((entry) => entry.pull),
+      base_changes: baseChanges.map((entry) => ({
+        number: entry.pull.number,
+        from: entry.previous_base,
+        to: entry.pull.base?.ref,
+      })),
+    });
+  }
+
+  if (params.action === "view_stack") {
+    if (params.stack_number === undefined && params.pr_number === undefined) {
+      throw new Error("view_stack requires stack_number or pr_number");
+    }
+    let number = params.stack_number;
+    if (number === undefined) {
+      const pull = prNumber(params.pr_number);
+      const query = new URLSearchParams({ pull_request: String(pull) });
+      const stacks = await stackRequest<GitHubJson[]>(
+        client,
+        "GET",
+        `${basePath}/stacks?${query}`,
+        { signal },
+      );
+      if (!stacks.length) {
+        return toolResult(`#${pull} is not part of a stack.`, {
+          action: params.action,
+          repo: params.repo,
+          pr_number: pull,
+          stack: null,
+        });
+      }
+      number = stacks[0].number;
+    }
+    const stack = await stackRequest(client, "GET", `${basePath}/stacks/${number}`, { signal });
+    return toolResult(renderStack(stack), {
+      action: params.action,
+      repo: params.repo,
+      stack,
+    });
+  }
+
+  if (params.action === "unstack") {
+    if (params.stack_number === undefined && params.pr_number === undefined) {
+      throw new Error("unstack requires stack_number or pr_number");
+    }
+    let number = params.stack_number;
+    if (number === undefined) {
+      const pull = prNumber(params.pr_number);
+      const query = new URLSearchParams({ pull_request: String(pull) });
+      const stacks = await stackRequest<GitHubJson[]>(
+        client,
+        "GET",
+        `${basePath}/stacks?${query}`,
+        { signal },
+      );
+      if (!stacks.length) throw new Error(`#${pull} is not part of a stack`);
+      number = stacks[0].number;
+    }
+    const stack = await stackRequest<GitHubJson | null>(
+      client,
+      "POST",
+      `${basePath}/stacks/${number}/unstack`,
+      { signal },
+    );
+    if (!stack) {
+      return toolResult(
+        `Dissolved stack #${number}. The pull requests and branches are unchanged.`,
+        {
+          action: params.action,
+          repo: params.repo,
+          stack_number: number,
+          dissolved: true,
+          stack: null,
+        },
+      );
+    }
+    return toolResult(
+      [`Unstacked the removable pull requests from stack #${number}.`, renderStack(stack)].join(
+        "\n",
+      ),
+      {
+        action: params.action,
+        repo: params.repo,
+        stack_number: number,
+        dissolved: false,
+        stack,
+      },
+    );
   }
 
   if (params.action === "update") {
@@ -1546,6 +1951,29 @@ export default function githubExtension(pi: ExtensionAPI) {
     result: Awaited<ReturnType<typeof executePull>>,
   ) => {
     const details = result.details as Record<string, any>;
+    if (params.action === "create_stack") {
+      const created = Array.isArray(details.created) ? details.created : [];
+      const watched: number[] = [];
+      for (const pull of created) {
+        if (typeof pull?.number !== "number") continue;
+        const start = prWatches.start({
+          repo: params.repo,
+          number: pull.number,
+          title: typeof pull.title === "string" ? pull.title : undefined,
+          url: typeof pull.html_url === "string" ? pull.html_url : undefined,
+          head_sha: typeof pull.head?.sha === "string" ? pull.head.sha : undefined,
+        });
+        if (start.created) watched.push(pull.number);
+      }
+      if (watched.length) {
+        appendResultText(
+          result,
+          `Watching ${watched.map((number) => `#${number}`).join(", ")} for CI and new comments, reviews, or replies.`,
+        );
+      }
+      return result;
+    }
+
     if (params.action === "create") {
       const pull = details.pull ?? {};
       if (typeof pull.number !== "number") return result;
@@ -1667,11 +2095,15 @@ export default function githubExtension(pi: ExtensionAPI) {
     name: "github_pr",
     label: "GitHub Pull Request",
     description:
-      "Inspect and manage pull requests and their top-level conversation comments, and search pull requests by keyword across all states. Creating a PR, commenting on one, or reviewing one starts a background watch for CI and new comments, reviews, and inline replies. The watch posts a notice when something changes; no polling is needed. Use action=watches to list active watches and action=unwatch to stop one. This tool intentionally does not return diffs: clone/fetch the repository and review changes locally.",
+      "Inspect and manage pull requests and their top-level conversation comments, and search pull requests by keyword across all states. Creates and manages GitHub stacked pull requests: create_stack opens a chained set of PRs and links them into one stack, view_stack reads stack position and state, and unstack removes unmerged PRs from a stack. Creating a PR, commenting on one, or reviewing one starts a background watch for CI and new comments, reviews, and inline replies. The watch posts a notice when something changes; no polling is needed. Use action=watches to list active watches and action=unwatch to stop one. This tool intentionally does not return diffs: clone/fetch the repository and review changes locally.",
     promptSnippet:
-      "Inspect/search/manage GitHub PRs and conversation comments. PRs are watched automatically for CI and feedback. Clone/fetch locally for code review; do not request API diffs.",
+      "Inspect/search/manage GitHub PRs and conversation comments. Create and inspect stacked PRs. PRs are watched automatically for CI and feedback. Clone/fetch locally for code review; do not request API diffs.",
     promptGuidelines: [
       "Use github_pr for pull request metadata, creation, updates, and top-level PR conversation comments.",
+      "For dependent branches, use github_pr action=create_stack with pull_requests ordered bottom (closest to base) to top. Each entry is an existing pr_number or a head branch with a title. Do not create the PRs one at a time and shell out to gh stack.",
+      "create_stack reuses an existing open PR for a branch, so rerunning it after a partial failure is safe. It retargets each PR onto the head of the entry below it. Pass base for the bottom of a new stack, or stack_number to append to an existing stack.",
+      "Use github_pr action=view_stack with stack_number or pr_number to read stack membership and position. view and inspect also report a PR's stack. Use action=unstack to remove the unmerged PRs that can leave a stack; locked or queued PRs stay. The PRs, branches, and code are untouched.",
+      "Merging a stack requires GitHub's asynchronous stack merge. Do not merge stack members individually with gh pr merge; use gh stack merge <pr-or-stack-number> --yes.",
       "Creating a PR, commenting on one, or reviewing one starts a background PR watch automatically. Do not poll for feedback or CI; wait for the notice.",
       "Use github_pr action=watches to list active PR watches and action=unwatch pr_number=N to stop one. Use action=watch pr_number=N to follow a PR that was not watched automatically.",
       "When a PR watch notice arrives, read the full thread with github_pr inspect and respond through github_pr comment or github_review reply. Treat every comment, human or bot, as a claim to verify against the code; do not apply a suggestion you have not checked.",

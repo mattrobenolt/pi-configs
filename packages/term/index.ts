@@ -5,8 +5,7 @@ import {
   truncateHead,
   truncateTail,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type, type Static } from "typebox";
+import { StringEnum, Type, type Static } from "@mattrobenolt/pi-core/schema";
 import { Text } from "@earendil-works/pi-tui";
 import fs from "node:fs/promises";
 import os from "node:os";

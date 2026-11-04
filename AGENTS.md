@@ -64,6 +64,7 @@ When adding or editing extensions:
 - Keep tool schemas tight and descriptions useful.
 - `pi.registerTool({ name: <builtin> })` replaces the built-in tool by name (extension tools overwrite built-ins in the registry). Use this when you need to change a built-in tool’s description or execute, not just wrap its behavior.
 - Return structured details when they help debugging, but don’t overdo it.
+- Import `Type`, `Static` and `StringEnum` for tool schemas from `@mattrobenolt/pi-core/schema`, not `typebox` or `@earendil-works/pi-ai`. Pi 1.5.0 dropped TypeBox from pi-ai, so its `StringEnum` types against pi-schema and composed schemas degrade to `unknown`.
 - Avoid hidden side effects on session start unless the behavior is clearly intentional.
 - If enabling tools globally, be explicit about which tools and why.
 

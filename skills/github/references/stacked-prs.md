@@ -1,7 +1,9 @@
-# Stacked PRs with gh stack
+# Stacked PRs
 
-Playbook for stacked branches/PRs via the `gh stack` CLI extension. Condensed
-from the [upstream agent skill](https://github.com/github/gh-stack/tree/main/skills/gh-stack).
+Playbook for stacked branches and PRs on GitHub. Stack membership comes from
+`github_pr`; local stack tracking, rebase, sync, checkout, and merge use the
+`gh stack` CLI extension. Condensed from the [upstream agent
+skill](https://github.com/github/gh-stack/tree/main/skills/gh-stack).
 
 ## The model
 
@@ -17,6 +19,27 @@ Left is the bottom, right is the top. Merge from any layer lands that PR plus
 every unmerged PR below it, bottom-up. GitHub auto-rebases the rest after a
 partial merge; `gh stack sync` is the local counterpart. Protection and CI
 evaluate against trunk at every layer.
+
+## Creating a stack with github_pr
+
+Push the branches, then call `github_pr` with `action: "create_stack"` and
+`pull_requests` ordered bottom to top. Each entry is one of:
+
+- `{ "head": "billing/api", "title": "Add billing API" }` — reuse that branch's
+  open PR, or create one. `body` and `draft` apply to a new PR only.
+- `{ "pr_number": 41 }` — an existing PR.
+
+The tool chains each PR's base onto the entry below it, then creates the GitHub
+stack. `base` sets the bottom of a new stack (default: the repository default
+branch when the bottom PR is created). `stack_number` appends the entries to the
+top of an existing stack. Existing open PRs are reused, so rerunning after a
+partial failure does not collide. Entries already in the same stack are skipped.
+
+Read it back with `action: "view_stack"` (`stack_number` or `pr_number`).
+`github_pr view` and `inspect` include the stack number, position, and size.
+`action: "unstack"` removes the unmerged PRs that can leave the stack; locked or
+queued PRs stay. The stack dissolves when none remain. PRs and branches are
+untouched.
 
 ## Setup
 
@@ -207,9 +230,11 @@ gh stack link branch-a branch-b branch-c   # bottom to top
 gh stack link 7 feature-d                  # append to existing stack #7
 ```
 
-Membership is additive only; `link` never removes a PR. Local navigation will
-not work on the result — run `gh stack checkout <stack-number>` later if local
-tracking is needed.
+For remote membership alone, `github_pr action=create_stack` does the same work
+without a local stack file; `gh stack link` is the CLI equivalent. Membership is
+additive only; neither one removes a PR. Local navigation will not work on the
+result — run `gh stack checkout <stack-number>` later if local tracking is
+needed.
 
 ## Caveats
 

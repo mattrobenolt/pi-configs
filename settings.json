@@ -14,7 +14,7 @@
     "git:github.com/nicobailon/pi-subagents",
     "git:github.com/baskingspot/skills"
   ],
-  "lastChangelogVersion": "1.4.0",
+  "lastChangelogVersion": "1.5.0",
   "defaultProvider": "fireworks",
   "defaultModel": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
   "defaultThinkingLevel": "max",
@@ -35,7 +35,7 @@
     "fireworks/accounts/fireworks/models/deepseek-v4p1-flash-1017",
     "fireworks/accounts/fireworks/models/ember-1",
     "fireworks/accounts/fireworks/models/glm-5p3",
-    "fireworks/accounts/fireworks/models/kimi-k3",
+    "fireworks/accounts/fireworks/models/kimi-k3p1-pro",
     "fireworks/accounts/fireworks/models/minimax-m3",
     "fireworks/accounts/fireworks/models/qwen3p8-max",
     "google/gemini-3.8-flash",
@@ -127,5 +127,13 @@
   },
   "enableInstallTelemetry": false,
   "deviceId": "21b7f501-9a10-4f48-ab79-2de8c5f175f0",
-  "outputPad": 0
+  "outputPad": 0,
+  "selfUpdateCommand": [
+    "node",
+    "/Users/matt/.pi/agent/scripts/pi-self-update.mjs",
+    "{version}"
+  ],
+  "extensionChangelogVersions": {
+    "{\"source\":\"git:github.com/nicobailon/pi-subagents\",\"scope\":\"user\"}": "0.84.0"
+  }
 }

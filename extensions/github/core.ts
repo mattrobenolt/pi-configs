@@ -119,6 +119,7 @@ export class GitHubClient {
     options: {
       body?: unknown;
       accept?: string;
+      apiVersion?: string;
       signal?: AbortSignal;
       timeoutMs?: number;
     } = {},
@@ -135,7 +136,7 @@ export class GitHubClient {
           Authorization: `Bearer ${token.trim()}`,
           "Content-Type": "application/json",
           "User-Agent": "pi-github-extension/0.1",
-          "X-GitHub-Api-Version": "2022-11-28",
+          "X-GitHub-Api-Version": options.apiVersion ?? "2022-11-28",
         },
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
         signal: combineSignal(options.signal, options.timeoutMs ?? 30_000),

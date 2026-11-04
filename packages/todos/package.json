@@ -12,7 +12,9 @@
     "fmt:check": "oxfmt index.ts --check",
     "lint": "oxlint index.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@mattrobenolt/pi-core": "workspace:*"
+  },
   "peerDependencies": {
     "typebox": "*"
   },

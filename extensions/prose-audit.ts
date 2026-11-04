@@ -1,7 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
-import { Type, type Static } from "typebox";
+import { StringEnum, Type, type Static } from "@mattrobenolt/pi-core/schema";
 import fs from "node:fs/promises";
 import path from "node:path";
 

@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { parseModelSpec } from "./config.ts";
 import { parseWebSearchResponse } from "./index.ts";
@@ -23,6 +27,7 @@ import {
   llmsTxtCandidateUrls,
   markdownCandidateUrls,
   parseLinkHeader,
+  readLocalFileUrl,
   readResponseBytes,
   transformContent,
   validateAndNormalizeUrl,
@@ -45,6 +50,89 @@ test("validateAndNormalizeUrl accepts fully-qualified http(s) URLs", () => {
 test("validateAndNormalizeUrl rejects invalid and non-http URLs", () => {
   assert.throws(() => validateAndNormalizeUrl("example.com"), /Invalid URL/);
   assert.throws(() => validateAndNormalizeUrl("file:///tmp/x"), /http:\/\/ or https:\/\//);
+});
+
+test("readLocalFileUrl ignores non-file URLs", async () => {
+  assert.equal(await readLocalFileUrl("https://example.com/page", 1024), null);
+  assert.equal(await readLocalFileUrl("not a url", 1024), null);
+});
+
+async function withTempFile(
+  name: string,
+  contents: string | Uint8Array,
+  fn: (filePath: string) => Promise<void>,
+) {
+  const dir = await mkdtemp(path.join(tmpdir(), "webfetch-file-"));
+  try {
+    const filePath = path.join(dir, name);
+    await writeFile(filePath, contents);
+    await fn(filePath);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test("readLocalFileUrl reads a local file and infers its content type", async () => {
+  await withTempFile("page.html", "<h1>Hello</h1>", async (filePath) => {
+    const source = await readLocalFileUrl(pathToFileURL(filePath).toString(), 1024);
+    assert.ok(source);
+    assert.equal(source.contentType, "text/html");
+    assert.equal(source.path, filePath);
+    assert.equal(new TextDecoder().decode(source.bytes), "<h1>Hello</h1>");
+  });
+});
+
+test("readLocalFileUrl maps image extensions to image content types", async () => {
+  await withTempFile("pixel.png", new Uint8Array([0, 1, 2, 3]), async (filePath) => {
+    const source = await readLocalFileUrl(pathToFileURL(filePath).toString(), 1024);
+    assert.ok(source);
+    assert.equal(source.contentType, "image/png");
+    assert.deepEqual([...source.bytes], [0, 1, 2, 3]);
+  });
+});
+
+test("readLocalFileUrl rejects directories, remote hosts, binary files, and oversize files", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "webfetch-file-"));
+  try {
+    await assert.rejects(readLocalFileUrl(pathToFileURL(dir).toString(), 1024), /directory/);
+    await assert.rejects(readLocalFileUrl("file://example.com/tmp/x", 1024), /local machine/);
+    const binaryPath = path.join(dir, "blob.bin");
+    await writeFile(binaryPath, new Uint8Array([0x61, 0x00, 0x62]));
+    await assert.rejects(readLocalFileUrl(pathToFileURL(binaryPath).toString(), 1024), /binary/);
+    const largePath = path.join(dir, "large.txt");
+    await writeFile(largePath, "x".repeat(64));
+    await assert.rejects(readLocalFileUrl(pathToFileURL(largePath).toString(), 16), /too large/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("transformContent converts file:// HTML to markdown", async () => {
+  const html = `<!doctype html>
+    <html>
+      <head><title>Example Page</title></head>
+      <body>
+        <nav><a href="/nav">Navigation</a></nav>
+        <main>
+          <h1>Local Files</h1>
+          <p>This is the main article content.</p>
+        </main>
+      </body>
+    </html>`;
+  await withTempFile("page.html", html, async (filePath) => {
+    const source = await readLocalFileUrl(pathToFileURL(filePath).toString(), 4096);
+    assert.ok(source);
+    const markdown = await transformContent(
+      new TextDecoder().decode(source.bytes),
+      source.contentType,
+      "markdown",
+      source.url,
+      async () => new Response("not found", { status: 404 }),
+    );
+    assert.match(markdown, /Local Files/);
+    assert.match(markdown, /main article content/);
+    assert.doesNotMatch(markdown, /Navigation/);
+  });
 });
 
 test("decodeHtmlEntities decodes common named, decimal, and hex entities", () => {

@@ -28,9 +28,11 @@ Fetches one URL.
 
 By default, HTML pages are converted to markdown with Defuddle and then cleaned up. Non-HTML text is returned as markdown-ish text with the same cleanup pass applied. Images are returned as image attachments.
 
+`file://` URLs read a local file instead of making a request. HTML converts to markdown, images return as image attachments, and other files return as text. Local files skip markdown discovery and the `llms.txt` probe. Directories, files over 5MB, and binary files that are not images return an error.
+
 Parameters:
 
-- `url`: fully-qualified `http://` or `https://` URL.
+- `url`: fully-qualified `http://` or `https://` URL, or a `file://` URL for a local file.
 - `format`: `"markdown"` by default. Use `"raw"` only when the original response body matters, such as raw HTML, JSON, or plain text.
 - `timeout`: request timeout in seconds. Defaults to 30, capped at 120.
 - `objective`: optional focus query for markdown output. The full page is fetched and converted first, then a local model extracts the relevant subset. If narrowing fails, the tool falls back to full markdown.

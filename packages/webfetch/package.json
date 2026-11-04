@@ -15,6 +15,7 @@
     "lint": "oxlint index.ts core.ts config.ts narrow.ts search.ts tool-output.ts index.test.ts eval.ts eval-search.ts"
   },
   "dependencies": {
+    "@mattrobenolt/pi-core": "workspace:*",
     "defuddle": "catalog:",
     "turndown": "catalog:"
   },
