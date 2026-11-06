@@ -43,7 +43,6 @@
                 jq
                 gh
                 pnpm
-                zig_0_16
                 inputs.mattware.packages.${system}.skills-ref
                 self'.packages.firectl
               ]
