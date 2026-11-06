@@ -1128,11 +1128,8 @@ export async function setupQmdCollection(signal?: AbortSignal): Promise<boolean>
   for (const [ctxPath, desc] of contexts) {
     try {
       await new Promise<void>((resolve, reject) => {
-        execFileFn(
-          "qmd",
-          ["context", "add", ctxPath, desc, "-c", "pi-memory"],
-          { signal },
-          (err) => (err ? reject(err) : resolve()),
+        execFileFn("qmd", ["context", "add", ctxPath, desc, "-c", "pi-memory"], { signal }, (err) =>
+          err ? reject(err) : resolve(),
         );
       });
     } catch {
