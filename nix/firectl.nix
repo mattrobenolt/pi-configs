@@ -7,7 +7,7 @@
 { lib, stdenvNoCC, fetchurl }:
 
 let
-  version = "1.8.14";
+  version = "1.8.22";
 
   platforms = {
     "aarch64-darwin" = "darwin-arm64";
@@ -20,9 +20,9 @@ let
       or (throw "firectl: unsupported system ${stdenvNoCC.hostPlatform.system}");
 
   hashes = {
-    "darwin-arm64" = "sha256-klHdG/7tuLBMYKyKpHLTyXEB7PfRdlAQKvHJS1fG800=";
-    "linux-amd64" = "sha256-D7h29bO4Yabpk+NaabFH+W74RmYzQawiEsk7LQY+Yec=";
-    "linux-arm64" = "sha256-vgcevC5RsIoynG36RKw5CeqrR7PAWR/tjECs2w1hIeM=";
+    "darwin-arm64" = "sha256-kULBtIgtE1ObKGYBDzYlobbhQps15wUelLYOTB2FeBw=";
+    "linux-amd64" = "sha256-O09es9xJyrlbSDlRCOgAv/9WWAEgOvzR5uiqP41VsF8=";
+    "linux-arm64" = "sha256-7ky5YO3GxiQsbxE+uMUEDAemNG4MOWwO0eLn8McTsvM=";
   };
 in
 stdenvNoCC.mkDerivation {
