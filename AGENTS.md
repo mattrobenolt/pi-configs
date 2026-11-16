@@ -78,7 +78,7 @@ Do not blend artifact types:
 - Package-shaped code with its own `package.json` belongs in `packages/`.
 - Root `skills/` should contain loose local skills or adapters only. If a domain has a plugin, the plugin copy is canonical.
 
-For Zig, `plugins/zig` is the source of truth. Root `skills/zig` and `skills/tiger-style` exist so pi can still discover those skills from the root skill directory.
+For Zig, the org skill `zig-017` (installed from `baskingspot/skills`) is the authority. `plugins/zig/skills/write`, root `skills/zig`, and the per-repo `.pi/skills/zig` copies are adapters that point at it, so pi can discover the skill from each directory. Do not fork Zig guidance into an adapter: it drifted to 0.15/0.16 that way and cost three repos time.
 
 ## Commands
 

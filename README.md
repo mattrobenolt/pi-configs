@@ -66,7 +66,7 @@ Custom agent definitions invoked as subagents via the `subagent` tool/package.
 
 Skills are markdown files loaded by the agent to provide domain-specific knowledge and workflows.
 
-Root-level skills are pi-local. For shareable plugin-owned domains, prefer the plugin version as the source of truth. Today `plugins/zig` owns the canonical Zig writing and Tiger Style skills; `skills/zig` and `skills/tiger-style` are compatibility adapters so pi can still load them from the root skill directory.
+Root-level skills are pi-local. For shareable domains, the installed org skill from `baskingspot/skills` is the source of truth. Today `zig-017` owns the Zig writing guidance; `plugins/zig/skills/write`, `skills/zig`, and the per-repo `.pi/skills/zig` copies are discovery adapters that point at it. `skills/tiger-style` is the same pattern for Tiger Style.
 
 | Skill             | What it does                                                             |
 | ----------------- | ------------------------------------------------------------------------ |
@@ -159,5 +159,5 @@ Loaded via `settings.json`:
 
 `.claude-plugin/marketplace.json` is a local Claude Code marketplace index. It points at plugin bundles under `plugins/`; it is not a pi extension loader.
 
-- `plugins/zig` — canonical Zig development bundle: skills, commands, and agents for Zig 0.15 / Tiger Style work.
+- `plugins/zig` — Zig development bundle: commands and agents, plus a `write` skill adapter that points at the org `zig-017` skill.
 - `plugins/lsp` — Claude Code LSP configuration bundle.
